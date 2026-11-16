@@ -130,3 +130,4 @@ for bad in ("Probe dinh dang", "Ho tro duoc", "Chua ho tro",
         fails.append("co chu tieng Viet khong dau: %r" % bad)
 
 print(json.dumps({"fails": fails}, ensure_ascii=False))
+sys.exit(1 if fails else 0)

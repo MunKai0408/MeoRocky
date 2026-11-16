@@ -6,12 +6,12 @@
   },
   "markers_count": {
     "ok": true,
-    "detail": "decorator needs_fixture trong test_*.py: 116 (kỳ vọng 116, phủ 126 test: 5 class-level + 111 method-level)",
-    "seconds": 0
+    "detail": "decorator needs_fixture trong test_*.py: 122 (kỳ vọng 122, phủ 132 test: 5 class-level + 117 method-level)",
+    "seconds": 0.1
   },
   "date_test_after_touch": {
     "ok": true,
-    "detail": ".                                                                        [100%] 1 passed in 0.52s",
+    "detail": ".                                                                        [100%] 1 passed in 0.56s",
     "seconds": 1
   },
   "pages_yml": {
@@ -21,7 +21,7 @@
   },
   "test_html": {
     "ok": true,
-    "detail": "exists=true loadPyodide_same_origin=true no_cdn=true micropip_pytest=true tier_smoke_default=true no_full_tier=true honest_note=true copy_button=true tests_manifest=true pid_deselect=true | tests.json entries=155",
+    "detail": "exists=true loadPyodide_same_origin=true no_cdn=true micropip_pytest=true tier_smoke_default=true no_full_tier=true honest_note=true copy_button=true tests_manifest=true pid_deselect=true | tests.json entries=160",
     "seconds": 0
   },
   "test_yml_two_jobs": {
@@ -31,8 +31,8 @@
   },
   "pyodide_pytest_smoke": {
     "ok": true,
-    "detail": "pyodide=314.0.8 lz4=OK micropip pytest=OK http_fetch=0 files=242 font=132948B pytest_smoke_exit=0 | . | . |                [100%] | 58 passed, 1508 deselected in 4.62s",
-    "seconds": 10.2
+    "detail": "pyodide=314.0.8 lz4=OK micropip pytest=OK http_fetch=0 files=251 font=132948B pytest_smoke_exit=0 | . | . |                [100%] | 58 passed, 1599 deselected in 4.88s",
+    "seconds": 10.9
   },
   "picker_ipa": {
     "ok": true,
