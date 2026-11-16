@@ -14,6 +14,9 @@ const state = {
   bootInfo: null,
   donor: null,
   file: null,            // {name, size, data: ArrayBuffer}
+  batchFiles: [],        // [{name, size, data}] cho tab Batch (nhiều file)
+  lastCheckpoint: null,  // chuỗi checkpoint batch mới nhất (để tải về)
+  loadedCheckpoint: null, // checkpoint nạp từ localStorage để resume
   lastExtractKv: null,   // JSON text trích xuất được (để dịch tiếp)
   pending: new Map(),    // id -> {resolve, reject, op, t0, lastPct}
   nextId: 1,
@@ -164,7 +167,7 @@ $("file-input").addEventListener("change", (ev) => {
 });
 
 // ---- Tabs ----
-const tabs = ["list", "unity", "extract", "translate", "compress", "font", "diagnose"];
+const tabs = ["list", "unity", "extract", "translate", "mod", "batch", "kb", "support", "compress", "font", "diagnose"];
 function showTab(name) {
   for (const t of tabs) {
     $("tab-" + t).hidden = (t !== name);
@@ -288,6 +291,220 @@ $("btn-translate-download").addEventListener("click", () => {
   const t = $("translate-output").value;
   if (!t) { showError("Chưa có bản dịch để tải."); return; }
   download("translated.vi.json", new TextEncoder().encode(t).buffer);
+});
+
+// ---- Mod ----
+function modEditsJson() {
+  const obj = $("mod-object").value.trim();
+  if (!obj || isNaN(parseInt(obj, 10))) throw new Error("Hãy nhập path_id TextAsset (số).");
+  const oldS = $("mod-old").value;
+  const newS = $("mod-new").value;
+  if (!oldS) throw new Error("Hãy nhập chuỗi cũ.");
+  return JSON.stringify([{
+    object: parseInt(obj, 10),
+    old: oldS, new: newS,
+    entry: $("mod-entry").value.trim() || null,
+    mode: $("mod-mode").value,
+  }]);
+}
+function modResultHtml(parsed) {
+  let html = "<p>Kết quả: <b>" + (parsed.dry_run ? "dry-run (CHƯA ghi file nào)" : "ĐÃ GHI") +
+    "</b> · " + parsed.patched + " edit · file gốc không đổi (sha256 " +
+    esc((parsed.source_sha256 || "").slice(0, 12)) + "…)</p><table><tr><th>Đích</th><th>Chế độ</th><th>Tìm thấy</th><th>Chuỗi (byte)</th><th>Đơn vị (byte)</th><th>Verify</th></tr>";
+  for (const e of parsed.edits || []) {
+    html += "<tr><td>" + esc(e.target) + "</td><td>" + esc(e.write_mode) + "</td><td>" + e.occurrences +
+      "</td><td>" + e.old_script_len + " → " + e.new_script_len + "</td><td>" + e.size_before +
+      " → " + e.size_after + "</td><td>" + (e.verified ? "OK" : "LỖI") + "</td></tr>";
+    if ((e.warnings || []).length) html += "<tr><td colspan=6>Cảnh báo: " + esc(e.warnings.join("; ")) + "</td></tr>";
+    if ((e.verify || []).length) html += "<tr><td colspan=6>" + esc(e.verify.join("; ")) + "</td></tr>";
+  }
+  html += "</table>";
+  if ((parsed.outputs || []).length) html += "<p>File đã ghi, đã tải về: <b>" + esc(parsed.outputs.join(", ")) + "</b></p>";
+  html += "<p class=note>" + esc(parsed.note || "") + "</p>";
+  return html;
+}
+async function runMod(allowWrite) {
+  if (!state.file) { showError("Chưa chọn file. Hãy chọn file ở trên trước."); return; }
+  let edits;
+  try { edits = modEditsJson(); } catch (e) { showError(e.message); return; }
+  if (allowWrite && !confirm("Ghi đơn vị đã patch ra file tải về? File gốc KHÔNG bị ghi đè; output chỉ là bundle/.assets, không phải IPA đóng gói lại.")) return;
+  try {
+    const label = allowWrite ? "Mod (ghi file)" : "Mod thử (dry-run)";
+    const { parsed } = await runOp(label, "mod_patch", [inputPath(), edits, allowWrite], inputFileArgs(), allowWrite);
+    if (!parsed.ok) { showError("Lỗi: " + parsed.error); return; }
+    $("mod-result").innerHTML = modResultHtml(parsed);
+  } catch (e) { /* đã báo lỗi */ }
+}
+$("btn-mod-dryrun").addEventListener("click", () => runMod(false));
+$("btn-mod-write").addEventListener("click", () => runMod(true));
+
+// ---- Batch ----
+$("batch-files").addEventListener("change", async (ev) => {
+  const list = [...(ev.target.files || [])];
+  state.batchFiles = [];
+  for (const f of list) {
+    if (f.size > MAX_BYTES) { showError("File " + f.name + " quá lớn cho bản web (>2GB)."); continue; }
+    state.batchFiles.push({ name: f.name, size: f.size, data: await f.arrayBuffer() });
+  }
+  if (state.batchFiles.length) {
+    $("batch-files-info").textContent = state.batchFiles.length + " file: " +
+      state.batchFiles.map(f => f.name + " (" + fmtBytes(f.size) + ")").join(", ");
+    $("batch-files-info").hidden = false;
+    clearError();
+  }
+});
+$("btn-batch-load-ckpt").addEventListener("click", () => {
+  try {
+    const saved = localStorage.getItem("pb3_batch_checkpoint");
+    if (!saved) { $("batch-ckpt-info").textContent = "Chưa có checkpoint nào lưu trong trình duyệt này."; return; }
+    state.loadedCheckpoint = saved;
+    $("batch-ckpt-info").textContent = "Đã nạp checkpoint đã lưu (" + saved.length + " ký tự). Tick “Tiếp tục từ checkpoint” rồi bấm Chạy batch.";
+  } catch (e) {
+    $("batch-ckpt-info").textContent = "Không đọc được localStorage: " + e.message;
+  }
+});
+$("btn-batch-dl-ckpt").addEventListener("click", () => {
+  if (!state.lastCheckpoint) { showError("Chưa có checkpoint (chạy batch 1 lần trước đã)."); return; }
+  download("checkpoint.json", new TextEncoder().encode(state.lastCheckpoint).buffer);
+});
+$("btn-batch-run").addEventListener("click", async () => {
+  const manifest = $("batch-manifest").value.trim();
+  if (!manifest) { showError("Hãy dán manifest JSON/CSV vào ô."); return; }
+  if (!state.batchFiles.length) { showError("Hãy chọn các file game trước (nút chọn file ở trên)."); return; }
+  const dryRun = $("batch-dryrun").checked;
+  const resume = $("batch-resume").checked;
+  const ckpt = resume ? state.loadedCheckpoint : null;
+  if (resume && !ckpt) { showError("Đã tick “Tiếp tục từ checkpoint” nhưng chưa nạp checkpoint (bấm “Nạp checkpoint đã lưu” trước)."); return; }
+  try {
+    const { parsed } = await runOp("Chạy batch (tuần tự)", "batch_run",
+      [manifest, dryRun, ckpt, resume], state.batchFiles, true);
+    if (!parsed.ok) { showError("Lỗi: " + parsed.error); return; }
+    const s = parsed.summary;
+    if (parsed.checkpoint) {
+      state.lastCheckpoint = parsed.checkpoint;
+      try { localStorage.setItem("pb3_batch_checkpoint", parsed.checkpoint); } catch (e) { /* localStorage đầy/không có: vẫn tải file được */ }
+    }
+    let html = "<p>Batch " + (parsed.dry_run ? "<b>dry-run</b>" : "<b>chạy thật</b>") +
+      " · tuần tự (jobs=1) · " + s.ok + " ok / " + s.failed + " lỗi / " + s.skipped +
+      " bỏ qua / " + s.total + " game · " + s.elapsed_s + " giây" +
+      (parsed.resumed ? " · đã tiếp tục từ checkpoint" : "") +
+      " · đã tải về <b>batch.zip</b> (summary, checkpoint, index, từng game)</p>";
+    html += "<table><tr><th>#</th><th>Game</th><th>Mode</th><th>Kết quả</th><th>Lỗi</th><th>Giây</th><th>Ghi chú</th></tr>";
+    for (const g of s.games || []) {
+      html += "<tr><td>" + g.index + "</td><td>" + esc(g.path.split("/").pop()) + "</td><td>" + esc(g.mode) +
+        "</td><td>" + esc(g.status) + "</td><td>" + esc(g.error_code || "") + " " + esc(g.error_message || "") +
+        "</td><td>" + g.elapsed_s + "</td><td>" + esc(g.note || "") + "</td></tr>";
+    }
+    html += "</table><p class=note>" + esc(parsed.note || "") + "</p>";
+    $("batch-result").innerHTML = html;
+    $("batch-ckpt-info").textContent = parsed.checkpoint
+      ? "Checkpoint mới đã lưu vào trình duyệt (" + parsed.checkpoint.length + " ký tự) — chạy lại với “Tiếp tục từ checkpoint” để bỏ qua game đã xong."
+      : "";
+  } catch (e) { /* đã báo lỗi */ }
+});
+
+// ---- KB ----
+$("btn-kb-add").addEventListener("click", async () => {
+  if (!state.file) { showError("Chưa chọn file. Hãy chọn file ở trên trước."); return; }
+  try {
+    const { parsed } = await runOp("Thêm game vào KB", "kb_add", [inputPath()], inputFileArgs());
+    if (!parsed.ok) { showError("Lỗi: " + parsed.error); return; }
+    $("kb-result").innerHTML = "<p>Đã thêm game vào KB: id <b>" + parsed.game_id + "</b> · bundle <b>" +
+      esc(parsed.bundle_id || "?") + "</b> · version " + esc(parsed.version || "?") + " · engine " +
+      esc(parsed.engine || "?") + " · fingerprint " + esc(parsed.fingerprint) + "…</p>" +
+      "<p class=note>KB chỉ sống trong phiên này — tải lại trang là mất, trừ khi tải file KB về.</p>";
+  } catch (e) { /* đã báo lỗi */ }
+});
+$("btn-kb-query").addEventListener("click", async () => {
+  if (!state.file) { showError("Chưa chọn file. Hãy chọn file ở trên trước."); return; }
+  try {
+    const { parsed } = await runOp("Tra cứu KB", "kb_query", [inputPath()], inputFileArgs());
+    if (!parsed.ok) { showError("Lỗi: " + parsed.error); return; }
+    if (!parsed.found) {
+      $("kb-result").innerHTML = "<p>Chưa có profile cho game này trong KB. Lý do: " + esc(parsed.reason || "?") + "</p>";
+      return;
+    }
+    const p = parsed.profile;
+    $("kb-result").innerHTML = "<p>Tìm thấy profile: bundle <b>" + esc(p.game.bundle_id || "?") +
+      "</b> · version " + esc(p.game.version || "?") + " · engine " + esc(p.game.engine || "?") +
+      " · " + p.files.length + " file đã lưu · " + p.locales.length + " locale · " +
+      Object.keys(p.choices || {}).length + " lựa chọn.</p>";
+  } catch (e) { /* đã báo lỗi */ }
+});
+$("btn-kb-list").addEventListener("click", async () => {
+  try {
+    const { parsed } = await runOp("Liệt kê KB", "kb_list", [], null);
+    if (!parsed.ok) { showError("Lỗi: " + parsed.error); return; }
+    let html = "<p>" + parsed.games.length + " game trong KB · dung lượng " + fmtBytes(parsed.size_bytes) + " · chỉ trong phiên này.</p>";
+    if (parsed.games.length) {
+      html += "<table><tr><th>ID</th><th>Bundle</th><th>Version</th><th>Engine</th><th>Lần thấy cuối</th></tr>";
+      for (const g of parsed.games) {
+        html += "<tr><td>" + g.id + "</td><td>" + esc(g.bundle_id || "?") + "</td><td>" + esc(g.version || "?") +
+          "</td><td>" + esc(g.engine || "?") + "</td><td>" + esc(g.last_seen || "") + "</td></tr>";
+      }
+      html += "</table>";
+    }
+    $("kb-result").innerHTML = html;
+  } catch (e) { /* đã báo lỗi */ }
+});
+$("btn-kb-export").addEventListener("click", async () => {
+  try {
+    const { parsed } = await runOp("Xuất file KB", "kb_export", [], null, true);
+    if (!parsed.ok) { showError("Lỗi: " + parsed.error); return; }
+    $("kb-result").innerHTML = "<p>Đã tải về <b>pb3_kb.sqlite</b> (" + fmtBytes(parsed.size) +
+      ", " + parsed.games + " game). Giữ file này — tải lại trang thì KB trong trình duyệt trống lại; nhập lại bằng nút “Nhập KB (.sqlite)” trên tab này.</p>";
+  } catch (e) { /* đã báo lỗi */ }
+});
+$("btn-kb-import").addEventListener("click", async () => {
+  const f = $("kb-import-file").files && $("kb-import-file").files[0];
+  if (!f) { showError("Chưa chọn file KB. Hãy chọn file .sqlite đã tải về trước."); return; }
+  try {
+    const buf = await f.arrayBuffer();
+    const { parsed } = await runOp("Nhập KB", "kb_import", ["/tmp/input/" + f.name], [{ name: f.name, data: buf }]);
+    if (!parsed.ok) { showError("Lỗi: " + parsed.error); return; }
+    const names = parsed.games.map((g) => esc(g.bundle_id || "?")).join(", ");
+    $("kb-result").innerHTML = "<p>Đã nhập <b>" + parsed.imported + "</b> game vào KB: " + (names || "—") + "." +
+      (parsed.skipped ? " Bỏ qua <b>" + parsed.skipped + "</b> game (xem cảnh báo dưới)." : "") + "</p>" +
+      (parsed.warnings && parsed.warnings.length ? "<p class=note>Cảnh báo: " + esc(parsed.warnings.join("; ")) + "</p>" : "");
+  } catch (e) { /* đã báo lỗi */ }
+});
+$("btn-kb-forget").addEventListener("click", async () => {
+  const id = $("kb-forget-id").value.trim();
+  if (!id) { showError("Hãy nhập bundle id (hoặc id số) của game cần quên."); return; }
+  try {
+    const { parsed } = await runOp("Quên game", "kb_forget", [id], null);
+    if (!parsed.ok) { showError("Lỗi: " + parsed.error); return; }
+    $("kb-result").innerHTML = "<p>" + (parsed.forgotten ? "Đã quên game '" + esc(id) + "'." : "Không có game '" + esc(id) + "' trong KB.") + "</p>";
+  } catch (e) { /* đã báo lỗi */ }
+});
+
+// ---- Hỗ trợ ----
+$("btn-support-run").addEventListener("click", async () => {
+  try {
+    const { parsed } = await runOp("Ma trận hỗ trợ", "support_matrix", [], null);
+    if (!parsed.ok) { showError("Lỗi: " + parsed.error); return; }
+    const d = parsed.data;
+    let html = "<h3>Bảng plugin (" + d.plugins.length + ")</h3><table><tr><th>Plugin</th><th>Loại</th><th>Engine</th><th>Maturity hiệu lực</th><th>Game đã test</th><th>Ngày test</th><th>Giới hạn</th></tr>";
+    for (const p of d.plugins) {
+      html += "<tr><td>" + esc(p.id) + "</td><td>" + esc(p.kind) + "</td><td>" + esc(p.engine) +
+        "</td><td>" + esc(p.maturity_effective) + "</td><td>" + p.games_tested + "</td><td>" + esc(p.test_date) +
+        "</td><td>" + esc(p.limit) + "</td></tr>";
+    }
+    html += "</table><h3>Container / archive</h3><table><tr><th>Định dạng</th><th>Đọc</th><th>Ghi</th><th>Backend</th></tr>";
+    for (const c of d.containers) {
+      html += "<tr><td>" + esc(c.format) + "</td><td>" + esc(c.read) + "</td><td>" + esc(c.write) + "</td><td>" + esc(c.backend) + "</td></tr>";
+    }
+    html += "</table><h3>Unity</h3><table><tr><th>Định dạng</th><th>Đọc</th><th>Ghi</th><th>Backend</th><th>Maturity</th></tr>";
+    for (const u of d.unity) {
+      html += "<tr><td>" + esc(u.format) + "</td><td>" + esc(u.read) + "</td><td>" + esc(u.write) + "</td><td>" + esc(u.backend) + "</td><td>" + esc(u.maturity || "—") + "</td></tr>";
+    }
+    html += "</table><h3>Đã xác minh trên game thật</h3><ul>";
+    for (const r of d.real_game) html += "<li><b>" + esc(r.muc) + "</b> — " + esc(r.chi_tiet) + " (nguồn: " + esc(r.nguon) + ")</li>";
+    html += "</ul><h3>Chưa hỗ trợ</h3><ul>";
+    for (const u of d.unsupported) html += "<li><b>" + esc(u.muc) + "</b> — " + esc(u.ly_do) + "</li>";
+    html += "</ul><p class=note>Không có mục nào đạt M4. “Ngày test” hiện “chưa có” vì bản web không kèm file bằng chứng tests/corpus/*.json.</p>";
+    $("support-result").innerHTML = html;
+  } catch (e) { /* đã báo lỗi */ }
 });
 
 // ---- Nén / giải nén ----

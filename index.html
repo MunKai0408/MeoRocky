@@ -76,6 +76,10 @@
   <button id="btn-unity">Unity</button>
   <button id="btn-extract">Trích xuất</button>
   <button id="btn-translate">Dịch</button>
+  <button id="btn-mod">Mod</button>
+  <button id="btn-batch">Batch</button>
+  <button id="btn-kb">KB</button>
+  <button id="btn-support">Hỗ trợ</button>
   <button id="btn-compress">Nén</button>
   <button id="btn-font">Font</button>
   <button id="btn-diagnose">Chẩn đoán</button>
@@ -134,6 +138,109 @@
   <textarea id="translate-output" placeholder="Bản dịch sẽ hiện ở đây…" readonly></textarea>
 </div>
 
+<div id="tab-mod" class="card" hidden>
+  <h2>Mod — patch TextAsset (menu [1] bản iSH)</h2>
+  <p class="note">Patch 1 chuỗi trong 1 TextAsset của file Unity đã chọn
+  (bundle .unity3d, .assets độc lập, hoặc entry trong IPA/ZIP qua vpath
+  dạng <b>a::b</b>). <b>Mặc định chỉ chạy thử (dry-run): không ghi file nào.</b>
+  Chỉ khi bạn bấm nút “Patch và ghi file” thì đơn vị đã patch mới được tải
+  về — file gốc không bao giờ bị ghi đè. Output là đơn vị nhỏ nhất đã patch
+  (bundle/.assets), <b>không phải</b> IPA đóng gói lại.</p>
+  <div class="row">
+    <label style="flex:1;min-width:180px">Entry (vpath, trống nếu file là .assets/bundle độc lập):
+      <input type="text" id="mod-entry" placeholder="vd: Payload/9Kings.app/level.unity3d">
+    </label>
+    <label>path_id TextAsset:
+      <input type="text" id="mod-object" placeholder="vd: 1001" style="width:110px">
+    </label>
+    <label>Chế độ:
+      <select id="mod-mode" style="width:auto">
+        <option value="PATCH_INPLACE" selected>PATCH_INPLACE</option>
+        <option value="REBUILD_SECTION">REBUILD_SECTION</option>
+      </select>
+    </label>
+  </div>
+  <div class="row">
+    <label style="flex:1;min-width:180px">Chuỗi cũ:
+      <input type="text" id="mod-old" placeholder="vd: Play">
+    </label>
+    <label style="flex:1;min-width:180px">Chuỗi mới:
+      <input type="text" id="mod-new" placeholder="vd: Chơi">
+    </label>
+  </div>
+  <button id="btn-mod-dryrun">Patch thử (dry-run)</button>
+  <button id="btn-mod-write" class="secondary">Patch và ghi file</button>
+  <div id="mod-result"></div>
+</div>
+
+<div id="tab-batch" class="card" hidden>
+  <h2>Batch — chạy hàng loạt (menu [4] bản iSH)</h2>
+  <p class="note"><b>Chạy TUẦN TỰ từng game</b> — bản web không có threading
+  nên không có chế độ song song (bản iSH có jobs&gt;1, bản web luôn jobs=1).
+  Mỗi game cô lập: lỗi một game không dừng cả lô. Mặc định <b>chạy thử trước
+  (dry-run)</b>: bỏ dấu chọn mới ghi thật. Manifest JSON hoặc CSV (cột:
+  path, mode, locale, old, new, file, object). Chọn tất cả file game ở dưới
+  (đường dẫn trong manifest chỉ cần đúng tên file). Checkpoint được lưu
+  tự động vào trình duyệt của bạn sau mỗi lần chạy — bấm “Nạp checkpoint đã
+  lưu” rồi chạy lại với “Tiếp tục từ checkpoint” để bỏ qua game đã xong.</p>
+  <div class="row">
+    <label>Chọn các file game (nhiều file):
+      <input type="file" id="batch-files" multiple accept=".ipa,.zip,.unity3d,.assets">
+    </label>
+  </div>
+  <p id="batch-files-info" class="sub" hidden></p>
+  <textarea id="batch-manifest" placeholder='[{"path": "game1.zip", "mode": "extract"}, {"path": "game2.zip", "mode": "extract", "locale": "en"}]'>[{"path": "game1.zip", "mode": "extract"}]</textarea>
+  <div class="row">
+    <label><input type="checkbox" id="batch-dryrun" checked> Chạy thử trước (dry-run, chưa ghi)</label>
+    <label><input type="checkbox" id="batch-resume"> Tiếp tục từ checkpoint (bỏ qua game đã xong)</label>
+  </div>
+  <button id="btn-batch-run">Chạy batch</button>
+  <button id="btn-batch-load-ckpt" class="secondary">Nạp checkpoint đã lưu</button>
+  <button id="btn-batch-dl-ckpt" class="secondary">Tải checkpoint (.json)</button>
+  <p id="batch-ckpt-info" class="sub"></p>
+  <div id="batch-result"></div>
+</div>
+
+<div id="tab-kb" class="card" hidden>
+  <h2>Kho tri thức game — KB (menu [3] bản iSH)</h2>
+  <p class="note">KB lưu fingerprint + lựa chọn đã dò của game để lần sau
+  tái dùng (chỉ lưu hash/kích thước/vai trò — <b>không</b> lưu nội dung game
+  hay bản dịch). <b>Giới hạn thật: KB chỉ sống trong phiên này</b> — tải lại
+  trang là mất hết, trừ khi bạn tải file KB về (nút dưới) rồi nhập lại
+  bằng nút “Nhập KB” trong phiên mới.</p>
+  <button id="btn-kb-add">Thêm game đã chọn vào KB</button>
+  <button id="btn-kb-query">Tra cứu game đã chọn</button>
+  <button id="btn-kb-list" class="secondary">Liệt kê game trong KB</button>
+  <button id="btn-kb-export" class="secondary">Tải KB về (.sqlite)</button>
+  <div class="row">
+    <label style="flex:1;min-width:180px">Nhập file KB đã tải về (.sqlite):
+      <input type="file" id="kb-import-file" accept=".sqlite,.sqlite3,.db">
+    </label>
+    <button id="btn-kb-import" class="secondary">Nhập KB (.sqlite)</button>
+  </div>
+  <p class="note">Nhập KB hợp nhất các game trong file vào KB của phiên này
+  (game trùng bundle id sẽ bị ghi đè). Profile nhập vào chỉ là gợi ý —
+  hash chưa được đối chiếu với file game nên cần dò lại khi dùng.</p>
+  <div class="row">
+    <label style="flex:1;min-width:180px">Quên game (bundle id hoặc id số):
+      <input type="text" id="kb-forget-id" placeholder="vd: com.example.game">
+    </label>
+    <button id="btn-kb-forget" class="secondary">Quên</button>
+  </div>
+  <div id="kb-result"></div>
+</div>
+
+<div id="tab-support" class="card" hidden>
+  <h2>Ma trận hỗ trợ</h2>
+  <p class="note">Sinh từ dữ liệu thật của PB3: registry (maturity hiệu lực),
+  bảng container/Unity của sdk, cột “số game đã test” từ KB của phiên.
+  Không hardcode. Lưu ý: cột “ngày test” hiện “chưa có” vì bản web không
+  kèm file bằng chứng tests/corpus/*.json (chỉ có trên cây iSH); không có
+  mục nào đạt M4.</p>
+  <button id="btn-support-run">Hiện ma trận hỗ trợ</button>
+  <div id="support-result"></div>
+</div>
+
 <div id="tab-compress" class="card" hidden>
   <h2>Nén / giải nén IPA</h2>
   <p class="note">Nén solid LZMA kiểu WinRAR. File nén ra là bản lưu trữ (.tar.xz),
@@ -175,7 +282,10 @@
   <h2>Giới hạn của bản web (đo thật, xem README)</h2>
   <ul>
     <li>Không dùng UnityPy (không cài được trên Pyodide — thiếu wheel etcpak). Inspect Unity dùng parser thuần của PB3.</li>
-    <li>Không chạy được tính năng cần threading (batch song song); extract chạy tuần tự.</li>
+    <li><b>Batch chỉ chạy tuần tự</b> (không có threading trên web, không có chế độ song song như bản iSH); extract cũng chạy tuần tự.</li>
+    <li><b>KB chỉ sống trong phiên</b> — tải lại trang là mất, trừ khi tải file KB về rồi nhập lại bằng nút “Nhập KB (.sqlite)” trên tab KB.</li>
+    <li><b>Mod</b> chỉ xuất đơn vị nhỏ nhất đã patch (bundle/.assets), không đóng gói lại IPA; mặc định dry-run, chỉ ghi khi bạn bấm nút ghi rõ ràng.</li>
+    <li>Ma trận hỗ trợ: cột “ngày test” hiện “chưa có” vì bản web không kèm file bằng chứng tests/corpus/*.json.</li>
     <li>Dịch Google cần mạng; Google có thể giới hạn tốc độ (HTTP 429) hoặc trình duyệt chặn CORS — khi đó tự động dùng từ điển offline và báo rõ lý do. Chưa thử dịch Google trên Safari thật.</li>
     <li>File đầu vào tối đa 2GB trên web (bằng bản iSH); file gần 2GB vẫn có thể làm Safari trên iPhone văng tab vì RAM.</li>
     <li>Chưa thử trên iPhone thật — tốc độ và RAM trên Safari di động chưa đo.</li>
