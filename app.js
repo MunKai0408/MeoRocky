@@ -3255,7 +3255,7 @@ $("btn-font-tmp").addEventListener("click", async () => {
         (plan.missing_total || 0) + " ký tự</b> (" +
         (plan.missing_letters || []).join(" ") +
         (plan.missing_marks && plan.missing_marks.length ? " · dấu: " + plan.missing_marks.join(" ") : "") +
-        ")</p><p>Chuỗi ký tự thiếu (dán vào ô Custom Characters của TMP Font Asset Creator):<br><b>" +
+        ")</p><p>Chuỗi ký tự thiếu (dán vào ô Custom Characters của TMP Font Asset Creator):<br><b style=\"word-break:break-all\">" +
         esc(plan.chars_text || "") + "</b></p>" +
         "<p>File <b>tmp_glyph_plan.json</b> đã sẵn sàng để tải về — nạp vào script " +
         "<b>unity_editor/TMP_VietnameseAtlas.cs</b> (chạy trong Unity Editor, không chạy trên web). " +
@@ -3263,6 +3263,65 @@ $("btn-font-tmp").addEventListener("click", async () => {
     } else {
       html += "<p>Không có asset nào đủ dữ liệu để lập kế hoạch glyph.</p>";
     }
+    if (parsed.warnings && parsed.warnings.length) {
+      html += "<p class=warn>Cảnh báo: " + parsed.warnings.map(esc).join("; ") + "</p>";
+    }
+    $("font-result").innerHTML = html;
+  } catch (e) { /* đã báo lỗi */ }
+});
+
+// ---- Tạo font fallback TMP (mục C6) ----
+// Kế hoạch fallback (JSON) từ TMP đã đọc: TMP_FontAsset MỚI chỉ chứa chữ
+// Việt thiếu + đăng ký vào danh sách fallback của TMP_Settings. Web chỉ
+// lập kế hoạch — atlas SDF của fallback chỉ sinh được trong Unity Editor
+// (script C# kèm theo, tải về qua link dưới). Asset gốc KHÔNG đổi gì:
+// script C6 không gán lại material/atlas của asset gốc (khác mục 7 sửa
+// chính atlas gốc). Dùng lại kết quả quét TMP lần trước nếu cùng file
+// (bridge cache) nên không quét lại cả IPA.
+$("btn-font-fallback").addEventListener("click", async () => {
+  try {
+    const { parsed } = await runOp("Tạo font fallback", "tmp_font_fallback",
+      [inputPath()], inputFileArgs(), true);
+    const plan = parsed.fallback_plan || {};
+    const fbs = plan.fallbacks || [];
+    let html = "<p><b>Kế hoạch font fallback</b> (mục C6) · cần tạo <b>" + fbs.length +
+      " fallback</b> · đã đủ chữ Việt " + (plan.already_full_count || 0) +
+      " asset · không lập được kế hoạch " + (plan.unplanned_count || 0) + " asset" +
+      (parsed.scan_reused ? " · dùng lại kết quả quét TMP lần trước (không quét lại file)" : "") + "</p>";
+    html += "<p>Chuỗi ký tự thiếu (gộp mọi asset, " + (plan.missing_total || 0) + " ký tự): <b style=\"word-break:break-all\">" +
+      esc(plan.chars_text || "") + "</b></p>";
+    for (const fb of fbs) {
+      html += "<h3>" + esc(fb.name || "?") + " → " + esc(fb.fallback_name || "?") + "</h3>";
+      html += "<p>Thiếu: <b>" + fb.missing_total + " ký tự</b>" +
+        (fb.missing_letters && fb.missing_letters.length ? " · chữ: " + esc(fb.missing_letters.join(" ")) : "") +
+        (fb.missing_marks && fb.missing_marks.length ? " · dấu: " + esc(fb.missing_marks.join(" ")) : "") + "</p>";
+      html += "<p>Giữ tham số gốc: PointSize " + fb.base_point_size + " · Padding " +
+        (fb.base_padding != null ? fb.base_padding : "?") + " · atlas gốc <b>" +
+        fb.base_atlas_width + "×" + fb.base_atlas_height + "</b> → atlas fallback <b>" +
+        fb.fallback_atlas_width + "×" + fb.fallback_atlas_height + "</b>" +
+        " · font nguồn gợi ý: <b>" + esc(fb.source_font_hint || "?") + "</b>" +
+        " · render mode: giữ nguyên của asset gốc (script đọc lại trong Editor)</p>";
+      html += "<p>Material gốc: <b>không đổi</b>" +
+        (fb.material_refs && fb.material_refs.length
+          ? " (" + fb.material_refs.map((r) => esc(r.name || ("#" + r.path_id))).join(", ") + ")" : "") +
+        " · file asset mới: <b>" + esc(fb.fallback_asset_path || "") + "</b></p>";
+      if (fb.ascii_note) html += "<p class=warn>" + esc(fb.ascii_note) + "</p>";
+    }
+    if (plan.already_full && plan.already_full.length) {
+      html += "<p>Đã đủ chữ Việt, không cần fallback: " +
+        plan.already_full.map((a) => esc(a.name || "?")).join(", ") + "</p>";
+    }
+    if (plan.unplanned && plan.unplanned.length) {
+      html += "<p class=warn>Không lập được kế hoạch (" + plan.unplanned.length + " asset — không đọc được bảng glyph nên không biết thiếu chữ nào): " +
+        plan.unplanned.map((a) => esc(a.name || "?")).join(", ") + "</p>";
+    }
+    html += "<p>File <b>tmp_fallback_plan.json</b> đã sẵn sàng để tải về — nạp vào script " +
+      "<b>unity_editor/TMP_VietnameseFallback.cs</b> (chạy trong Unity Editor, không chạy trên web). " +
+      "<a href=\"unity_editor/TMP_VietnameseFallback.cs\" download=\"TMP_VietnameseFallback.cs\">Tải script C# về</a> " +
+      "(hoặc chép từ repo: unity_editor/TMP_VietnameseFallback.cs). " +
+      "Trong Editor: chọn asset gốc → menu BearTea → TMP → “4. Tạo font fallback tiếng Việt (từ file tmp_fallback_plan.json)” — " +
+      "script tạo asset mới rồi đăng ký vào danh sách fallback của TMP_Settings.</p>";
+    html += "<p class=warn>Ranh giới thật: kế hoạch này KHÔNG phải TMP_FontAsset dùng được ngay — atlas SDF của fallback chỉ sinh được trong Unity Editor (FontEngine). Fallback chỉ cứu chữ Việt thiếu.</p>";
     if (parsed.warnings && parsed.warnings.length) {
       html += "<p class=warn>Cảnh báo: " + parsed.warnings.map(esc).join("; ") + "</p>";
     }

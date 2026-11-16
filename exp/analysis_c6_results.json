@@ -1,0 +1,55 @@
+{
+  "total": 10,
+  "failures": [],
+  "results": {
+    "static_node_py_check": {
+      "ok": true,
+      "detail": "node --check OK: app.js, sw.js; python3 -m py_compile OK: bridge.py, sdk/tmp_font.py, tests/test_tmp_fallback.py",
+      "seconds": 0.3
+    },
+    "static_c6_checks": {
+      "ok": true,
+      "detail": "schema tmp_fallback_plan/1 + C# khớp Python (134+8) + đăng ký TMP_Settings.fallbackFontAssets + fallbackFontAssetTable + CreateFontAsset/TryAddCharacters + KHÔNG sửa asset gốc + nút/handler/bridge/cache + tests.json=158, files.json=89",
+      "seconds": 0.1
+    },
+    "fixture_regenerate": {
+      "ok": true,
+      "detail": "make_tmp_ipas.py -> /tmp/c6_fx/tmp_all.ipa + tmp_expected.json + tmp_real_xolonium.bin (18 TMP_FontAsset giả lập + byte thật Xolonium)",
+      "seconds": 0.1
+    },
+    "python_fallback_plan_fixture": {
+      "ok": true,
+      "detail": "assets=19; fallback missing_total=142 (glyph plan 142); fallbacks_needed=15; already_full=0; unplanned=4; Xolonium missing_total=106, fallback: Xolonium Vietnamese Fallback; 0 lệch",
+      "seconds": 0.2
+    },
+    "python_unit_tmp_fallback": {
+      "ok": true,
+      "detail": "unittest tests.test_tmp_fallback + tests.test_tmp_font: Ran 23 tests, OK (exit=0)",
+      "seconds": 0.2
+    },
+    "browser_lazy_boot_state": {
+      "ok": true,
+      "detail": "status=\"Chưa khởi động — chọn file để bắt đầu (Pyodide + PB3 chỉ tải khi cần; lần đầu cần mạng, lần sau dùng được offline).\"; __PB3_BOOT_STATE={\"booted\":false,\"workerCreated\":false}; request Pyodide/worker.js/pb3 trước khi chọn file: KHÔNG CÓ",
+      "seconds": 2.2
+    },
+    "browser_tmp_fallback_ui": {
+      "ok": true,
+      "detail": "status: \"Sẵn sàng — 20 plugin đang chạy · font đi kèm: đủ 142/142 (134 chữ cái + 8 dấu)\"; đọc TMP có 134/134: true; kế hoạch nhắc tmp_fallback_plan.json: true, TMP_Settings: true, link script C#: true, tên fallback: true, dùng lại lần quét trước: true, material không đổi: true; đoạn đầu kết quả: \"Kế hoạch font fallback (mục C6) · cần tạo 13 fallback · đã đủ chữ Việt 0 asset · không lập được kế hoạch 4 asset · dùng lại kết quả quét TMP lần trước (không quét lại file)Chuỗi ký tự thiếu (gộp mọi asset, 142 ký tự): ÀÁ\"",
+      "seconds": 5.7
+    },
+    "browser_tmp_fallback_download": {
+      "ok": true,
+      "detail": "download: tmp_fallback_plan.json (79698B); schema=tmp_fallback_plan/1, missing_total=142, fallbacks=13, chars_text.length=142, SourceCodePro: thiếu chữ 0 + dấu 8, atlas fallback 1024x1024"
+    },
+    "browser_cs_script_served": {
+      "ok": true,
+      "detail": "GET unity_editor/TMP_VietnameseFallback.cs: HTTP 200, 29439 ký tự; có TMP_Settings/fallbackFontAssets/fallbackFontAssetTable/CreateFontAsset/TryAddCharacters: TMP_Settings=true fallbackFontAssets=true fallbackFontAssetTable=true CreateFontAsset=true TryAddCharacters=true; không gán atlas/material asset gốc: true",
+      "seconds": 0
+    },
+    "browser_390_no_overflow_no_errors": {
+      "ok": true,
+      "detail": "scrollWidth=390 clientWidth=390; pageerror/console-error thật: không có",
+      "seconds": 0
+    }
+  }
+}

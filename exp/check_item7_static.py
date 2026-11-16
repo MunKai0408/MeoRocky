@@ -131,6 +131,7 @@ chk(set(listed) == set(files_json["files"]) | {
     "icons/icon-192.png", "icons/icon-512.png", "icons/apple-touch-icon.png",
     "fonts/BeVietnamPro-Regular.ttf.b64",
     "fixtures/selftest.zip",
+    "fzstd/index.mjs",
     "pb3/files.json",
 } | {"pyodide/" + f for f in os.listdir(os.path.join(SITE, "pyodide"))},
     "sw.js precache lech files.json/dia")

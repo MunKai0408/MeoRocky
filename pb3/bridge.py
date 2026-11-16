@@ -1100,7 +1100,7 @@ def tmp_font_read(path):
         from sdk import tmp_font as tf
 
         _check_size(path)
-        res = tf.scan_source(path)
+        res, _reused = _tmp_scan_cached(path)
         plan = res["glyph_plan"]
         out = "/tmp/tmp_glyph_plan.json"
         with open(out, "w", encoding="utf-8") as fh:
@@ -1114,6 +1114,67 @@ def tmp_font_read(path):
             "files_scanned": list(res["files_scanned"] or []),
             "bundle_nodes": int(res["bundle_nodes"]),
             "glyph_plan": plan,
+        }, ensure_ascii=False)
+    except Exception as e:  # noqa: BLE001
+        return _err(e)
+
+
+# Cache lần quét TMP gần nhất (mục C6): nút "Tạo font fallback" dùng lại
+# kết quả của nút "Đọc TMP_FontAsset" thay vì quét lại cả file/IPA.
+# Khóa = (đường dẫn, kích thước, mtime); khác file thì quét lại.
+_LAST_TMP_SCAN = {"path": None, "size": None, "mtime": None, "res": None}
+
+
+def _tmp_scan_cached(path):
+    """Quét TMP, dùng lại kết quả lần trước nếu đúng cùng file."""
+    from sdk import tmp_font as tf
+
+    try:
+        st = os.stat(path)
+        key = (path, st.st_size, st.st_mtime_ns)
+    except OSError:
+        key = None
+    if (key is not None and _LAST_TMP_SCAN["res"] is not None
+            and (_LAST_TMP_SCAN["path"], _LAST_TMP_SCAN["size"],
+                 _LAST_TMP_SCAN["mtime"]) == key):
+        return _LAST_TMP_SCAN["res"], True
+    res = tf.scan_source(path)
+    if key is not None:
+        _LAST_TMP_SCAN.update({"path": key[0], "size": key[1],
+                               "mtime": key[2], "res": res})
+    return res, False
+
+
+def tmp_font_fallback(path):
+    """Lập kế hoạch font fallback TMP (mục C6).
+
+    Đọc lại kết quả quét TMP (dùng cache của tmp_font_read nếu cùng file,
+    không thì quét mới) rồi ghi kế hoạch fallback ra
+    /tmp/tmp_fallback_plan.json để JS tải về. Kế hoạch ghi: chữ Việt nào
+    thiếu, tham số atlas gốc cần giữ, tên asset fallback mới, các bước
+    Editor. Web KHÔNG tạo được TMP_FontAsset thật — atlas SDF của
+    fallback chỉ sinh được trong Unity Editor (script
+    site/unity_editor/TMP_VietnameseFallback.cs).
+    """
+    try:
+        from sdk import tmp_font as tf
+
+        _check_size(path)
+        res, reused = _tmp_scan_cached(path)
+        plan = tf.build_fallback_plan(res["items"], res["glyph_plan"])
+        out = "/tmp/tmp_fallback_plan.json"
+        with open(out, "w", encoding="utf-8") as fh:
+            json.dump(plan, fh, ensure_ascii=False, indent=1)
+        return json.dumps({
+            "ok": True, "dest": out, "filename": "tmp_fallback_plan.json",
+            "scan_reused": reused,
+            "assets": res["items"],
+            "candidates": res["candidates"],
+            "summary": res["summary"],
+            "warnings": list(res["warnings"] or []),
+            "files_scanned": list(res["files_scanned"] or []),
+            "bundle_nodes": int(res["bundle_nodes"]),
+            "fallback_plan": plan,
         }, ensure_ascii=False)
     except Exception as e:  # noqa: BLE001
         return _err(e)

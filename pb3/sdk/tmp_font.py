@@ -61,6 +61,8 @@ NOT_DONE = [
     "liên kết TextMeshPro component -> TMP_FontAsset đang dùng thật",
     "bảng kerning, fallback font, font weights, giá trị shader SDF trong material",
     "ghi ngược/tạo lại atlas SDF (cần Unity Editor, xem site/unity_editor/)",
+    "tạo TMP_FontAsset fallback trên web (mục C6 làm phần kế hoạch + script "
+    "Editor; atlas SDF của fallback cũng chỉ sinh được trong Editor)",
 ]
 
 
@@ -1040,9 +1042,229 @@ def build_glyph_plan(items) -> dict:
             "Nếu atlas cũ đầy: script tạo atlas mới CÙNG padding/render "
             "mode/point size, copy bảng glyph + face info sang asset gốc "
             "rồi mới đổi material.mainTexture.",
-            "Khác với mục C7 (làm sau): C7 tạo TMP_FontAsset MỚI chỉ chứa "
-            "dấu tiếng Việt làm fallback, KHÔNG sửa atlas gốc; mục 7 sửa "
-            "chính atlas gốc.",
+            "Khác với mục C6: C6 tạo TMP_FontAsset MỚI chỉ chứa dấu tiếng "
+            "Việt làm fallback, KHÔNG sửa atlas gốc; mục 7 sửa chính atlas "
+            "gốc. Xem build_fallback_plan() (mục C6).",
+        ],
+    }
+    return plan
+
+
+# ------------------------------------------------------------------ ke hoach fallback (muc C6)
+FALLBACK_SCHEMA = "tmp_fallback_plan/1"
+#: Atlas fallback: chi chua chu thieu (<=142 ky tu) nen khong can atlas
+#: to nhu goc; gioi han [256, 1024] moi chieu, giu dung ty le goc khi co
+#: the. Script Editor tu tang len toi da 4096 neu TryAddCharacters bao
+#: atlas day (xem site/unity_editor/TMP_VietnameseFallback.cs).
+FALLBACK_ATLAS_MIN = 256
+FALLBACK_ATLAS_MAX = 1024
+FALLBACK_ATLAS_DEFAULT = 512
+FALLBACK_ASSET_DIR = "Assets/BearTea"
+
+
+def _fallback_atlas_size(base_w, base_h):
+    """Kich thuoc atlas cho asset fallback: goc kep trong [256, 1024].
+
+    Tra (width, height); goc khong co so thi 512x512. Giu ty le goc:
+    neu goc la 512x256 thi fallback la 512x256 (khong ep vuong).
+    """
+    def clamp(v):
+        if v is None:
+            return FALLBACK_ATLAS_DEFAULT
+        try:
+            v = int(v)
+        except (TypeError, ValueError):
+            return FALLBACK_ATLAS_DEFAULT
+        return min(max(v, FALLBACK_ATLAS_MIN), FALLBACK_ATLAS_MAX)
+
+    return clamp(base_w), clamp(base_h)
+
+
+def build_fallback_plan(items, glyph_plan=None) -> dict:
+    """Ke hoach font fallback TMP cho Unity Editor (muc C6).
+
+    Tu cac TMP_FontAsset da doc (items cua scan_source / scan_serialized_
+    file), lap danh sach TMP_FontAsset MOI chi chua chu tieng Viet con
+    thieu, de script Editor tao roi dang ky vao danh sach fallback cua
+    TMP_Settings (+ bang fallback cua asset goc).
+
+    RANH GIOI (doc ky):
+    - Web CHI LAP KE HOACH (JSON): chu nao thieu, tham so atlas goc nao
+      can giu (PointSize, Scale, Padding, render mode doc lai trong
+      Editor), ten asset fallback, cac buoc Editor. Web KHONG tao duoc
+      TMP_FontAsset that vi atlas SDF chi sinh duoc bang FontEngine
+      trong Unity Editor — ke hoach nay khong phai asset dung duoc ngay.
+    - Asset fallback CHI cuu chu tieng Viet thieu. Neu asset goc thieu
+      ca chu Latin (ascii_missing), fallback khong cuu duoc phan do —
+      ghi ro tung target de nguoi dung biet phai sua them atlas goc
+      (muc 7) hoac them chu Latin vao fallback.
+    - Material/texture/atlas GOC KHONG DOI: ke hoach chi ghi ten tham
+      chieu de script Editor tim dung asset goc; script C6 khong gan
+      lai material.mainTexture hay atlasTexture cua asset goc.
+    - Asset doc khong duoc bang glyph (glyph_table_not_found /
+      layout_unknown) thi KHONG lap duoc ke hoach (khong biet thieu chu
+      nao) — ghi vao `unplanned`, khong bia danh sach ky tu.
+    """
+    if glyph_plan is None:
+        glyph_plan = build_glyph_plan(items)
+    fallbacks = []
+    already_full = []
+    unplanned = []
+    for it in items:
+        st = it.get("status")
+        if st not in ("parsed", "partial"):
+            unplanned.append({
+                "name": it.get("name"),
+                "source": it.get("source"),
+                "path_id": it.get("path_id"),
+                "status": st,
+                "reason": (it.get("reason")
+                           or "Không đọc được bảng glyph nên không biết "
+                           "thiếu chữ nào — cần đọc lại trong Editor."),
+            })
+            continue
+        vi = it.get("vietnamese")
+        if not vi:
+            unplanned.append({
+                "name": it.get("name"),
+                "source": it.get("source"),
+                "path_id": it.get("path_id"),
+                "status": st,
+                "reason": "Không có dữ liệu độ phủ tiếng Việt.",
+            })
+            continue
+        miss_letters = list(vi.get("missing_codepoints", []))
+        miss_marks = list(vi.get("marks", {}).get("missing_codepoints", []))
+        fi = it.get("font_info") or {}
+        refs = it.get("refs") or {}
+        if not miss_letters and not miss_marks:
+            already_full.append({
+                "name": it.get("name"),
+                "source": it.get("source"),
+                "path_id": it.get("path_id"),
+                "face_name": fi.get("name"),
+                "note": "Đã đủ 134 chữ + 8 dấu — không cần fallback.",
+            })
+            continue
+        missing_all = sorted(set(miss_letters) | set(miss_marks))
+        base_name = fi.get("name") or it.get("name") or "TMP Font"
+        fb_w, fb_h = _fallback_atlas_size(fi.get("atlas_width"),
+                                          fi.get("atlas_height"))
+        ascii_missing = list(vi.get("ascii_missing", []))
+        fallbacks.append({
+            "name": it.get("name"),
+            "source": it.get("source"),
+            "path_id": it.get("path_id"),
+            "status": st,
+            "fallback_name": "%s Vietnamese Fallback" % base_name,
+            "fallback_asset_path": "%s/%s Vietnamese Fallback.asset"
+                                   % (FALLBACK_ASSET_DIR, base_name),
+            "face_name": fi.get("name"),
+            "source_font_hint": fi.get("name"),
+            "font_refs": refs.get("font", []),
+            "missing_letters": [_hex(c) for c in miss_letters],
+            "missing_letters_codepoints": miss_letters,
+            "missing_marks": [_hex(c) for c in miss_marks],
+            "missing_marks_codepoints": miss_marks,
+            "missing_total": len(missing_all),
+            "chars_text": vietnamese_chars_text(missing_all),
+            "ascii_missing": ascii_missing,
+            "ascii_note": ("Asset gốc còn thiếu chữ Latin (%s) — fallback "
+                           "chỉ chứa chữ Việt nên KHÔNG cứu được phần này; "
+                           "sửa atlas gốc (mục 7) hoặc thêm chữ Latin vào "
+                           "fallback trong Editor."
+                           % ", ".join(ascii_missing)
+                           if ascii_missing else None),
+            "base_point_size": fi.get("point_size"),
+            "base_scale": fi.get("scale"),
+            "base_line_height": fi.get("line_height"),
+            "base_padding": fi.get("padding"),
+            "base_atlas_width": fi.get("atlas_width"),
+            "base_atlas_height": fi.get("atlas_height"),
+            "base_atlas_basis": fi.get("atlas_basis"),
+            "base_render_mode": None,
+            "render_mode_note": "Render mode không nằm trong FaceInfo — "
+                                "script Editor đọc lại từ asset gốc "
+                                "(fontAsset.atlasRenderMode) và giữ nguyên.",
+            "fallback_atlas_width": fb_w,
+            "fallback_atlas_height": fb_h,
+            "glyph_count": (it.get("glyph_table") or {}).get("count"),
+            "declared_char_count": fi.get("declared_char_count"),
+            "vietnamese_covered": vi.get("covered"),
+            "vietnamese_required": vi.get("required"),
+            "material_refs": refs.get("material", []),
+            "texture_refs": refs.get("texture", []),
+            "material_unchanged": True,
+            "material_note": "Material gốc KHÔNG đổi: script C6 chỉ đọc "
+                             "tham số từ asset gốc, không gán lại "
+                             "material.mainTexture hay atlasTexture của nó.",
+            "editor_steps": [
+                "Trong Unity Editor: chọn TMP_FontAsset gốc \"%s\" trong "
+                "cửa sổ Project." % (it.get("name") or base_name),
+                "Menu BearTea → TMP → \"4. Tạo font fallback tiếng Việt "
+                "(từ file tmp_fallback_plan.json)\" rồi chọn file kế "
+                "hoạch này.",
+                "Chọn font nguồn khi script hỏi (font gốc của game, hoặc "
+                "Be Vietnam Pro nếu font gốc đã mất) — atlas SDF của "
+                "fallback chỉ sinh được trong Editor.",
+                "Kiểm tra Console: fallback \"%s\" đã tạo + đã đăng ký "
+                "vào TMP_Settings và bảng fallback của asset gốc."
+                % ("%s Vietnamese Fallback" % base_name),
+                "Bấm Play, mở màn hình có chữ Việt: chữ thiếu trước đây "
+                "phải hiện đủ dấu, font gốc không đổi nét/viền.",
+            ],
+        })
+    missing_all = sorted(set(glyph_plan.get("missing_letters_codepoints", []))
+                         | set(glyph_plan.get("missing_marks_codepoints", [])))
+    plan = {
+        "schema": FALLBACK_SCHEMA,
+        "chars_text": glyph_plan.get("chars_text", ""),
+        "chars_text_all": glyph_plan.get("chars_text_all", ""),
+        "missing_letters": glyph_plan.get("missing_letters", []),
+        "missing_letters_codepoints": glyph_plan.get(
+            "missing_letters_codepoints", []),
+        "missing_marks": glyph_plan.get("missing_marks", []),
+        "missing_marks_codepoints": glyph_plan.get(
+            "missing_marks_codepoints", []),
+        "missing_total": len(missing_all),
+        "fallbacks": fallbacks,
+        "fallbacks_needed": len(fallbacks),
+        "already_full": already_full,
+        "already_full_count": len(already_full),
+        "unplanned": unplanned,
+        "unplanned_count": len(unplanned),
+        "editor_script": "unity_editor/TMP_VietnameseFallback.cs",
+        "editor_script_url": "unity_editor/TMP_VietnameseFallback.cs",
+        "steps_global": [
+            "Trên web BearTea: chọn file .assets/.unity3d hoặc IPA của "
+            "game → tab Font → \"Đọc TMP_FontAsset\" rồi \"Tạo font "
+            "fallback\" → tải file tmp_fallback_plan.json này về.",
+            "Tải script unity_editor/TMP_VietnameseFallback.cs về (link "
+            "trong kết quả trên web) rồi chép vào Assets/Editor/ trong "
+            "project Unity của game.",
+            "Trong Unity Editor: làm theo editor_steps của từng fallback "
+            "trong file này (chọn asset gốc → menu BearTea → TMP → "
+            "mục 4).",
+            "Kiểm tra: menu BearTea → TMP → \"6. Kiểm tra fallback đã "
+            "đăng ký (TMP_Settings)\" phải liệt kê đủ fallback mới.",
+            "Thử trong game thật (Play trong Editor rồi build ra iPhone) "
+            "— chỉ Joseph làm được bước cuối này.",
+        ],
+        "notes": [
+            "Kế hoạch này KHÔNG phải TMP_FontAsset dùng được ngay: atlas "
+            "SDF của fallback chỉ sinh được trong Unity Editor (FontEngine) "
+            "— web không sinh được SDF, không dùng msdf-atlas-gen.",
+            "Fallback chỉ cứu chữ tiếng Việt thiếu; chữ Latin thiếu (nếu "
+            "có, xem ascii_note từng target) cần sửa atlas gốc (mục 7) "
+            "hoặc thêm vào fallback trong Editor.",
+            "Material/texture/atlas của asset gốc KHÔNG đổi — script C6 "
+            "chỉ đọc tham số gốc, không gán lại material.mainTexture hay "
+            "atlasTexture của asset gốc (khác mục 7 sửa chính atlas gốc).",
+            "Khác với mục 7: mục 7 thêm glyph vào atlas gốc (giữ nguyên "
+            "material); C6 tạo asset MỚI chỉ chứa dấu/chữ Việt thiếu rồi "
+            "đăng ký fallback — dùng khi atlas gốc không sửa được (mất "
+            "font nguồn, không tạo atlas mới được) hoặc muốn giữ nguyên "
+            "100% asset gốc.",
         ],
     }
     return plan
