@@ -9,7 +9,7 @@
 //  1. Tĩnh/thuần: hàm chọn lại tồn tại + định tuyến đúng tab; renderRecent
 //     có nút "Chọn lại file" trên MỌI dòng (còn trong phiên: kèm "Tải lại";
 //     hết phiên: kèm ghi chú "hết phiên — chọn lại file từ máy", KHÔNG có
-//     "Tải lại"); sw.js CACHE_VERSION v17; files.json=92 / tests.json=162.
+//     "Tải lại"); sw.js CACHE_VERSION v18; files.json=92 / tests.json=163.
 //  2. UI 390px — CẢ 5 game thật, CÒN TRONG PHIÊN: mở file ở khung chính
 //     rồi bấm "Chọn lại file" trên dòng đó -> mở lại ngay (không mở hộp
 //     chọn file), đúng tab Danh sách, state.file vẫn là file đó.
@@ -163,21 +163,21 @@ if (want(1)) {
   const idx = fs.readFileSync(SITE + "/index.html", "utf8");
   const filesJson = JSON.parse(fs.readFileSync(SITE + "/pb3/files.json", "utf8"));
   const testsJson = JSON.parse(fs.readFileSync(SITE + "/pb3/tests.json", "utf8"));
-  const noV16 = [];
+  const noV17 = [];
   for (const f of ["check_item8_static.py", "check_analysis_c6_static.py", "check_analysis_c7_static.py",
     "check_analysis_c8_static.py", "check_analysis_c9_static.py", "verify_analysis_c8.mjs",
     "verify_analysis_c9.mjs", "verify_limit_2gb.mjs", "verify_patch01_web.mjs", "verify_phase1_ci.mjs",
     "verify_analysis_translate_full.mjs", "verify_analysis_mod_search.mjs"]) {
     const c = fs.readFileSync(EXP + "/" + f, "utf8");
-    if (c.includes("v16-20261116") || c.includes("v16 ")) noV16.push(f);
+    if (c.includes("v17-20261116") || c.includes("v17 ")) noV17.push(f);
   }
   rec("static_counts_and_cache",
-    filesJson.files.length === 92 && testsJson.files.length === 162 &&
-    swJs.includes('CACHE_VERSION = "v17-20261116"') && !swJs.includes("v16-20261116") &&
-    noV16.length === 0,
+    filesJson.files.length === 92 && testsJson.files.length === 163 &&
+    swJs.includes('CACHE_VERSION = "v18-20261116"') && !swJs.includes("v17-20261116") &&
+    noV17.length === 0,
     "files.json=" + filesJson.files.length + " (ky vong 92) · tests.json=" + testsJson.files.length +
-    " (ky vong 162) · sw.js v17-20261116: " + swJs.includes('CACHE_VERSION = "v17-20261116"') +
-    " · file exp con sot v16: " + (noV16.join(",") || "khong"), performance.now() - t);
+    " (ky vong 163) · sw.js v18-20261116: " + swJs.includes('CACHE_VERSION = "v18-20261116"') +
+    " · file exp con sot v17: " + (noV17.join(",") || "khong"), performance.now() - t);
   t = performance.now();
   const r = sh("node --check " + SITE + "/app.js && node --check " + SITE + "/worker.js && node --check " + SITE + "/worker-pool.js", EXP);
   rec("static_js_syntax", r.status === 0, r.status === 0 ? "node --check app.js + worker.js + worker-pool.js OK" : (r.stderr || "").slice(0, 300), performance.now() - t);
@@ -455,7 +455,7 @@ if (want(5)) {
     (o) => /33\/33 PASS, 0 FAIL/.test(o) && !/CHAY MOT PHAN/.test(o), 1800000);
   runHarness("regress_mod_search_B",
     "env -u ONLY node verify_analysis_mod_search.mjs 2>&1 | grep -E 'TONG KET'",
-    (o) => /24\/24 PASS, 0 FAIL/.test(o) && !/CHAY MOT PHAN/.test(o), 1800000);
+    (o) => /25\/25 PASS, 0 FAIL/.test(o) && !/CHAY MOT PHAN/.test(o), 1800000);
   runHarness("regress_item8_static",
     "python3 check_item8_static.py 2>&1 | tail -n 5",
     (o) => /"fails": \[\]/.test(o) || /0 fails/.test(o));

@@ -317,6 +317,12 @@ if (want(2)) {
 if (want(3)) {
   await openPage();
   // 3a. Trích xuất zip nhỏ thật (game.json 3 entry) rồi lấy vào Mod.
+  // Fixture e2e nằm ở /tmp (thư mục tạm — file có thể mất sau khi khởi
+  // động lại máy, từng làm rớt mục này ở đợt gộp 1 file 2026-11-16):
+  // tự tạo lại đúng hình dạng đã ghi nếu thiếu, để harness tự chạy được.
+  if (!fs.existsSync(TINY_ZIP)) {
+    sh("python3 -c \"import json, zipfile; z = zipfile.ZipFile('/tmp/mod_tiny.zip', 'w', zipfile.ZIP_DEFLATED); z.writestr('game.json', json.dumps({'setting': 'Cài đặt', 'play': 'Chơi', 'quit': 'Thoát'}, ensure_ascii=False, indent=2)); z.close()\"", EXP);
+  }
   {
     let t = performance.now();
     if (!fs.existsSync(TINY_ZIP)) {
@@ -340,6 +346,12 @@ if (want(3)) {
         const el = document.getElementById("extract-result");
         return el && el.textContent.includes("Kết quả:");
       }, null, { timeout: 300000 });
+      // Muc nay truoc day CHI duoc ghi khi file thieu (FAIL) ma khong bao
+      // gio duoc ghi PASS khi chay duoc — ket qua cu FAIL bi giu lai mai
+      // trong results.json do co che gop ket qua cu (dot gop 1 file
+      // 2026-11-16: file /tmp mat di, muc FAIL them vao roi khong bao gio
+      // duoc ghi de). Ghi PASS tai day de muc tu chua lanh.
+      rec("e2e_extract_tiny_zip", true, "mod_tiny.zip co san, trich xuat zip nho chay duoc", performance.now() - t);
       const extractTxt = await elText("extract-result");
       // Đang ở view Chức năng sau extract: dùng tab #btn-mod (nút
       // #btn-card-mod chỉ có ở trang chủ, đang ẩn nên không click được).

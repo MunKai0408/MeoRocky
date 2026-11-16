@@ -123,6 +123,27 @@ def report_text(report: Dict[str, Any]) -> str:
                                             f.get("source") or f.get("path", "?")))
         for w in f.get("warnings", []):
             lines.append("      cảnh báo: " + w)
+    if report.get("merged_files"):
+        lines.append("")
+        lines.append("gộp thành 1 file mỗi ngôn ngữ (%d):" % len(report["merged_files"]))
+        for m in report["merged_files"]:
+            lines.append("  - %s: %d key (gộp từ %d file, %d key trùng giống hệt đã gộp, "
+                         "%d key trùng khác giá trị — giữ bản đầu)"
+                         % (m.get("file", "?"), m.get("keys", 0),
+                            len(m.get("sources", [])), m.get("duplicates_identical", 0),
+                            m.get("conflicts_total", 0)))
+            for src in m.get("sources", []):
+                lines.append("      gộp từ: %s" % src)
+            for c in m.get("conflicts", [])[:10]:
+                lines.append("      xung đột key %s: giữ %r ← %s; bỏ %r ← %s"
+                             % (c.get("key", "?"),
+                                (c.get("kept") or {}).get("value", "?"),
+                                (c.get("kept") or {}).get("source", "?"),
+                                (c.get("dropped") or {}).get("value", "?"),
+                                (c.get("dropped") or {}).get("source", "?")))
+            if m.get("conflicts_total", 0) > len(m.get("conflicts", [])):
+                lines.append("      ... và %d xung đột khác (xem extraction_report.json)"
+                             % (m["conflicts_total"] - len(m.get("conflicts", []))))
     if report.get("skipped"):
         lines.append("")
         lines.append("file bỏ qua (%d):" % len(report["skipped"]))

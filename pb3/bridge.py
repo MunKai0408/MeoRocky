@@ -265,7 +265,7 @@ def unity_inspect_entry(path, entry):
         return _err(e)
 
 
-def extract(path, source_paths=None, locales=None):
+def extract(path, source_paths=None, locales=None, merge_one_file=None):
     """Trích xuất text đầy đủ (pipeline 7 bước của PB3).
 
     Kết quả ghi ra /tmp/pb3out rồi nén thành /tmp/extract.zip để JS tải về.
@@ -278,6 +278,10 @@ def extract(path, source_paths=None, locales=None):
     (nguồn gốc: `en.json ← ...localization-locales_assets_all.bundle`),
     "skipped" (mọi file bỏ qua kèm lý do — không bao giờ im lặng) và
     "log" (log pipeline, vd "Unity: ... -> N TextAsset").
+    merge_one_file: True = gộp thành 1 file mỗi ngôn ngữ đã chọn
+    (en.json/zh.json; Joseph 23:35). None/False = giữ file tách per-unit
+    như cũ (mặc định False để API/harness cũ không đổi; bản web bật bằng
+    checkbox ở tab Trích xuất, mặc định tick).
     """
     try:
         from sdk import extraction as ext
@@ -306,7 +310,8 @@ def extract(path, source_paths=None, locales=None):
         req = ext.ExtractionRequest(
             source=path, registry=_reg, tempdir=str(_app.paths.temp),
             root=WEB_ROOT, out_dir=out_dir, progress_fn=_pf,
-            source_paths=paths, locales=locs)
+            source_paths=paths, locales=locs,
+            merge_one_file=bool(merge_one_file))
         r = ext.run_extraction(req)
         files = [{"path": f.path, "plugin": f.plugin,
                   "entries": int(f.entries), "locale": f.locale,
@@ -350,6 +355,7 @@ def extract(path, source_paths=None, locales=None):
         return json.dumps({
             "ok": bool(r.ok), "decision": str(r.decision),
             "total_entries": int(r.total_entries), "files": files,
+            "merged_files": list(r.merged_files or []),
             "skipped": list(r.skipped or []),
             "log": list((r.report or {}).get("log") or []),
             "errors": list(r.errors or []), "zip_path": zpath,

@@ -422,6 +422,17 @@
     entry không rõ ngôn ngữ (vd file config) vẫn được giữ lại. Không fail cả
     đợt khi một ngôn ngữ vắng mặt.</p>
     <div class="row">
+      <label><input type="checkbox" id="extract-merge-one" checked> Gộp thành 1 file mỗi ngôn ngữ (en.json / zh.json)</label>
+    </div>
+    <p class="note">Tick sẵn: toàn bộ chuỗi của mỗi ngôn ngữ đã chọn — từ mọi
+    bundle/.assets/StringTable/CSV — gộp vào đúng 1 file phẳng (en.json hoặc
+    zh.json), giữ thứ tự gốc, không hậu tố #N; trùng key giữ bản đầu và liệt
+    kê xung đột trong extraction_report.txt, nguồn từng key ghi trong file
+    en.provenance.json / zh.provenance.json đi kèm trong extract.zip (để ép
+    lại vào file gốc sau này). Bỏ tick để giữ các file tách theo từng đơn vị
+    (resources.monobehaviour.en.json…). File config (BillingMode, Info…)
+    vẫn xuất riêng như cũ.</p>
+    <div class="row">
       <button id="btn-extract-select-all" class="secondary" disabled>Chọn tất cả</button>
       <button id="btn-extract-deselect-all" class="secondary" disabled>Bỏ chọn tất cả</button>
     </div>

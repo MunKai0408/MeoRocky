@@ -1768,6 +1768,11 @@ $("btn-extract-run").addEventListener("click", async () => {
     }
     const locSel = ($("extract-locales") && $("extract-locales").value) || "both";
     const locales = locSel === "both" ? ["en", "zh"] : [locSel];
+    // Gộp 1 file (Joseph 23:35): checkbox mặc định tick — gộp toàn bộ chuỗi
+    // của mỗi ngôn ngữ đã chọn thành đúng 1 file (en.json/zh.json); bỏ tick
+    // để giữ file tách per-unit như cũ. Gửi kèm làm tham số thứ 4 cho
+    // bridge.extract (mặc định bridge là False để API/harness cũ không đổi).
+    const mergeOne = !($("extract-merge-one") && !$("extract-merge-one").checked);
     // Đợt sửa 2026-11-16 (mục 2): file >400MB hỏi xác nhận TRƯỚC khi chạy —
     // trích xuất nay đọc streaming từng phần nhưng RAM đỉnh vẫn ~2× dung
     // lượng file (file + entry lớn nhất đang giải nén), trên iPhone
@@ -1779,8 +1784,17 @@ $("btn-extract-run").addEventListener("click", async () => {
         + "Bấm OK để tiếp tục, hoặc Huỷ để dùng bản iSH cho file này.");
       if (!ok) { showError("Đã huỷ trích xuất file lớn — dùng bản iSH cho file này nếu cần."); return; }
     }
-    const { parsed } = await runOp("Trích xuất text", "extract", [inputPath(), sourcePaths, locales], inputFileArgs(), true);
-    let html = "<p>Kết quả: <b>" + esc(parsed.decision) + "</b> · " + parsed.total_entries + " entry · " + parsed.files.length + " file · file <b>extract.zip</b> đã sẵn sàng — bấm “Lưu / Chia sẻ” ở thanh Lưu file bên dưới để lưu về máy</p><table><tr><th>File</th><th>Plugin</th><th>Chuỗi</th><th>Locale</th><th></th></tr>";
+    const { parsed } = await runOp("Trích xuất text", "extract", [inputPath(), sourcePaths, locales, mergeOne], inputFileArgs(), true);
+    let html = "<p>Kết quả: <b>" + esc(parsed.decision) + "</b> · " + parsed.total_entries + " entry · " + parsed.files.length + " file · file <b>extract.zip</b> đã sẵn sàng — bấm “Lưu / Chia sẻ” ở thanh Lưu file bên dưới để lưu về máy</p>";
+    // Gộp 1 file: báo rõ file gộp nào ra từ bao nhiêu file tách, bao nhiêu
+    // key trùng giống hệt đã gộp, bao nhiêu xung đột giữ bản đầu.
+    for (const m of (parsed.merged_files || [])) {
+      html += "<p>Gộp thành 1 file: <b>" + esc(m.file || "") + "</b> — " + m.keys + " key từ " +
+        (m.sources || []).length + " file (" + (m.duplicates_identical || 0) + " key trùng giống hệt đã gộp, " +
+        (m.conflicts_total || 0) + " xung đột giữ bản đầu — xem extraction_report.txt; nguồn từng key trong " +
+        esc((m.file || "").replace(/\.json$/i, ".provenance.json")) + ").</p>";
+    }
+    html += "<table><tr><th>File</th><th>Plugin</th><th>Chuỗi</th><th>Locale</th><th></th></tr>";
     for (const f of parsed.files) {
       const name = f.exported || f.path;
       html += "<tr><td>" + esc(name) + "</td><td>" + esc(f.plugin) + "</td><td>" + f.entries + "</td><td>" + esc(f.locale || "") + "</td><td>" +

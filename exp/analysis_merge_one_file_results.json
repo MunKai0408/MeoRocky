@@ -1,0 +1,143 @@
+{
+  "when": "2026-11-16T18:30:19.293Z",
+  "total": 27,
+  "passed": 27,
+  "failures": 0,
+  "results": {
+    "py_unit_merge_one_file": {
+      "ok": true,
+      "detail": "10 test, OK | Ran 10 tests in 0.003s /  / OK",
+      "ms": 311
+    },
+    "static_counts_and_cache": {
+      "ok": true,
+      "detail": "files.json=92 (ky vong 92) · tests.json=163 (ky vong 163) · sw.js v18-20261116: true · file exp con sot v17/162: khong",
+      "ms": 43
+    },
+    "static_syntax": {
+      "ok": true,
+      "detail": "node --check app.js/worker.js/sw.js + py_compile bridge/extraction/exporters/test OK",
+      "ms": 407
+    },
+    "fixture_en_one_file": {
+      "ok": true,
+      "detail": "en.json 9753 key (434897 byte), 1 file locale en, #N=0, config giu 5 file, sidecar 9753 key",
+      "ms": 31290
+    },
+    "fixture_en_sample_comparison": {
+      "ok": true,
+      "detail": "mau co 560/2086 key, thu tu tuong doi giu nguyen, key mau dau tien co mat o vi tri 231 — KHONG khop 100% vi du lieu goc thieu (xem muc tiep theo)",
+      "ms": 0
+    },
+    "fixture_why_not_2086": {
+      "ok": true,
+      "detail": "khong loc: 66.011 chuoi tho, 'His Winningness'/'Win one game.'/'A Little Treat' deu KHONG co trong file; hop term qua moi ngon ngu 2.065 (mau co 2.064/2.086, vang mat hoan toan 22 key, 1.504 key co trong union nhung khong co ban tieng Anh trong file — bang I2Languages build nay khong co khe en)",
+      "ms": 0
+    },
+    "fixture_en_impurity_inherited_from_split": {
+      "ok": true,
+      "detail": "347/560 key mau co mat co gia tri bang dung ban dich tieng Viet cua Joseph (chuoi tieng Viet bi gan nham vao file en o buoc tach (A) — do nhiem ke thua tu file tach, buoc gop giu nguyen 100% noi dung file tach, khong tu sua; can sua can chinh vi tri (A) o dot sau)",
+      "ms": 0
+    },
+    "fixture_zh_one_file": {
+      "ok": true,
+      "detail": "zh.json 3380 key, CJK 3355/3380, #N=0, key dau 'Achievement_HisWinningness'",
+      "ms": 0
+    },
+    "fixture_merge_off_keeps_perunit": {
+      "ok": true,
+      "detail": "khong truyen merge: khong co en.json, van co resources.monobehaviour.en.json (API/harness cu khong doi)",
+      "ms": 0
+    },
+    "merge_5games_runs_ok": {
+      "ok": true,
+      "detail": "9kings=41074 entry/8.9s · data=4964 entry/8.4s · ek2=39640 entry/7.4s · pb3=32975 entry/11.7s · passpartout=13892 entry/2.9s",
+      "ms": 80158
+    },
+    "merge_5games_9kings": {
+      "ok": true,
+      "detail": "en 13465 key (tu 8 file, tong 13501, trung giong 19, xung dot 17) · zh 1914 key (tu 2 file, trung giong 0, xung dot 0) · config giu nguyen 40 file · xung dot en vd: [\"textasset.s2\",\"textasset.s1\",\"textasset.s2\"]",
+      "ms": 0
+    },
+    "merge_5games_data": {
+      "ok": true,
+      "detail": "en 4963 key (tu 78 file, tong 5307, trung giong 36, xung dot 308) · zh 1 key (tu 1 file, trung giong 0, xung dot 0) · config giu nguyen 0 file · xung dot en vd: [\"textasset.s1\",\"textasset.s1\",\"textasset.s1\"]",
+      "ms": 0
+    },
+    "merge_5games_ek2": {
+      "ok": true,
+      "detail": "en 17240 key (tu 3 file, tong 17245, trung giong 3, xung dot 2) · zh 7 key (tu 1 file, trung giong 0, xung dot 0) · config giu nguyen 9 file · xung dot en vd: [\"textasset.s1\",\"textasset.s4\"]",
+      "ms": 0
+    },
+    "merge_5games_pb3": {
+      "ok": true,
+      "detail": "en 14556 key (tu 57 file, tong 17010, trung giong 2161, xung dot 293) · zh 2570 key (tu 2 file, trung giong 1595, xung dot 224) · config giu nguyen 28 file · xung dot en vd: [\"textasset.StartSound\",\"textasset.EngineLoop\",\"textasset.StopSound\"]",
+      "ms": 0
+    },
+    "merge_5games_passpartout": {
+      "ok": true,
+      "detail": "en 2710 key (tu 2 file, tong 2710, trung giong 0, xung dot 0) · zh 1715 key (tu 1 file, trung giong 0, xung dot 0) · config giu nguyen 17 file",
+      "ms": 0
+    },
+    "ui_merge_checkbox_default_checked": {
+      "ok": true,
+      "detail": "checkbox #extract-merge-one co san, tick mac dinh, nhan co 'en.json': \" Gộp thành 1 file mỗi ngôn ngữ (en.json / zh.json)\"",
+      "ms": 1668
+    },
+    "ui_extract_merged_en_json": {
+      "ok": true,
+      "detail": "ket qua co en.json + dong 'Gop thanh 1 file'; file list: BillingMode.json|, BuildSettings.json|, PerformanceTestRunInfo.json|, PerformanceTestRunSettings.json|, Version.json|, en.json|en; file dich mac dinh: en.json",
+      "ms": 18312
+    },
+    "ui_extract_unchecked_keeps_perunit": {
+      "ok": true,
+      "detail": "bo tick: file list co resources.monobehaviour.en.json, khong co en.json: BillingMode.json|, BuildSettings.json|, PerformanceTestRunInfo.json|, PerformanceTestRunSettings.json|, Version.json|, EAC193F5-FBAE-43A0-8CE2-6748EA5AF5DC-resources.monobehaviour.en.json|en",
+      "ms": 12150
+    },
+    "ui_no_pageerror_no_overflow": {
+      "ok": true,
+      "detail": "pageerror=0 () · tran ngang: khong",
+      "ms": 198
+    },
+    "regress_module_worker": {
+      "ok": true,
+      "detail": "=== XONG: 17 mục, 0 FAIL — xem module_worker_results.md ===",
+      "ms": 5582
+    },
+    "regress_c2": {
+      "ok": true,
+      "detail": "==== TỔNG: 13 mục, 0 FAIL ====",
+      "ms": 23984
+    },
+    "regress_c9": {
+      "ok": true,
+      "detail": "===== KẾT QUẢ C9: 16/16 PASS (0 FAIL) =====",
+      "ms": 64306
+    },
+    "regress_translate_full_A": {
+      "ok": true,
+      "detail": "== TONG KET: 33/33 PASS, 0 FAIL (264.5s) ==",
+      "ms": 264685
+    },
+    "regress_mod_search_B": {
+      "ok": true,
+      "detail": "== TONG KET: 25/25 PASS, 0 FAIL (158.2s) ==",
+      "ms": 158364
+    },
+    "regress_reselect_C": {
+      "ok": true,
+      "detail": "PASS regress_translate_full_A | == TONG KET: 33/33 PASS, 0 FAIL (259.7s) == / PASS regress_mod_search_B | == TONG KET: 25/25 PASS, 0 FAIL (154.9s) == / == TONG KET: 26/26 PASS, 0 FAIL (619.4s) ==",
+      "ms": 619529
+    },
+    "regress_item8_static": {
+      "ok": true,
+      "detail": "{\"fails\": []}",
+      "ms": 112
+    },
+    "regress_full_suite_python": {
+      "ok": true,
+      "detail": "1706 test, OK",
+      "ms": 56229
+    }
+  }
+}

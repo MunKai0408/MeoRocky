@@ -163,6 +163,13 @@ class ExtractionRequest:
     root: Optional[str] = None         # gốc dự án (đọc config/locales.toml)
     source_paths: Optional[List[str]] = None  # vpath chỉ trích xuất các entry này (None/rỗng = tự động, xét hết như cũ); entry con "w::..." của một entry đã chọn cũng được xét
     locales: Optional[set] = None      # lọc mềm nhiều locale ở vòng export (vd {"en", "zh"}); None = không lọc. Khác req.locale (lọc cứng 1 locale + E_LOCALE_NOT_FOUND khi vắng): lọc mềm KHÔNG fail cả đợt khi một locale vắng mặt.
+    merge_one_file: bool = False     # Gộp thành 1 file mỗi ngôn ngữ (Joseph 23:35): khi True, các
+    # outcome ngôn ngữ thuộc tập lọc được gộp thành đúng 1 FileOutcome mỗi
+    # locale (xuất en.json/zh.json), giữ thứ tự nguồn + thứ tự key gốc,
+    # trùng key giữ bản đầu + liệt kê xung đột vào report/sidecar, provenance
+    # từng key giữ cho (E). File config/plist (locale None) giữ nguyên.
+    # Mặc định False để mọi hành vi cũ/test/harness cũ không đổi; bản web
+    # bật bằng checkbox (mặc định tick) ở tab Trích xuất.
 
 
 @dataclass
@@ -182,6 +189,11 @@ class FileOutcome:
     source_kind: str = "verified"      # verified | raw_scan
     kv: Dict[str, str] = field(default_factory=dict)
     sha256: str = ""                   # sha256 file nguồn (để khóa checkpoint)
+    merged: bool = False               # True = outcome gộp 1 file (merge_one_file): kv là hợp
+    # của nhiều outcome cùng locale; merged_from liệt kê các file tách
+    # per-unit đã gộp, merge_sources cho biết từng key lấy từ nguồn nào (cho (E)).
+    merged_from: List[str] = field(default_factory=list)
+    merge_sources: Dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -203,6 +215,11 @@ class ExtractionResult:
     out_dir: Optional[str] = None
     report: Dict[str, Any] = field(default_factory=dict)
     ir: Optional[IRDocument] = None
+    merged_files: List[Dict[str, Any]] = field(default_factory=list)
+    # Thống kê gộp 1 file (merge_one_file), mỗi locale một mục: {locale,
+    # file, keys, entries_before, sources, duplicates_identical, conflicts}
+    # — conflicts liệt kê key trùng KHÁC giá trị (giữ bản đầu) kèm nguồn
+    # từng bản; xem merge_language_outcomes().
 
 
 # ------------------------------------------------------------------ lớp VFS
@@ -1014,6 +1031,108 @@ def _find_layer(layers: List[_Layer], full_path: str) -> Tuple[Any, str]:
                    where=full_path)
 
 
+# ------------------------------------------------------------------ gộp 1 file
+MERGE_CONFLICTS_CAP = 500  # số xung đột tối đa ghi chi tiết vào report/sidecar
+# mỗi locale (còn lại chỉ đếm tổng; bản bị loại nào cũng đã liệt kê nguồn
+# trong merge_sources của key được giữ — (E) ép theo bản giữ).
+
+
+def merge_language_outcomes(files: List[FileOutcome],
+                            target_locales) -> Tuple[List[FileOutcome], List[Dict[str, Any]]]:
+    """Gộp các outcome ngôn ngữ thành ĐÚNG 1 outcome mỗi locale (Joseph 23:35).
+
+    files: danh sách outcome theo thứ tự pipeline (thứ tự nguồn phát hiện).
+    target_locales: tập locale cần gộp (vd {"en"} hay {"en", "zh"}).
+
+    Quy tắc (đo trên 5 game thật trước khi chốt — xem
+    exp/analysis_merge_one_file_results.md):
+      - Thứ tự: outcome theo thứ tự đã có; key trong mỗi outcome giữ thứ
+        tự gốc (dict giữ thứ tự chèn, không sort_keys).
+      - Trùng key, GIỐNG hệt giá trị: gộp 1 bản, đếm duplicates_identical
+        (không mất chuỗi — giá trị giống hệt nhau từng byte).
+      - Trùng key, KHÁC giá trị: KHÔNG ghi đè im lặng — giữ bản xuất hiện
+        đầu tiên, liệt kê toàn bộ bản xung đột (key + giá trị + nguồn của
+        từng bản) vào conflicts của mục thống kê.
+      - Outcome không thuộc target (vd file config/plist locale None) giữ
+        nguyên, không gộp, không đổi thứ tự tương đối.
+    Trả (danh_sách_outcome_mới, thống_kê_mỗi_locale). Outcome gộp có
+    path "<merged:<lang>>", plugin "merge_one_file", merged=True,
+    merged_from = tên file tách đã gộp (exported nếu có, không thì path),
+    merge_sources = {key: nguồn của key đó} cho (E) ép ngược.
+    """
+    targets = {str(c).lower() for c in (target_locales or set())}
+    if not targets:
+        return list(files), []
+    by_lang: Dict[str, List[FileOutcome]] = {}
+    for f in files:
+        if f.locale is not None and f.locale.lower() in targets and f.kv:
+            by_lang.setdefault(f.locale.lower(), []).append(f)
+    if not by_lang:
+        return list(files), []
+    merged_outcomes: Dict[str, FileOutcome] = {}
+    stats: List[Dict[str, Any]] = []
+    for lang in sorted(by_lang):
+        group = by_lang[lang]
+        kv: Dict[str, str] = {}
+        sources: Dict[str, str] = {}
+        dups = 0
+        conflicts: List[Dict[str, Any]] = []
+        entries_before = 0
+        for f in group:
+            entries_before += len(f.kv)
+            for key, value in f.kv.items():
+                if key not in kv:
+                    kv[key] = value
+                    sources[key] = f.source or f.path
+                elif kv[key] == value:
+                    dups += 1
+                else:
+                    conflicts.append({
+                        "key": key,
+                        "kept": {"value": kv[key], "source": sources[key]},
+                        "dropped": {"value": value, "source": f.source or f.path},
+                    })
+        out = FileOutcome("<%s:%s>" % ("merged", lang), "merge_one_file", lang,
+                          entries=len(kv), ok=len(kv), kv=kv,
+                          source=group[0].source or group[0].path,
+                          merged=True,
+                          merged_from=[(f.exported or f.path) for f in group],
+                          merge_sources=sources)
+        merged_outcomes[lang] = out
+        stats.append({
+            "locale": lang,
+            "file": "%s.json" % lang,
+            "keys": len(kv),
+            "entries_before": entries_before,
+            "sources": [(f.exported or f.path) for f in group],
+            "duplicates_identical": dups,
+            "conflicts": conflicts[:MERGE_CONFLICTS_CAP],
+            "conflicts_total": len(conflicts),
+            "conflicts_truncated": len(conflicts) > MERGE_CONFLICTS_CAP,
+        })
+    # Outcome mới: giữ vị trí của outcome ngôn ngữ đầu tiên của mỗi locale,
+    # các outcome cùng locale sau đó bị thay bằng outcome gộp (chỉ 1 lần).
+    placed: set = set()
+    new_files: List[FileOutcome] = []
+    for f in files:
+        if f.locale is not None and f.locale.lower() in targets and f.kv:
+            lang = f.locale.lower()
+            if lang not in placed:
+                placed.add(lang)
+                new_files.append(merged_outcomes[lang])
+            continue
+        new_files.append(f)
+    return new_files, stats
+
+
+def _apply_merge(result: ExtractionResult, target_locales) -> None:
+    """Áp merge_language_outcomes lên result.files (chạy trước _export)."""
+    new_files, stats = merge_language_outcomes(result.files, target_locales)
+    result.files = new_files
+    result.merged_files = stats
+    result.total_entries = sum(len(f.kv) for f in result.files)
+
+
 # ------------------------------------------------------------------ pipeline
 def run_extraction(req: ExtractionRequest) -> ExtractionResult:
     """Chạy pipeline 7 bước (đặc tả 7.2). Không raise với lỗi từng file:
@@ -1648,6 +1767,23 @@ def run_extraction(req: ExtractionRequest) -> ExtractionResult:
         result.report = _build_report(req, result, logs, t0)
         return result
 
+    # Gộp thành 1 file mỗi ngôn ngữ (merge_one_file, Joseph 23:35): chỉ khi
+    # người dùng bật + có tập locale cần gộp (lọc mềm req.locales hoặc lọc
+    # cứng req.locale). Không lọc ngôn ngữ thì không gộp (không có locale
+    # đích để gộp theo). Chạy TRƯỚC _export để file ghi ra đĩa đã là file
+    # gộp; IR/report dùng result.files sau gộp.
+    if req.merge_one_file:
+        _merge_targets = locales
+        if _merge_targets is None and req.locale not in (None, "all"):
+            _merge_targets = {str(req.locale).lower()}
+        if _merge_targets:
+            _apply_merge(result, _merge_targets)
+            for _ms in result.merged_files:
+                log("gộp 1 file %s: %d key từ %d file (trùng giống hệt đã gộp: %d; "
+                    "xung đột giữ bản đầu: %d)"
+                    % (_ms["file"], _ms["keys"], len(_ms["sources"]),
+                       _ms["duplicates_identical"], _ms["conflicts_total"]))
+
     # IR: chuẩn hóa toàn bộ bảng (giữ key/value/locale/status/source).
     result.ir = from_tables(
         *tables,
@@ -1882,6 +2018,12 @@ def _export(req: ExtractionRequest, result: ExtractionResult, source_hash: str,
             fname = disc.export_filename(outcome.locale)
         else:
             fname = _sanitize_segment(_source_stem(outcome.path)) + ".json"
+        # Gộp 1 file (merge_one_file): tên file gộp là đúng mã ngôn ngữ
+        # (en.json / zh.json — dạng file en.json mẫu của Joseph), KHÔNG
+        # phải tên hiển thị (English.json) và không lẫn với file tách
+        # per-unit (resources.monobehaviour.en.json).
+        if outcome.merged and outcome.locale:
+            fname = "%s.json" % outcome.locale.lower()
         # (A) File MonoBehaviour đã tách theo ngôn ngữ: tên xuất riêng theo
         # đơn vị + ngôn ngữ (vd resources.monobehaviour.en.json) thay vì
         # English.json — tên đó đã dùng cho file StringTable cùng locale
@@ -1914,10 +2056,44 @@ def _export(req: ExtractionRequest, result: ExtractionResult, source_hash: str,
                                   "message": "không ghi được %s: %s" % (fname, exc)})
             continue
         outcome.exported = fname
-        ent = checkpoint_files.setdefault(outcome.path, {"sha256": outcome.sha256,
-                                                         "locales": {}, "exported": {}})
-        ent["locales"][outcome.locale or ""] = dict(outcome.kv)
-        ent["exported"][outcome.locale or ""] = fname
+        # Outcome gộp là dẫn xuất từ các file tách per-unit (không có file
+        # nguồn thật để checkpoint khóa theo sha) nên KHÔNG ghi vào
+        # checkpoint: chạy lại vẫn parse lại từ đầu rồi gộp lại, tránh
+        # checkpoint phình vì chứa cả bản gộp (~MB) mà không bao giờ tái dùng.
+        if not outcome.merged:
+            ent = checkpoint_files.setdefault(outcome.path, {"sha256": outcome.sha256,
+                                                             "locales": {}, "exported": {}})
+            ent["locales"][outcome.locale or ""] = dict(outcome.kv)
+            ent["exported"][outcome.locale or ""] = fname
+    # Sidecar provenance cho file gộp (cho (E) ép ngược): từng key lấy từ
+    # nguồn nào (bundle/.assets), gộp từ những file tách nào, xung đột nào
+    # đã giữ bản đầu. Format "beartea-merge-provenance/1"; file gộp chính
+    # vẫn giữ dạng phẳng sạch như file en.json mẫu (không nhét provenance
+    # vào làm bẩn key).
+    for outcome in result.files:
+        if not outcome.merged or not outcome.exported:
+            continue
+        stat = next((m for m in result.merged_files
+                     if m.get("locale") == outcome.locale), None)
+        sidecar = {
+            "format": "beartea-merge-provenance/1",
+            "game": game,
+            "source": str(req.source),
+            "locale": outcome.locale,
+            "file": outcome.exported,
+            "merged_from": list(outcome.merged_from),
+            "keys": dict(outcome.merge_sources),
+            "duplicates_identical": (stat or {}).get("duplicates_identical", 0),
+            "conflicts": (stat or {}).get("conflicts", []),
+            "conflicts_total": (stat or {}).get("conflicts_total", 0),
+        }
+        try:
+            with open(os.path.join(req.out_dir, "%s.provenance.json"
+                                   % os.path.splitext(outcome.exported)[0]),
+                      "wb") as fh:
+                fh.write(json.dumps(sidecar, ensure_ascii=False, indent=1).encode("utf-8"))
+        except OSError:
+            pass
     _save_checkpoint(req, source_hash, checkpoint_files)
     _write_reports(req, result, logs)
 
@@ -1971,6 +2147,7 @@ def _build_report(req: ExtractionRequest, result: ExtractionResult, logs: List[s
                   for f in result.files],
         "skipped": list(result.skipped),
         "errors": list(result.errors),
+        "merged_files": list(result.merged_files),
         "generated_keys": list(result.generated_keys),
         "total_entries": result.total_entries,
         "elapsed_s": round(result.elapsed_s, 1),
