@@ -21,7 +21,7 @@
 
 // ĐỔI SỐ NÀY MỖI KHI DEPLOY BẢN MỚI (bất kỳ file nào trong PRECACHE_URLS
 // đổi nội dung). Bản cũ sẽ bị xóa ở activate.
-const CACHE_VERSION = "v12-20261116";
+const CACHE_VERSION = "v13-20261116";
 const CACHE_NAME = "beartea-" + CACHE_VERSION;
 // Cache riêng cho prefetch Pyodide sau first paint (Mục C3): app.js ghi
 // file đã tải trước vào đây; SW dùng làm dự phòng khi cache chính trượt
@@ -136,6 +136,7 @@ const PRECACHE_URLS = [
   "pb3/sdk/exporters.py",
   "pb3/sdk/extraction.py",
   "pb3/sdk/font.py",
+  "pb3/sdk/format_probe.py",
   "pb3/sdk/formats.py",
   "pb3/sdk/godot.py",
   "pb3/sdk/ir.py",

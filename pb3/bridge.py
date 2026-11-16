@@ -1228,6 +1228,33 @@ def diagnose(path):
         return _err(e)
 
 
+def format_probe(path):
+    """Format probe cho engine lạ (mục phân tích C8): probe 1 file bất kỳ
+    và trả báo cáo có cấu trúc (sdk.format_probe.probe_data).
+
+    File hoàn toàn lạ KHÔNG phải lỗi: probe trả {"ok": True, "report":
+    {...engine "unknown"...}} — chỉ lỗi đọc file / lỗi hệ thống mới trả
+    ok False. Mức hỗ trợ thật lấy từ plugin đang bật trong phiên
+    (plugin engine nào chưa bật thì thao tác của nó rơi xuống
+    "không hỗ trợ" kèm lý do).
+    """
+    try:
+        from sdk import format_probe as fp
+
+        _check_size(path)
+        data = open(path, "rb").read()
+        active = set()
+        try:
+            active = {r.plugin_id for r in _reg.active()} if _reg else set()
+        except Exception:
+            active = set()
+        report = fp.probe_data(data, os.path.basename(path),
+                               active_plugins=active)
+        return json.dumps({"ok": True, "report": report}, ensure_ascii=False)
+    except Exception as e:  # noqa: BLE001
+        return _err(e)
+
+
 def font_donor_file():
     """Đưa font đi kèm ra /tmp để JS tải về (chế độ 4: thay bằng font có sẵn)."""
     try:

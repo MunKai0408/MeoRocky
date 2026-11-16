@@ -330,7 +330,14 @@ async function runOp(label, fn, args, files, fileOut) {
     return { parsed, file: msg.file || null };
   } catch (e) {
     progDone(label + " — lỗi");
-    showError(label + " lỗi: " + e.message);
+    let msg = label + " lỗi: " + e.message;
+    // Mục C8: file không nhận ra (không phải container đã biết) thì gợi ý
+    // Probe định dạng thay vì chỉ báo lỗi — probe cho báo cáo có cấu trúc
+    // (engine đoán được + mức hỗ trợ thật) thay vì một dòng lỗi.
+    if (/E_UNSUPPORTED_FORMAT|không nhận diện được container/.test(e.message)) {
+      msg += "\nGợi ý: mở tab Chẩn đoán → bấm “Probe định dạng” để xem báo cáo chi tiết về file này (engine đoán được, thao tác nào được/không được hỗ trợ).";
+    }
+    showError(msg);
     // HOTFIX clone: thao tác lỗi thì lần sau phải gửi lại file cho worker.
     state.fileSentFor = null;
     state.batchSentFor = null;
@@ -3383,6 +3390,96 @@ $("btn-diagnose-run").addEventListener("click", async () => {
     html += "</ul><p>" + esc(parsed.strings_note || "") + "</p>";
     $("diagnose-result").innerHTML = html;
   } catch (e) { /* đã báo lỗi */ }
+});
+
+// ---- Probe định dạng (mục C8) ----
+// Probe file bất kỳ qua bridge.format_probe: trả báo cáo có cấu trúc
+// (engine + độ tin cậy + bằng chứng, thao tác được/không được hỗ trợ,
+// bước tiếp theo). Ô chọn file riêng ở đây KHÔNG qua gameExtOk — nhận
+// mọi đuôi (.pck/.pak/.locres/.win/.translation/byte lạ...); nếu không
+// chọn file riêng thì probe file đã chọn ở trang chính. File hoàn toàn
+// lạ vẫn ra báo cáo “chưa hỗ trợ” (ok:true), không phải lỗi.
+function probeReportHtml(r) {
+  const f = r.file, e = r.engine;
+  let html = "<p><b>File:</b> " + esc(f.name) + " · " + esc(f.size_human) +
+    " · SHA-256: <code>" + esc(f.sha256.slice(0, 16)) + "…</code></p>";
+  html += "<p><b>Định dạng:</b> " + esc(f.container_kind) +
+    (f.pak_footer ? " (có magic footer PAK)" : "") +
+    " · <b>Magic đầu file:</b> " + esc(f.magic_head || "không khớp magic nào đã biết") + "</p>";
+  html += "<p><b>Engine:</b> " + esc(e.label) + " — <b>" + esc(e.level) + "</b>" +
+    " (độ tin cậy " + e.confidence + ")";
+  if (e.note) html += "<br><span class=note>" + esc(e.note) + "</span>";
+  html += "</p>";
+  if (e.evidence && e.evidence.length) {
+    html += "<h3>Bằng chứng</h3><ul>";
+    for (const ev of e.evidence) html += "<li>" + esc(ev.reason) + " (trọng số " + ev.weight + ")</li>";
+    html += "</ul>";
+  }
+  const others = (r.candidates || []).filter((c) => c.engine !== e.id && c.evidence && c.evidence.length);
+  if (others.length) {
+    html += "<h3>Ứng viên khác</h3><ul>";
+    for (const c of others) html += "<li>" + esc(c.label) + ": " + esc(c.level) +
+      " (độ tin cậy " + c.confidence + ") — " + esc(c.evidence.join("; ")) + "</li>";
+    html += "</ul>";
+  }
+  if (r.open_error) {
+    html += "<p class=warn>Không mở được container: [" + esc(r.open_error.code) + "] " +
+      esc(r.open_error.message) + " — báo cáo chỉ dựa trên tên + byte đầu của file ngoài.</p>";
+  }
+  if (r.entries && r.entries.total) {
+    html += "<p><b>Entry trong container:</b> " + r.entries.total +
+      (r.entries.truncated ? " (chỉ xét 400 tên đầu)" : "") + "</p>";
+  }
+  html += "<h3>Hỗ trợ được</h3>";
+  if (r.supported && r.supported.length) {
+    html += "<ul>";
+    for (const s of r.supported) html += "<li>✅ " + esc(s.op) + "</li>";
+    html += "</ul>";
+  } else {
+    html += "<p>Không có thao tác nào được hỗ trợ cho file này.</p>";
+  }
+  html += "<h3>Chưa hỗ trợ</h3><ul>";
+  for (const u of (r.unsupported || [])) html += "<li>❌ " + esc(u.op) + " — " + esc(u.reason) + "</li>";
+  html += "</ul><h3>Bước tiếp theo</h3><ul>";
+  for (const s of (r.next_steps || [])) html += "<li>" + esc(s) + "</li>";
+  html += "</ul>";
+  if (r.notes && r.notes.length) {
+    html += "<p class=note>" + r.notes.map((n) => esc(n)).join("<br>") + "</p>";
+  }
+  if (r.strings && r.strings.sample && r.strings.sample.length) {
+    html += "<p class=note>Chuỗi ASCII tìm thấy trong " + fmtBytes(r.strings.scanned_bytes) +
+      " đầu: " + r.strings.count + " chuỗi, vd: “" + esc(r.strings.sample.slice(0, 3).join("”, “")) + "”.</p>";
+  }
+  return html;
+}
+$("btn-probe-run").addEventListener("click", async () => {
+  try {
+    const probeInput = $("probe-file-input");
+    const probeFile = probeInput && probeInput.files && probeInput.files[0];
+    let args, files;
+    if (probeFile) {
+      const buf = await probeFile.arrayBuffer();
+      args = ["/tmp/input/" + probeFile.name];
+      files = [{ name: probeFile.name, data: buf }];
+    } else if (state.file) {
+      args = [inputPath()];
+      files = inputFileArgs();
+    } else {
+      showError("Chưa chọn file — chọn file trong mục Probe định dạng hoặc chọn file game ở trang chính trước.");
+      return;
+    }
+    const { parsed } = await runOp("Probe định dạng", "format_probe", args, files);
+    const report = parsed.report;
+    state.lastProbe = report;
+    if (typeof window !== "undefined") window.__PB3_LAST_PROBE = report;
+    $("probe-result").innerHTML = probeReportHtml(report);
+    $("btn-probe-download").disabled = false;
+  } catch (e) { /* đã báo lỗi */ }
+});
+$("btn-probe-download").addEventListener("click", () => {
+  if (!state.lastProbe) { showError("Chưa có báo cáo probe — bấm “Probe định dạng” trước."); return; }
+  const safe = String(state.lastProbe.file.name || "file").replace(/[^A-Za-z0-9._-]+/g, "_");
+  download("beartea-probe-" + safe + ".json", JSON.stringify(state.lastProbe, null, 2));
 });
 
 // ---- Chẩn đoán ứng dụng (mục C2) ----

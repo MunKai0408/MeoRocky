@@ -110,6 +110,7 @@
     "pb3/tests/test_format_generic_strings.py",
     "pb3/tests/test_format_json_text.py",
     "pb3/tests/test_format_po_mo.py",
+    "pb3/tests/test_format_probe.py",
     "pb3/tests/test_format_properties.py",
     "pb3/tests/test_format_resx.py",
     "pb3/tests/test_format_sqlite_loc.py",
@@ -146,6 +147,7 @@
     "pb3/tests/test_sdk.py",
     "pb3/tests/test_support_matrix.py",
     "pb3/tests/test_tiering.py",
+    "pb3/tests/test_tmp_fallback.py",
     "pb3/tests/test_tmp_font.py",
     "pb3/tests/test_tomlmini_config.py",
     "pb3/tests/test_translate.py",
@@ -157,8 +159,7 @@
     "pb3/tests/test_vietnamese_diacritics.py",
     "pb3/tests/tiering.py",
     "pb3/tests/tiers.json",
-    "pb3/ui/cli.py",
-    "pb3/tests/test_tmp_fallback.py"
+    "pb3/ui/cli.py"
   ],
   "note": "Danh sach file test + corpus + fixture CO TREN MAIN + 5 module Python ma test import nhung files.json (manifest cua app) khong co (menu.py, run_tests.py, sdk/example_kv.py, sdk/testing.py, ui/cli.py). 20 fixture nhi phan chua len main da loai ra; test can chung se SKIP qua marker needs_fixture. Tao lai khi them/bot file test."
 }

@@ -683,6 +683,20 @@
     <button id="btn-diagnose-run">Chẩn đoán</button>
     <div id="diagnose-result"></div>
 
+    <h3>Probe định dạng (engine lạ — mục C8)</h3>
+    <p class="note">Probe một file bất kỳ (kể cả file engine lạ, file .pck/.pak/
+    .locres/.win mà ô chọn file chính không nhận) và trả báo cáo có cấu trúc:
+    định dạng/magic, engine đoán được + độ tin cậy + bằng chứng, thao tác nào
+    được hỗ trợ thật, thao tác nào chưa hỗ trợ, bước tiếp theo. File hoàn toàn
+    lạ vẫn ra báo cáo “chưa hỗ trợ” — không crash, không ghi PASS giả. Nếu
+    không chọn file riêng ở đây thì probe dùng file đã chọn ở trang chính.</p>
+    <p>
+      <input type="file" id="probe-file-input">
+      <button id="btn-probe-run">Probe định dạng</button>
+      <button id="btn-probe-download" class="secondary" disabled>Tải báo cáo JSON</button>
+    </p>
+    <div id="probe-result"></div>
+
     <h3>Chẩn đoán ứng dụng</h3>
     <p class="note">Trạng thái khởi động, bộ nhớ và từng provider dịch — mỗi
     provider hiện lần gọi gần nhất (HTTP status, thời gian, tên lỗi nếu có).

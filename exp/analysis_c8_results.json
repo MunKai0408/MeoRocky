@@ -1,0 +1,116 @@
+{
+  "total": 22,
+  "failures": [],
+  "results": {
+    "static_node_py_check": {
+      "ok": true,
+      "detail": "node --check OK: app.js, sw.js; python3 -m py_compile OK: bridge.py, sdk/format_probe.py, tests/test_format_probe.py",
+      "seconds": 0.3
+    },
+    "static_c8_checks": {
+      "ok": true,
+      "detail": "format_probe.py stdlib-only + Python 3.9 + không gọi mạng + ENGINE_SUPPORT trung thực (mọi engine có unsupported, unknown supported rỗng) + files.json=91 / tests.json=160 + sw.js precache sdk/format_probe.py + CACHE_VERSION v13-20261116 + bridge format_probe + UI đủ nút probe/input riêng/tải JSON + gợi ý probe khi lỗi E_UNSUPPORTED_FORMAT + tiếng Việt đủ dấu",
+      "seconds": 0.2
+    },
+    "python_unit_format_probe_engine_detect": {
+      "ok": true,
+      "detail": "unittest tests.test_format_probe + tests.test_engine_detect: Ran 57 tests, OK (exit=0)",
+      "seconds": 2.8
+    },
+    "C0_baseline_list_unknown_file_errors": {
+      "ok": true,
+      "detail": "list_entries(c8_unknown.bin) -> ok=false, code=E_UNSUPPORTED_FORMAT, error=\"E_UNSUPPORTED_FORMAT: Đã nhận diện nhưng chưa có plugin parse được.\" — đây là hành vi CŨ (chỉ một dòng lỗi, không báo cáo cấu trúc); probe C8 sinh ra để thay thế đúng chỗ này.",
+      "seconds": 0
+    },
+    "C1_probe_godot_pck_certain": {
+      "ok": true,
+      "detail": "format_probe(c8_godot.pck) -> ok=true; engine=godot (CHẮC CHẮN, conf=1); container=godot_pck, magic=GDPC (Godot PCK); entries=1; supported=[Mở/lấy entry file .pck v1/v2 (Godot 3/4), chỉ đọc entry không nén, không mã hoá | Đọc file .translation định dạng “TR” (]; unsupported=[Trích xuất text game Godot (chưa có pipeline) — chưa có backend trích xuất Godot | PCK v0/v3+, PCK mã hoá, PCK nhúng tro]; next_steps=2",
+      "seconds": 0.1
+    },
+    "C2_probe_godot_translation_likely": {
+      "ok": true,
+      "detail": "format_probe(c8_godot_translation.translation) -> ok=true; engine=godot (CÓ KHẢ NĂNG, conf=0.6); container=unknown, magic=TR (Godot .translation — dạng theo nhiệm vụ, chưa đối chiếu file thật); entries=0; supported=[Mở/lấy entry file .pck v1/v2 (Godot 3/4), chỉ đọc entry không nén, không mã hoá | Đọc file .translation định dạng “TR” (]; unsupported=[Trích xuất text game Godot (chưa có pipeline) — chưa có backend trích xuất Godot | PCK v0/v3+, PCK mã hoá, PCK nhúng tro]; next_steps=2",
+      "seconds": 0
+    },
+    "C3_probe_unreal_pak_certain": {
+      "ok": true,
+      "detail": "format_probe(c8_unreal_pak.pak) -> ok=true; engine=unreal (CHẮC CHẮN, conf=1); container=unknown, magic=không có; entries=4; supported=[Mở/lấy entry file .pak UE4/UE5 (chỉ entry không nén, không mã hoá), chỉ đọc | Đọc file .locres v0–v3 (chỉ đọc)]; unsupported=[Trích xuất text game Unreal (chưa có pipeline) — chưa có backend trích xuất Unreal | PAK entry nén/mã hoá/Oodle — plugin]; next_steps=2",
+      "seconds": 0
+    },
+    "C4_probe_unreal_locres_certain": {
+      "ok": true,
+      "detail": "format_probe(c8_unreal_locres.locres) -> ok=true; engine=unreal (CHẮC CHẮN, conf=1); container=unknown, magic=LOCRES (Unreal); entries=0; supported=[Mở/lấy entry file .pak UE4/UE5 (chỉ entry không nén, không mã hoá), chỉ đọc | Đọc file .locres v0–v3 (chỉ đọc)]; unsupported=[Trích xuất text game Unreal (chưa có pipeline) — chưa có backend trích xuất Unreal | PAK entry nén/mã hoá/Oodle — plugin]; next_steps=2",
+      "seconds": 0
+    },
+    "C5_probe_gamemaker_datawin_certain_detect_only": {
+      "ok": true,
+      "detail": "format_probe(c8_gamemaker_data.win) -> ok=true; engine=gamemaker (CHẮC CHẮN, conf=1); container=unknown, magic=FORM+GEN8 (GameMaker data.win); entries=0; supported=[Nhận diện bằng magic IFF “FORM” + chunk đầu “GEN8” trong data.win | Nhận diện qua tên entry (.yyp/.yy/.gml/.yyz)]; unsupported=[Mở data.win, trích xuất text, dịch, mod — chưa có backend GameMaker (chỉ có plugin nhận diện)]; next_steps=2",
+      "seconds": 0
+    },
+    "C6_probe_cocos_zip_likely_detect_only": {
+      "ok": true,
+      "detail": "format_probe(c8_cocos.zip) -> ok=true; engine=cocos (CÓ KHẢ NĂNG, conf=0.9); container=zip, magic=không có; entries=4; supported=[Nhận diện qua tên entry (project.json, main.js, .ccb, .fire)]; unsupported=[Mở container, trích xuất text, dịch, mod — chưa có backend Cocos (chỉ có plugin nhận diện)]; next_steps=2",
+      "seconds": 0
+    },
+    "C7_probe_defold_zip_likely_detect_only": {
+      "ok": true,
+      "detail": "format_probe(c8_defold.zip) -> ok=true; engine=defold (CÓ KHẢ NĂNG, conf=1); container=zip, magic=không có; entries=4; supported=[Nhận diện qua tên entry (game.project, .archive, .collection, .atlas)]; unsupported=[Mở container, trích xuất text, dịch, mod — chưa có backend Defold (chỉ có plugin nhận diện)]; next_steps=2",
+      "seconds": 0
+    },
+    "C8_probe_random_bytes_unknown_structured": {
+      "ok": true,
+      "detail": "format_probe(c8_unknown.bin) -> ok=true; engine=unknown (CHƯA ĐỦ BẰNG CHỨNG, conf=0); container=unknown, magic=không có; entries=0; supported=[]; unsupported=[Trích xuất text, dịch, mod — chưa nhận diện được engine nên chưa có backend nào đọc được file]; next_steps=3",
+      "seconds": 0
+    },
+    "C9_probe_plain_zip_unknown": {
+      "ok": true,
+      "detail": "format_probe(c8_plain.zip) -> ok=true; engine=unknown (CHƯA ĐỦ BẰNG CHỨNG, conf=0); container=zip, magic=không có; entries=2; supported=[]; unsupported=[Trích xuất text, dịch, mod — chưa nhận diện được engine nên chưa có backend nào đọc được file]; next_steps=3",
+      "seconds": 0
+    },
+    "C10_probe_unity_head_certain": {
+      "ok": true,
+      "detail": "format_probe(c8_unity.unity3d) -> ok=true; engine=unity (CHẮC CHẮN, conf=1); container=unknown, magic=UnityFS; entries=0; supported=[Liệt kê entry trong IPA/ZIP | Inspect bundle .unity3d / file .assets (UnityFS tới v8, SerializedFile v15–v23) | Trích xu]; unsupported=[UnityFS v9: chỉ đọc, chưa sửa được — chưa có backend ghi v9 | Bundle Unity mã hoá — báo lỗi E_ENCRYPTED, không giải mã]; next_steps=1",
+      "seconds": 0
+    },
+    "browser_boot_ready": {
+      "ok": true,
+      "detail": "status: \"Sẵn sàng — 20 plugin đang chạy · font đi kèm: đủ 142/142 (134 chữ cái + 8 dấu)\"",
+      "seconds": 6
+    },
+    "browser_probe_godot_pck": {
+      "ok": true,
+      "detail": "engine=godot (CHẮC CHẮN); thẻ hiện: Godot + CHẮC CHẮN + Hỗ trợ được (pck v1/v2) + Chưa hỗ trợ (Trích xuất text game Godot)",
+      "seconds": 0.4
+    },
+    "browser_probe_unknown_structured_download": {
+      "ok": true,
+      "detail": "engine=unknown, thẻ hiện “Chưa rõ / CHƯA ĐỦ BẰNG CHỨNG / Không có thao tác nào được hỗ trợ”; download: beartea-probe-c8_unknown.bin.json (1901B); schema đủ 11 trường, engine=unknown, supported=[], unsupported=1",
+      "seconds": 0.1
+    },
+    "browser_probe_unreal_pak": {
+      "ok": true,
+      "detail": "engine=unreal (CHẮC CHẮN); thẻ hiện: Unreal + CHẮC CHẮN + Hỗ trợ được (.pak UE4/UE5)",
+      "seconds": 0.1
+    },
+    "browser_probe_main_file_cocos": {
+      "ok": true,
+      "detail": "không chọn file riêng -> probe dùng file chính c8_cocos.zip; engine=cocos (CÓ KHẢ NĂNG); thẻ hiện Cocos + CÓ KHẢ NĂNG + Chưa hỗ trợ (chưa có backend Cocos)",
+      "seconds": 0
+    },
+    "browser_list_unknown_suggests_probe": {
+      "ok": true,
+      "detail": "banner lỗi sau khi Liệt kê c8_fake.gz: \"Liệt kê entry lỗi: E_UNSUPPORTED_FORMAT: Đã nhận diện nhưng chưa có plugin parse được.\\nGợi ý: mở tab Chẩn đoán → bấm “Probe định dạng” để xem báo cáo chi tiết về file này (engine đoán được, thao tác nào được/không được hỗ trợ).\"",
+      "seconds": 0.1
+    },
+    "browser_390_no_overflow_no_errors": {
+      "ok": true,
+      "detail": "scrollWidth=390 clientWidth=390; pageerror/console-error thật: không có",
+      "seconds": 0
+    },
+    "shell_size_after_c8": {
+      "ok": true,
+      "detail": "shell lần tải đầu sau C8: index.html raw=57619B gzip=16508B; kb-store.js raw=8192B gzip=3212B; worker-pool.js raw=14404B gzip=5058B; stream.js raw=18358B gzip=6141B; opfs.js raw=12753B gzip=4045B; app.js raw=211161B gzip=59118B; gt.js raw=34379B gzip=9599B | TỔNG raw=356866B (348.5KB), gzip=103681B (101.3KB). Ngưỡng raw 100KB vẫn chưa đạt như mục 6 đã ghi (app.js monolith) — C8 không đổi kết luận.",
+      "seconds": 0
+    }
+  }
+}
