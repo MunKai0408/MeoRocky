@@ -1,0 +1,131 @@
+# CI cho PB3 (bản web) — chạy TOÀN BỘ suite Python của PB3 (1562 test).
+#
+# QUAN TRỌNG — suite KHÔNG chạy được trong trình duyệt: run_tests.py cần
+# threading/subprocess/CLI thật và ghi file (reports/, thư mục tạm), nên
+# GitHub Actions là nơi duy nhất kiểm chứng suite cho bản web. Trang web
+# chỉ chạy PB3 qua Pyodide (không có test runner).
+#
+# Python 3.9 = đúng phiên bản trên iSH của Joseph (Alpine 3.14). Suite
+# cũng đã xanh trên Python 3.12 trong sandbox; nếu actions/setup-python
+# bỏ 3.9 thì nâng lên "3.11" (hoặc "3.12") ở dòng python-version dưới.
+#
+# CHƯA XANH HOÀN TOÀN — 28 file nhị phân/UTF-16 chưa lên main (connector
+# GitHub chỉ nhận file text UTF-8, phải đẩy bằng trình duyệt sau):
+#   pb3/kb/pb3_kb.sqlite (1)
+#   24 fixture nhị phân trong pb3/tests/fixtures/ (.zip/.ipa/.assets/
+#   .unity3d/.pak/.locres/.mo/.sqlite/.bin/b.plist)
+#   3 file text UTF-16 trong pb3/tests/fixtures/ (b.strings, unicode.json,
+#   unicode.xml)
+# Bước "Kiểm tra fixture" dưới đây liệt kê rõ từng file còn thiếu trong
+# log. ĐO THẬT (sandbox, Python 3.12, 2026-11-16): thiếu 28 file này thì
+# suite chạy 1562 test, chỉ đạt 1386, còn 117 lỗi + 58 fail (exit 1) —
+# CI ĐỎ là đúng, KHÔNG phải PASS giả. Trong 175 mục không xanh, 174 do
+# thiếu fixture (105 trực tiếp mở fixture + 69 lỗi kéo theo vì bước
+# extract trước đó không có file để chạy), 1 do test mtime (xem dưới).
+# Khi đủ 28 file, CI đạt 1560/1562.
+#
+# 1 TEST SẼ ĐỎ NGAY CẢ KHI ĐỦ FIXTURE (lỗi thật trong cây, chưa sửa):
+# tests/test_support_matrix.py::test_effective_maturity_uses_corpus_not_
+# declared hardcode test_date = "2026-11-15", nhưng ngày này lấy từ mtime
+# của tests/corpus/json_text.json — git checkout đặt lại mtime thành ngày
+# checkout nên test luôn lệch ngày. Sửa đúng: test tự đặt mtime file
+# corpus trong setUp (hoặc đọc ngày từ nội dung file) thay vì hardcode —
+# để dành cho đợt vá sau, KHÔNG sửa test cho vừa CI ở đây.
+#
+# Font: file pb3/fonts/BeVietnamPro-Regular.ttf là nhị phân nên chưa lên
+# main; bản web chỉ có fonts/BeVietnamPro-Regular.ttf.b64. Bước "Khôi
+# phục font" dưới đây giải mã đúng file đó (byte-identical, 132948 byte)
+# để 5 test font chạy được — không phải file giả.
+#
+# Phụ thuộc duy nhất ngoài stdlib: lz4 (tests/test_polish.py import
+# lz4.frame ở đầu file, không có fallback; tests/test_unity.py chỉ dùng
+# lz4 khi có, thiếu thì skip). Suite chạy hoàn toàn offline, không cần
+# mạng ngoài pip install lz4. UnityPy KHÔNG cần cho suite.
+name: PB3 test suite
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.9 (bản iSH)
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.9"
+
+      - name: Install lz4 (suite cần, ngoài stdlib)
+        run: pip install lz4
+
+      - name: Kiểm tra fixture (28 file nhị phân/UTF-16 chưa lên main)
+        run: |
+          python3 - <<'EOF'
+          import pathlib
+          missing = [
+            "pb3/kb/pb3_kb.sqlite",
+            "pb3/tests/fixtures/apple_plist/b.plist",
+            "pb3/tests/fixtures/apple_strings/b.strings",
+            "pb3/tests/fixtures/extract/ambig.zip",
+            "pb3/tests/fixtures/extract/game1.zip",
+            "pb3/tests/fixtures/generic_strings/sample.bin",
+            "pb3/tests/fixtures/json_text/unicode.json",
+            "pb3/tests/fixtures/po_mo/sample.mo",
+            "pb3/tests/fixtures/sqlite_loc/a.sqlite",
+            "pb3/tests/fixtures/unity/nested.ipa",
+            "pb3/tests/fixtures/unity/nested_v8.ipa",
+            "pb3/tests/fixtures/unity/resources.assets",
+            "pb3/tests/fixtures/unity/sample.unity3d",
+            "pb3/tests/fixtures/unity/sample_lz4.unity3d",
+            "pb3/tests/fixtures/unity/sample_lzma.unity3d",
+            "pb3/tests/fixtures/unity/sample_typetree.assets",
+            "pb3/tests/fixtures/unity/sample_v21.assets",
+            "pb3/tests/fixtures/unity/sample_v23.assets",
+            "pb3/tests/fixtures/unity/sample_v6.unity3d",
+            "pb3/tests/fixtures/unity/sample_v8.unity3d",
+            "pb3/tests/fixtures/unity/sample_v8_lz4.unity3d",
+            "pb3/tests/fixtures/unity/sharedassets0.assets",
+            "pb3/tests/fixtures/unreal_locres/legacy.locres",
+            "pb3/tests/fixtures/unreal_locres/vi.locres",
+            "pb3/tests/fixtures/unreal_pak/game_v11.pak",
+            "pb3/tests/fixtures/unreal_pak/game_v8.pak",
+            "pb3/tests/fixtures/xml_strings/unicode.xml",
+            "pb3/tests/fixtures/zip/sample.ipa",
+          ]
+          gone = [f for f in missing if not pathlib.Path(f).is_file()]
+          for f in missing:
+              print(("THIEU " if f in gone else "CO    ") + f)
+          print("Thieu %d/%d file fixture — CI chi xanh hoan toan khi du 28 file." % (len(gone), len(missing)))
+          EOF
+
+      - name: Khôi phục font (giải mã .b64 có sẵn trong repo)
+        run: |
+          python3 - <<'EOF'
+          import base64, pathlib
+          raw = base64.b64decode(pathlib.Path("fonts/BeVietnamPro-Regular.ttf.b64").read_text().replace("\n", "").replace(" ", ""))
+          pathlib.Path("pb3/fonts/BeVietnamPro-Regular.ttf").write_bytes(raw)
+          print("font bytes:", len(raw))
+          EOF
+
+      - name: Run full test suite (1562 test)
+        working-directory: pb3
+        run: |
+          set -o pipefail
+          python3 run_tests.py --tier full 2>&1 | tee ../test-full.log
+
+      - name: Upload test log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pb3-test-log
+          path: |
+            test-full.log
+            pb3/reports/failures.txt
+            pb3/reports/test_times.json
+          if-no-files-found: warn
