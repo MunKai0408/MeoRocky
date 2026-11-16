@@ -1,0 +1,23 @@
+{
+  "_ghi_chu": "Ghi đè tay tầng test. Khóa fast/slow/meta/ish là danh sách TIỀN TỐ id dạng 'test_x.py::Lop::test_ten' (tiền tố dài nhất thắng). 'fast' cứu test bị xếp oan; thường KHÔNG cần sửa: test mới tự được xếp tầng. 'smoke' = các test then chốt chạy sau mỗi lần sửa (chỉ tính nếu test thuộc tầng fast); mỗi mục nên kết thúc bằng '::' để chọn cả lớp.",
+  "fast": [
+    "test_isolation.py::TestGuards::test_subprocess_blocked",
+    "test_conformance.py::TestGuardInsideConformance::test_subprocess_fails_guard",
+    "test_scan.py::TestScanSource::test_sys_modules_and_os_process"
+  ],
+  "slow": [],
+  "meta": [],
+  "smoke": [
+    "test_app_menu_cli.py::TestBootstrap::",
+    "test_tomlmini_config.py::TestTomlMini::",
+    "test_safe_io.py::TestAtomicWrite::",
+    "test_paths_safe.py::TestResolveInside::",
+    "test_errors.py::TestErrorCodes::",
+    "test_sdk.py::TestManifest::",
+    "test_ir.py::TestIR::",
+    "test_registry.py::TestStaticManifest::",
+    "test_registry.py::TestCompatibility::",
+    "test_plugin_toggle.py::TestRegistryHonoursConfig::"
+  ],
+  "ish": []
+}

@@ -1,0 +1,348 @@
+PB3 - NHẬT KÝ THAY ĐỔI
+======================
+
+3.1.0-dev  (Claude 01 - nền móng)  2026-11-14
+  + Khảo sát mã PB3 cũ -> docs/INVENTORY.md; mã cũ giữ nguyên byte trong legacy/
+  + core/: errors (mã lỗi Phụ lục D + 6 mã mở rộng), paths, tomlmini (TOML cho Python 3.9),
+    config (+ default.toml), logging (xoay vòng, không lộ nội dung), limits, hashing,
+    progress (cho terminal hẹp), safe_io (ghi nguyên tử, versioning, cách ly temp dở dang),
+    runstate, ish_compat, file_dialog, app (bootstrap)
+  + ui/ + menu.py: menu 5 mục theo đặc tả, CLI theo 12.2, mục chưa làm hiển thị rõ trạng thái
+  + tests/: 155 test (unittest), gồm luật kiến trúc iSH-only và tương thích Python 3.8
+  - Đã gỡ mục "Space Marshals 2" và đường dẫn cứng ngoài dự án khỏi mã đang dùng (còn lại ở legacy/)
+
+3.1.0-dev  (Claude 02 + bổ sung theo yêu cầu)  2026-11-14
+  + core/model.py, sdk/ (IR, types, vfs, manifest, plugin, example_kv), docs/SDK_CONTRACT.md, tests/test_sdk.py
+  + core/overall.py: thanh tiến độ TỔNG 0-100% + thời gian còn lại, học thời lượng từ lịch sử, luồng nhịp, bọc stdout/stderr
+  + core/keepalive.py: giữ iSH chạy nền qua /dev/location (mặc định tắt; cờ --keepalive; Chẩn đoán > [4])
+  + config: progress.overall, progress.heartbeat_s, keepalive.enabled, keepalive.device
+  + tests/test_overall_keepalive.py (25 test); tổng sandbox 211 test
+  ~ Sửa file hỏng do dán heredoc: sdk/plugin.py, sdk/example_kv.py, tests/test_sdk.py, docs/SDK_CONTRACT.md (dựng lại từ test/hợp đồng)
+  + app.job(): bọc MỌI việc dưới thanh tiến độ tổng (menu: mọi chức năng + chẩn đoán + bật/tắt chạy nền;
+    CLI: mọi lệnh). Dịch vụ mới không cần tự gắn thanh. input() tự ẩn thanh khi chờ gõ (OverallProgress.pause/resume)
+  + run_tests.py: chạy test có tiến độ sống + cảnh báo test treo; sửa test FIFO treo trên iSH (dùng os.pipe)
+
+3.1.0-dev  (Claude 02b - sửa SDK theo đặc tả)  2026-11-14
+  ~ sdk/ viết lại theo đặc tả 3, 4, 5.1, Phụ lục A-D: api.py (api_version=3, Plugin, PluginContext), types.py (SourceRef, LocEntry, LocTable,
+    Candidate, Diagnostic), manifest.py (Phụ lục A đầy đủ), vfs.py (iter_entries/stat/read/slice/open_stream, chỉ đọc), ir.py (IR 2.0), example_kv.py
+  ~ core/model.py: Evidence có trọng số + confidence(), SupportLevel M0..M4, Locale theo 3.4; bỏ TextEntry/ExtractionResult
+  - Xóa sdk/plugin.py (lifecycle do_probe/do_extract/do_writeback/do_validate)
+  + tests: test_sdk (viết lại), test_ir, test_model, test_appendix_b (Phụ lục B chạy nguyên văn); docs/SDK_CONTRACT.md v3; decisions #23-30
+
+- Sau 02b: sửa test heartbeat flaky trên iSH (chỉ kiểm luồng riêng); join timeout 5.0 s.
+
+3.1.0-dev  (Claude 03 đợt 1 - loader/registry/arbitration)  2026-11-14
+  + registry/: compatibility (api_version, requires bằng find_spec), loader (đọc MANIFEST tĩnh bằng ast, import có điểm cắm guard, trùng id, user thắng),
+    registry (chỉ mục kind/capability/engine/extension/container_kind, candidates_for theo thứ tự 4.5, bật/tắt), arbitration (Phụ lục C, ngưỡng, tie-break, lý do)
+  + services/plugin_manager.py: `python3 menu.py plugin list` (test/new: E_NOT_IMPLEMENTED); plugins/, plugins_user/ (rỗng); config paths.plugins, paths.plugins_user
+  + tests/test_registry.py (63 test); tổng sandbox 303 test
+  ~ tests/test_app_menu_cli.py: mục 3 menu đã có dịch vụ; tests/test_rules_ish_only.py: kiểm cả registry/ và services/
+
+3.1.0-dev  (Claude 03 đợt 2 - isolation)  2026-11-14
+  + registry/isolation.py: run_hook (luồng riêng + timeout + chuẩn hóa lỗi -> Diagnostic), guard best effort
+    (socket/DNS, subprocess/shell/exec, ctypes, ghi ngoài ctx.tempdir), trusted(), import_guard cho loader
+  + tests/test_isolation.py (32 test); tổng sandbox 338 test
+  ~ services/plugin_manager.py: nạp plugin dưới import_guard
+  = iSH 2026-11-15: 335 passed, 3 skipped, 0 failed, 530,70 s
+
+3.1.0-dev  (Claude 03 đợt 2 - conformance kit + template)  2026-11-15
+  + sdk/testing.py: ConformanceReport (PASS/FAIL/SKIP + lý do), load_fixture, run_checks (nhận runner tiêm vào; mục: manifest, readonly,
+    detect, candidates, probe, parse, write, container, hints, selftest, guard)
+  + registry/conformance.py: run_conformance(plugin|record|lớp) tiêm isolation.run_hook (sdk không import registry)
+  + registry/template.py: skeleton format/extractor/container/engine + generate() (không ghi đè, tự kiểm, dọn khi lỗi)
+  + services/plugin_manager.py: `plugin new <kind> <id>`, `plugin test <id>` (support/kb vẫn E_NOT_IMPLEMENTED)
+  + tests/test_conformance.py (55 test); tổng sandbox 393 test
+  ~ tests/test_registry.py: `plugin test <id lạ>` -> E_INPUT_NOT_FOUND (rc 1)
+  = iSH 2026-11-15 (bản 393 test): 390 passed, 3 skipped, 0 failed, 541,08 s
+
+3.1.0-dev  (Claude 03 đợt 2 - R5 bằng chứng M3/M4, R3 chốt)  2026-11-15
+  + registry/evidence.py: maturity hiệu lực từ tests/corpus/<id>.json (M3 cần read+write PASS, M4 thêm verify; sàn M2; chỉ kiểm hình thức)
+  ~ registry/loader.py: PluginRecord.effective_maturity, discover(corpus_dir=); cảnh báo khi hạ; plugin vẫn nạp
+  ~ registry/registry.py: candidates_for xếp theo hiệu lực; build_registry truyền tests/corpus
+  ~ registry/arbitration.py: contender_from_candidate(maturity=) (Claude 07 truyền maturity_effective)
+  ~ services/plugin_manager.py: plugin list hiện M4→M2 khi bị hạ
+  + tests/test_registry.py::TestMaturityEvidence (12 test); tổng sandbox 405 test
+  ~ core/ish_compat.py: ghi chú diagnose --ish về thư mục dự án
+  = R3: người dùng xác nhận vô hiệu hóa api_version lệch cả hai chiều (không đổi mã)
+
+3.1.0-dev  (Claude 03 - quét tĩnh plugin)  2026-11-14
+  + registry/scan.py: lint tĩnh file entry plugin user trước khi import (module cấm, eval/exec/__import__, sys.modules, os.system...)
+  ~ registry/loader.py: _import_instance gọi scan; discover(static_scan=True)
+  + tests/test_scan.py (14 test); tests/test_isolation.py: TestImportGuard dùng static_scan=False
+  = sandbox 3.12.3: 419 test OK; iSH: NOT RUN
+
+3.1.0-dev  (Claude 03 - nhãn conformance)  2026-11-14
+  ~ sdk/testing.py: data_tested, verdict_label; dòng KẾT QUẢ ghi "PASS (CHƯA KIỂM DỮ LIỆU)" khi parse không chạy; verdict/ok giữ nguyên
+  + tests/test_conformance.py: +3 test; = sandbox 3.12.3: 422 test OK; iSH: NOT RUN
+
+3.1.0-dev  (Claude 03 - sửa hạn chế 01/02)  2026-11-15
+  ~ core/runstate.py: pstart chống pid tái dùng; core/safe_io.py: AtomicWriter(exclusive), write_output_bytes không đè khi song song
+  ~ core/config.py: save_local giữ chú thích (có đối chiếu parse, dự phòng ghi lại toàn bộ); sdk/example_kv.py: CRLF
+  ~ tests/test_progress_env_dialog.py: test SIGINT tự đặt lại handler (R1)
+  + tests/test_hardening.py (16 test); = sandbox 3.12.3: 438 test OK; iSH: NOT RUN
+
+3.1.0-dev  (Claude 03 - C1 plugin nhiều file)  2026-11-15
+  + registry/pluginpkg.py: mỗi plugin là một package riêng; import tương đối giữa các file; không sửa sys.path;
+    chỉ nạp .py trong thư mục plugin; bỏ qua bytecode đệm (không đọc/ghi __pycache__)
+  ~ registry/loader.py: nạp qua package; quét tĩnh mọi .py của plugin user (giới hạn 64 file/4 cấp/4 MiB, từ chối symlink);
+    lỗi `import helper` có gợi ý "from .helper import ..."
+  + tests/test_multifile.py (25 test); decisions #56; tổng sandbox 463 test
+
+3.1.0-dev  (Claude 03 - C3 + đường dẫn)  2026-11-15
+  = Thư mục dự án chuẩn là /root/pb3 (người dùng chốt); bỏ đường dẫn cũ khỏi tài liệu, mã, test (decisions #40 viết lại)
+  + core/config.py: kiểu strlist, khóa plugins.disabled, Config.update; config/default.toml: [plugins]
+  ~ registry/registry.py: build_registry gộp plugins.disabled từ cấu hình
+  + services/plugin_manager.py: plugin enable|disable <id>, menu "QUẢN LÝ PLUGIN" (gõ số để đảo), cảnh báo id cũ
+  ~ ui/screens.py: run_feature truyền input_fn/say cho dịch vụ có khai báo; ui/cli.py, ui/handlers.py: enable|disable
+  + tests/test_plugin_toggle.py (34 test); tổng sandbox 497 test
+
+3.1.0-dev  (Sửa tài liệu/bàn giao - Muse)  2026-11-15
+  ~ Sửa lệch số test 497 -> 524 khắp tài liệu hiện hành (CURRENT_STATE.md, PROGRESS.md, TIEN_DO_VA_NHIEM_VU.md,
+    handoff/TASKS_CLAUDE03.md, handoff/account_03.md, README.txt); số 497 ở các mốc lịch sử (C3: Ran 497 test OK...)
+    giữ nguyên, tổng hiện tại là 524 = 497 + 27 test chia tầng trong tests/test_tiering.py
+  ~ PROGRESS.md §1: gói 02 đã bị 02b thay thế; iSH của 02b là 237 passed, 3 skipped, 0 failed
+  + CLAUDE03_CONTINUE_HERE.md (đọc trước, chỉ còn C5, lệnh iSH)
+  + tests/corpus/ (.gitkeep + README.txt): chỗ để bằng chứng M3/M4, hiện chưa có file <id>.json nào
+  = Đặc tả PB3_v3.1_iSH_10Claude.txt + bộ prompt PB3_v3.1_10_Claude_Prompts.txt đã có trong zip này
+    (nhận 2026-11-15, nằm ngoài thư mục pb3/)
+  = Claude 03 vẫn IN_PROGRESS; C5 (131 test + lệnh plugin thật trên iSH) vẫn NOT RUN; không bịa kết quả iSH;
+    không làm việc của Claude 04-10
+
+3.1.0-dev  (Claude 03 - C5 phần sandbox + sửa trùng id)  2026-11-15
+  ~ registry/registry.py: Registry.add() giữ bản thắng của loader khi trùng id (bản ok thắng bản
+    không ok; cả hai đều không ok thì bản user thắng bản builtin, 4.5); bản bị thay giữ lý do,
+    chuyển sang _rejected để hiển thị. Trước đây plugin list hiện cả hai bản đều [disabled].
+  + tests/test_registry.py: 3 test hồi quy trùng id (user thắng khi hợp lệ; user thắng khi cả hai
+    thiếu requires; builtin thắng khi user hỏng import); tổng sandbox 527 test
+  = C5 phần sandbox đã xong (kiểm lại prompt 03 + đặc tả §4; CLI thật trên bản sao: plugin
+    new/test/disable/enable, menu đảo bằng số, plugin 2 file, R5 M4->M2, thiếu requires ->
+    [unavailable]); C5 phần iSH xem mục dưới (đã PASS 2026-11-15, gói COMPLETE)
+
+3.1.0-dev  (Claude 03 - C5 phần iSH + COMPLETE)  2026-11-15
+  = iSH 2026-11-15 18:28, /root/pb3: `python3 run_tests.py --tier full` -> Ran 527 tests in
+    264.9s OK (skipped=3, lỗi=0, fail=0) — 524 passed, 3 skipped; chậm nhất 44.0s
+    TestRealCli::test_disable_survives_new_process; 27 test vượt ngân sách 1.0s (tự
+    chuyển tầng chậm lần sau); đã lập mốc FULL xanh
+  = iSH 2026-11-15 18:29, /root/pb3: `plugin new/test/disable/enable thu_nghiem` thật PASS
+    (KẾT QUẢ: PASS (CHƯA KIỂM DỮ LIỆU), 6 PASS, 0 FAIL, 5 SKIP; disable lưu
+    config/local.toml; list [disabled] M1; enable bật lại); 2 thư mục thu_nghiem đã
+    dọn 18:31 (rm -rf chạy sạch)
+  = Claude 03 COMPLETE (2026-11-15). Chưa có trên iSH: menu-toggle bằng số không chạy
+    riêng (chỉ sandbox + suite C3); dòng disabled trong config/local.toml chưa có
+    bằng chứng đã xóa. Claude 04-10 vẫn NOT_STARTED.
+  ~ Tài liệu: CURRENT_STATE.md, PROGRESS.md, TIEN_DO_VA_NHIEM_VU.md, README.txt,
+    handoff/{account_03,TASKS_CLAUDE03}.md, CLAUDE03_CONTINUE_HERE.md cập nhật
+    03 -> COMPLETE, C5 phần iSH -> PASS (mốc lịch sử cũ giữ nguyên)
+
+3.1.0-dev  (Claude 04 - Container và Virtual Filesystem)  2026-11-15
+  + sdk/containers.py (mới): ZipVFS/TarVFS/SingleStreamVFS/NestedVFS, open_vfs,
+    detect_container_kind, support_matrix, rebuild_zip + ZipRebuildReport. ZIP/TAR/GZ/XZ
+    qua thư viện chuẩn (ZIP ghi được, còn lại chỉ đọc); 7z unsupported (không backend,
+    không thêm phụ thuộc). Container lồng '::': mở lazy, cache SHA-256 (16), độ sâu 4,
+    phát hiện vòng lặp. An toàn ZIP: EOCD, giới hạn bom, tỉ lệ nén chỉ cảnh báo, entry
+    không an toàn (tuyệt đối, .., NUL, \, symlink, mã hóa) bị loại + kê khai; đọc toàn
+    bộ kiểm CRC, slice/đọc tiền tố không kiểm CRC (giải nén thô STORED/DEFLATED).
+    Writer: ghi nguyên tử + rollback (safe_io.AtomicWriter), giữ thứ tự/method/metadata.
+  + plugins/zip/ (mới, plugin builtin đầu tiên): ZipPlugin, kind=container, M2, match
+    .zip/.ipa + magic PK, open_container qua ctx.vfs. services/container_tool.py (mới):
+    lệnh `container list <file>` / `container read <file> <entry> --out <dest>`
+    (đường dẫn lồng '::', không ghi đè file đã có). sdk/vfs.py KHÔNG đổi.
+  + tests/test_container.py (38) + tests/test_vfs_real.py (10) = 48 test mới (CRC, zip
+    bomb, path traversal, symlink, mã hóa, trùng tên, TAR/GZ/XZ, luồng đơn, lồng 3 tầng,
+    giới hạn độ sâu, vòng lặp, writer round-trip + rollback, 7z unsupported, plugin zip,
+    CLI thật); fixture tests/fixtures/zip/sample.ipa (IPA mẫu có zip lồng .unity3d).
+  ~ tests/test_registry.py: 2 test cũ assert "chưa có plugin" cập nhật theo thực tế mới
+    (đã có plugin zip thật, không phải mẫu). Tổng sandbox: 575 test OK
+    (python3 run_tests.py --tier full, 9.1s; fast 524, ish 11, slow 23, meta 17, smoke 57)
+  = iSH: PASS 2026-11-15 19:20 (trong /root/pb3): Ran 575 tests in 449.0s OK
+    (skipped=3, lỗi=0, fail=0) — 572 passed, 3 skipped; chậm nhất 47,6s; 42 test
+    vượt ngân sách 1.0s (tự chuyển tầng chậm lần sau); mốc FULL xanh. Container
+    CLI thật 19:21: container list tests/fixtures/zip/sample.ipa ra 3 entry
+    (Info.plist 93 byte, level.unity3d 300 byte, config.txt 8 byte, deflated);
+    plugin test zip PASS (8 PASS, 0 FAIL, 3 SKIP); plugin list: zip [ok] M2.
+    Lưu ý: container list chạy trên fixture sample.ipa, không phải IPA game
+    thật. = Claude 04 COMPLETE (2026-11-15).
+    Tài liệu: handoff/account_04.md (mới), decisions.md #61-65, CURRENT_STATE.md,
+    PROGRESS.md, TIEN_DO_VA_NHIEM_VU.md, README.txt cập nhật 04 -> COMPLETE.
+    Gói 03 COMPLETE giữ nguyên. Claude 05-10 NOT_STARTED.
+
+3.1.0-dev  (Claude 05 - Unity backend, COMPLETE)  2026-11-15
+  + sdk/unity.py (mới): detector UnityFS, UnityFS reader v6/v7 (LZ4/LZ4HC/LZMA/
+    none, blocks-info-at-end, mã hóa -> E_ENCRYPTED), SerializedFile v15-22
+    (metadata, object table, typetree blob, TextAsset ngắn/dài), UnityBackend
+    AUTO/LIBRARY/NATIVE + log decisions, planner (container -> entry -> object,
+    ưu tiên TextAsset/JSON/CSV), patcher PATCH_INPLACE/REBUILD_SECTION +
+    diffverify (allow-list, hash object không liên quan, giữ bản ứng viên khi
+    verify lỗi), REBUILD_ALL bị khóa (cần M4), build_bundle/build_serialized,
+    support_matrix (M2). Không có câu `import UnityPy`/`import lz4` nào trong
+    mã (quy tắc iSH): binding qua importlib.import_module sau probe.
+  + sdk/lz4pure.py (mới): LZ4 block decoder thuần Python, encoder literal-only
+    (hợp lệ, không nén, có ghi log), LZ4 frame detect/decode, xxhash32 thuần.
+  + services/unity_tool.py (mới): lệnh `unity inspect|read|patch` (dry-run mặc
+    định, --allow-write mới ghi thật; output <GameName>/<đơn vị nhỏ nhất>,
+    bundle trong IPA chỉ xuất bundle, không bao giờ đóng gói lại IPA) + `mod`
+    (menu mục 1 nối dịch vụ thật, M2; run_interactive hỏi từng bước, xác nhận
+    trước khi ghi). ui/handlers.py: COMMANDS thêm `unity`, `mod` M2.
+    ui/cli.py: subparser `unity` + cờ --allow-write cho cả `mod`/`unity`.
+  + tests/fixtures/unity/ (mới, builder độc lập UnityPy): resources.assets
+    (TextAsset greeting/longtext 5437 ký tự/MonoBehaviour), sharedassets0.assets
+    (JSON), sample_typetree.assets, sample_v21.assets, sample.unity3d (v7 none),
+    sample_lz4.unity3d (LZ4, blocks-info-at-end), sample_lzma.unity3d,
+    sample_v6.unity3d, nested.ipa. UnityPy 1.25.4 (venv kiểm chứng, không thuộc
+    PB3) đọc đúng mọi fixture và mọi output đã patch.
+  + tests/test_unity.py (68 test mới): detector, LZ4 thuần (so với binding),
+    bundle v6/v7 none/LZ4/LZMA, SerializedFile v17/v21/typetree, backend modes,
+    planner (kể cả nested.ipa qua '::'), patcher (in-place cùng/ngắn hơn/dài
+    hơn leo thang/từ chối, REBUILD_SECTION, REBUILD_ALL bị khóa, verify lỗi giữ
+    bản ứng viên, round-trip, byte-diff 1 byte), CLI thật qua tiến trình con.
+    Tổng sandbox: 643 test OK (python3 run_tests.py --tier full, 11.4s;
+    fast 584, ish 11, slow 31, meta 17, smoke 57).
+  ~ Sửa bug treo suite trên iSH (2026-11-15 20:22): full suite treo ở
+    test_auto_falls_back_to_native_in_sandbox (> 149s) vì probe_backends()
+    import thật UnityPy; sửa thành find_spec + importlib.metadata.version
+    (không thực thi module) + cache theo tiến trình; 2 test giả định chỉ
+    đúng trong sandbox sửa thành iSH-aware; mô phỏng iSH bằng venv UnityPy
+    1.25.4 (dựng lại /tmp/upvenv): đủ suite 643 test OK (skipped=1), AUTO
+    init 0.114s không import UnityPy; mô phỏng bắt thêm lỗi `_print_plan`
+    thiếu object_type (xem handoff/account_05.md §3, decisions #75).
+  ~ tests/test_app_menu_cli.py: 2 test cập nhật theo thực tế mới (mục 1 đã triển
+    khai nên test "chưa triển khai" kiểm mục 2,4; test module thiếu/hỏng dùng
+    mục 2 language_tool); services/unity_tool.py: sửa tiêu đề interactive dài
+    64 ký tự -> 2 dòng (vừa 48 ký tự iPhone). Không hạ tiêu chuẩn.
+  = iSH: PASS 2026-11-15 20:50 (trong /root/pb3): Ran 643 tests in 719.4s OK
+    (skipped=4, lỗi=0, fail=0) — 639 passed, 4 skipped; chậm nhất 114,7s;
+    9 test vượt ngân sách 1.0s (tự chuyển tầng chậm lần sau); mốc FULL xanh.
+    Test từng treo (test_auto_init_logs_unitypy_decision) chỉ 1,1s — bản sửa
+    probe decision #75 chạy đúng trên iSH. Unity CLI thật 20:52: unity
+    inspect sample.unity3d (CHẮC CHẮN, UnityFS v7 2019.4.40f1, plan 6 dòng)
+    + nested.ipa (CÓ KHẢ NĂNG, plan 8 dòng), unity read in "Xin chao 9
+    Kings!", unity patch dry-run KHÔNG ghi file rồi --allow-write ghi
+    workspace/output/resources/resources.assets; patch lồng trên nested.ipa
+    20:56 chỉ xuất workspace/output/nested/level.unity3d (không có .ipa nào
+    trong output). Inspect IPA thật 20:56 trả E_UNSUPPORTED_FORMAT — UnityFS
+    v8 chưa hỗ trợ (chỉ 6/7), tại localization-locales_assets_all.bundle
+    (game 9 Kings thật dùng bundle v8; decision #76, việc tương lai).
+    = Claude 05 COMPLETE (2026-11-15).
+    Sandbox: UnityPy KHÔNG có trong Python hệ thống (chỉ có trong venv kiểm
+    chứng); lz4 4.0.2+dfsg có. Trên iSH UnityPy 1.25.4 + lz4 đã chứng minh
+    2026-11-15 18:21, không cần cài đặt. Tài liệu: handoff/account_05.md (mới),
+    decisions.md #66-76, CURRENT_STATE.md, PROGRESS.md, TIEN_DO_VA_NHIEM_VU.md,
+    README.txt cập nhật 05 -> COMPLETE (tiến độ 5/10).
+    Claude 06-10 NOT_STARTED.
+
+3.1.0-dev  (Claude 05b - Unity phiên bản cao nhất, SANDBOX DONE)  2026-11-15
+  + sdk/unity.py: UnityFS v8 (SUPPORTED_BUNDLE_VERSIONS 6/7/8), SerializedFile
+    v23 (SUPPORTED_SF_VERSIONS tới 23; type tree v23: magic "mhtt" + content
+    hash XXH3 16 byte + serialized size; size 0 -> node None); build_bundle
+    thêm unity_revision / extra_data_flags / pad_block_data; apply_patch giữ
+    nguyên unity_revision khi dựng lại bundle; plan verdict in revision
+    ("UnityFS v8 (6000.0.23f1)").
+  ~ Sửa gating cờ theo unityRevision (decision #78): trước đây _uses_new_flags,
+    căn 16 sau header và uses_padding dùng unity_version (player, thường
+    "5.x.x") thay vì unity_revision — bundle Unity 2019 thật bị nhận cờ mới.
+  ~ Sửa header mở rộng v22+ luôn big-endian (decision #80): parse/build dùng
+    endian của file nên byte-swapped, UnityPy nhận nhầm file v23 do PB3 ghi
+    thành ResourceFile (0 object); nay đọc/ghi bằng big-endian.
+  + tests/fixtures/unity/: fixture mới sample_v23.assets (7163B, SF v23, Unity 6),
+    sample_v8.unity3d (7759B), sample_v8_lz4.unity3d (762B, LZ4 + blocks-at-end +
+    cờ padding), nested_v8.ipa (1103B); builder build_fixtures.py mở rộng
+    (header v22+ BE, typetree v23, type_dependencies v21+); fixture cũ giữ
+    nguyên nội dung (sha256 kiểm với zip 05 complete; nested.ipa chỉ khác
+    timestamp ZIP entry).
+  + tests/test_unity.py: +22 test (68 -> 90): TestBundleV8 (11), TestSerializedV23
+    (8), CLI v8 (3: inspect sample_v8 / nested_v8.ipa, patch bundle v8 dry-run +
+    --allow-write); test_unsupported_version_raises đổi v8 -> v9 (v9 không có
+    bằng chứng tồn tại, decision #77). Tổng sandbox 665 test OK (12,0 s).
+  = Max version đã kiểm chứng từ mã nguồn UnityPy 1.25.4 (venv /tmp/upvenv8):
+    UnityFS v8 (không bịa v9), SerializedFile v23 (không nhánh v24), nén
+    NONE/LZMA/LZ4/LZ4HC (không có Zstd), LZHAM/UnityWeb/UnityArchive không hỗ
+    trợ; bundle mã hóa vẫn E_ENCRYPTED, không giải mã (chủ ý, decision #67).
+    UnityPy đọc đúng mọi fixture mới + output đã patch; đủ suite dưới venv
+    UnityPy 665 test OK (skipped=1), AUTO init 0.005s không import UnityPy.
+  = iSH: NOT RUN — chờ Joseph giải nén zip 05b đè lên /root/pb3, chạy full suite
+    (kỳ vọng 665 test, 661 passed, 4 skipped) + Unity CLI trên fixture v8/v23 +
+    unity inspect workspace/input/game.ipa (kỳ vọng mới: CHẮC CHẮN với plan đầy
+    đủ thay vì E_UNSUPPORTED_FORMAT). Chỉ inspect IPA thật, không patch.
+    Tài liệu: handoff/account_05b.md (mới), decisions.md #77-80, CURRENT_STATE.md,
+    PROGRESS.md, TIEN_DO_VA_NHIEM_VU.md, README.txt cập nhật 05b sandbox DONE.
+    Tiến độ 10 gói không đổi (5/10; 05b là phần bổ sung ngoài prompt).
+    Claude 06-10 NOT_STARTED.
+
+3.1.0-dev  (Đợt polish - Wave 1/2/3 + màu sắc + giao diện chạy test, SANDBOX DONE)  2026-11-15
+  + Wave 1 (bug thật): Unity bền bỉ từng entry khi inspect container (decision #81),
+    LZ4 frame dict_id/bound, SerializedFile v15-23 giữ thứ tự object, patch giữ cờ
+    bundle, container (tar.bz2, prefix-probe, rebuild_zip, NestedVFS), plugin loader/
+    registry/conformance, core (config salvage, logging, safe_io, progress) + SDK/model.
+  + Wave 2 (UX): nạp plugin có đích (only_ids, `plugin test/toggle` chỉ import plugin
+    cần), cache duyệt manifest tĩnh (workspace/cache/discovery_cache.json, khóa
+    registry.discovery_cache), skeleton ghi được `plugin new format <id> --write`
+    (build/verify + nhiều file, PASS conformance write), bằng chứng M3/M4 ghi version
+    khớp manifest (X16), gợi ý lỗi sửa lại, `unity inspect` báo tiến độ từng entry.
+  + Wave 3 (runner): timeout test = ERROR (không lưu mốc khi timeout), abandon-thread
+    có chứng minh + test, hysteresis tầng (2 lần vượt mới promote, 2 lần full dưới
+    ngân sách mới demote), --changed, Ctrl+C lưu mốc từng phần + rc 130, bảng tóm tắt
+    sau dòng Ran (dòng Ran giữ nguyên y hệt ở chế độ thuần).
+  + Màu sắc + làm đẹp toàn bề mặt: một module core/color.py (bảng màu + bố cục), TTY
+    mới tô màu, NO_COLOR thắng mọi thứ, khóa ui.color (auto/on/off); menu + mọi lệnh
+    CLI + lỗi/cảnh báo gọn đẹp, tiếng Việt có dấu, vừa màn hình điện thoại.
+  + Tiếng Việt có dấu: mọi chữ người dùng thấy đều có dấu (guard test).
+  + tests: 756 test OK (665 như trước + 91 mới: 3 guard dấu + 88 polish; Ran 756 tests
+    in 29.8s OK, skipped=1); tầng: fast 651, ish 11, slow 44, meta 50, smoke 59.
+  = iSH: NOT RUN — zip polish này THAY zip 05b; Joseph chỉ kiểm chứng 1 lần (full suite
+    + Unity CLI v8/v23 + inspect IPA thật). Tài liệu: handoff/account_polish.md (mới),
+    decisions.md #81+, handoff/CLAUDE03_CONTINUE_HERE.md (chuyển từ gốc vào handoff/).
+    Cố tình KHÔNG làm: tối ưu TestImpact, pre-index candidates_for (đo 5,8 µs/lần),
+    UnityFS v9, REBUILD_ALL, plugin định dạng mới, nâng dependency (xem account_polish.md).
+    Claude 06-10 NOT_STARTED.
+
+3.1.0-dev  (Claude 06 - Plugin định dạng / localization, SANDBOX DONE)  2026-11-16
+  + sdk/formats.py: lớp nền dùng chung (detect/probe/parse/build/verify/selftest,
+    BOM/encoding, key trùng); 12 plugin builtin mới (json_text, csv_table,
+    xml_strings, yaml_ini, properties, apple_plist, apple_strings, sqlite_loc
+    chỉ đọc, po_mo, xliff, resx, generic_strings extractor chỉ đọc) — 10 x M3
+    (ghi ngược, có tests/corpus/<id>.json), 2 x M2 chỉ đọc.
+  + tests: 1025 test OK (795 cũ + 230 mới); `plugin test` PASS cả 12 qua CLI thật.
+  = iSH: NOT RUN — chờ Joseph sáng 2026-11-16 (xem handoff/account_06.md §5).
+    Giới hạn: ghi ngược kiểu rebuild mất comment/khoảng trắng; plist nhị phân,
+    MO, SQLite chỉ đọc; YAML tập con; fixture only, chưa test game thật.
+
+3.1.0-dev  (Claude 07 - Trích xuất ngôn ngữ, SANDBOX DONE)  2026-11-16
+  + sdk/discovery.py: bảng locale, detect_locale/engine, inventory (container
+    lồng, text-score, loại trừ), tham chiếu manifest/index.
+  + sdk/extraction.py: pipeline 7 bước (mở nguồn -> inventory -> discovery ->
+    ứng viên qua plugin C06 -> scoring/arbitration Phụ lục C -> parse/IR ->
+    export JSON key-value + report + checkpoint/resume); sniff pass cho file
+    không đuôi (TextAsset Unity); generic_strings là lưới cuối (tối đa 25/lớp).
+  + sdk/extraction.apply_edits: ghi ngược dry-run mặc định, versioned vào
+    workspace/output/<Game>/; TextAsset Unity patch lại vào bundle/.assets qua
+    sdk.unity.apply_patch (PATCH_INPLACE leo thang REBUILD_SECTION + diffverify);
+    chỉ sửa đúng locale của file đã xuất; chỉ đọc -> E_WRITE_DISABLED.
+  + sdk/exporters.py: export JSON key-value + verify, placeholder/mojibake check.
+  + services/language_tool.py: lệnh `extract` + `--apply`, menu [2] tương tác, preset.
+  ~ sdk/arbitration.py: trọng tài chuyển từ registry/ xuống SDK (sdk không được
+    import registry); registry/arbitration.py chỉ còn re-export tương thích ngược.
+  ~ Sửa 2 bug thật tìm thấy khi kiểm thử: hỏi mà bỏ qua vẫn giữ decision "ask";
+    lỗi locale không tồn tại liệt kê locale thật có trong game.
+  + tests: 1080 test OK (1025 cũ + 55 mới: test_extraction.py 45, test_language_cli.py 10);
+    fixtures tests/fixtures/extract/ (game1.zip 21 entry/6 file, ambig.zip).
+  = iSH: NOT RUN — chờ Joseph sáng 2026-11-16 (xem handoff/account_07.md §5).
+    Giới hạn: ghi ngược file thường không đóng gói lại container; trích IPA lớn
+    trên iSH còn chậm; fixture only, chưa test game thật. Claude 08-10 NOT_STARTED.
+
+3.1.0-dev  (Claude 10 - tích hợp cuối, kiểm thử và nghiệm thu)  2026-11-16
+  + Audit tích hợp: 84 file, 0 lỗi cú pháp; 1 vòng import duy nhất
+    (sdk.api <-> sdk.manifest) đã sửa — API_VERSION/API_MIN_VERSION
+    chuyển sang sdk/manifest.py, sdk/api.py re-export (decisions #181).
+  + Sửa #180: apply_patch leo lên REBUILD_SECTION khi chuỗi dài hơn trong
+    cùng khối căn (vd "Xin chao" -> "Xin chào") + mirror ngắn hơn đệm NUL
+    (decisions #182); 3 test unity + 1 test batch mới.
+  + README.txt cập nhật (trạng thái C10, lệnh extract/translate/batch/
+    support/kb đã triển khai, kỳ vọng 1395 test); CURRENT_STATE.md +
+    docs/HUONG_DAN.md §10 (nghiệm thu); handoff/account_10.md (bảng 13
+    tiêu chí); decisions #181-185.
+  = Nghiệm thu: 12/13 tiêu chí PASS, tiêu chí 1 NOT RUN ON DEVICE ->
+    RELEASE BLOCKED, chờ Joseph chạy checklist iSH trên zip C10.
+  = tests: 1395 test OK (1390 cũ + 5 mới); mô phỏng gộp iSH xanh.
+  = iSH: NOT RUN — chờ Joseph sáng 2026-11-16 (xem handoff/account_10.md §5).
+    Nợ ghi nhận: sdk/batch.py import lười services (#183),
+    core/file_dialog.py chưa nối (#184), menu [5][3] chưa triển khai.

@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>app_name</key>
+	<string>9 Kings 👑</string>
+	<key>welcome</key>
+	<string>Xin chào, người chơi!</string>
+	<key>max_lives</key>
+	<integer>3</integer>
+	<key>premium</key>
+	<true/>
+	<key>menu</key>
+	<dict>
+		<key>new_game</key>
+		<string>Trò chơi mới</string>
+		<key>settings</key>
+		<string>Cài đặt</string>
+	</dict>
+	<key>tips</key>
+	<array>
+		<string>Mẹo một</string>
+		<string>Mẹo hai</string>
+	</array>
+	<key>empty</key>
+	<string></string>
+</dict>
+</plist>

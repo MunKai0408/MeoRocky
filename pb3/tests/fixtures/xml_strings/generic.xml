@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<strings>
+    <string name="hello">Xin chào</string>
+    <string key="bye">Tạm biệt</string>
+    <title>Tiêu đề game</title>
+    <subtitle>Phụ đề</subtitle>
+</strings>

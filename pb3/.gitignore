@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+config/local.toml
+logs/*
+!logs/.gitkeep
+reports/*
+!reports/.gitkeep
+kb/*
+!kb/.gitkeep
+workspace/*/*
+!workspace/*/.gitkeep

@@ -1,0 +1,34 @@
+# Dịch game 9 Kings sang tiếng Việt.
+msgid ""
+msgstr ""
+"Project-Id-Version: 9 Kings 1.0.5\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+
+#. Ghi chú của người trích xuất chuỗi.
+#: src/menu.py:12
+msgid "hello"
+msgstr "Xin chào"
+
+#, fuzzy
+msgid "goodbye"
+msgstr "Tạm biệt"
+
+msgctxt "menu"
+msgid "new_game"
+msgstr "Trò chơi mới"
+
+msgid "apple"
+msgid_plural "apples"
+msgstr[0] "một quả táo"
+msgstr[1] "%d quả táo"
+
+msgid "long"
+msgstr ""
+"Đây là một chuỗi rất dài được ngắt thành nhiều dòng trong file PO gốc "
+"để kiểm tra việc nối chuỗi nhiều dòng khi đọc."
+
+#~ msgid "old"
+#~ msgstr "cũ"
+
+msgid "empty"
+msgstr ""

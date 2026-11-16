@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Chuỗi Android mẫu -->
+    <string name="hello">Xin chào</string>
+    <string name="bye">Tạm biệt</string>
+    <string name="quote">Chào \'bạn\' \"nhé\"</string>
+    <string name="skip" translatable="false">Bỏ qua</string>
+    <string-array name="tips">
+        <item>Mẹo một</item>
+        <item>Mẹo hai</item>
+    </string-array>
+    <plurals name="items">
+        <item quantity="one">1 mục</item>
+        <item quantity="other">%d mục</item>
+    </plurals>
+</resources>

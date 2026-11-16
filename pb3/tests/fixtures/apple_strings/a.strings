@@ -1,0 +1,9 @@
+/* Ghi chú đầu file */
+"hello" = "Xin chào";
+"bye" = "Tạm biệt\nHẹn gặp lại";
+"welcome" = "Chào mừng, %@! Bạn có %d tin nhắn mới.";
+// ghi chú dòng
+"quote" = "Cô ấy nói \"Xin chào\"";
+"path" = "C:\\Games\\9Kings";
+"empty" = "";
+"emoji" = "Chúc mừng 🎉";

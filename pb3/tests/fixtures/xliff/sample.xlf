@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<xliff version="1.2" xmlns="urn:oasis:names:tc:xliff:document:1.2">
+  <!-- Ghi chú file: bản dịch 9 Kings. -->
+  <file source-language="en" target-language="vi" datatype="plaintext" original="game">
+    <body>
+      <trans-unit id="hello" resname="greeting">
+        <source>Hello</source>
+        <target>Xin chào</target>
+        <note>Lời chào ở màn hình chính.</note>
+      </trans-unit>
+      <trans-unit id="bye">
+        <source>Goodbye</source>
+      </trans-unit>
+      <trans-unit id="items_one" resname="items_one">
+        <source>%d item</source>
+        <target>%d vật phẩm</target>
+      </trans-unit>
+      <trans-unit id="items_other" resname="items_other">
+        <source>%d items</source>
+        <target>%d vật phẩm</target>
+      </trans-unit>
+      <trans-unit id="styled">
+        <source>Tap <g id="1">here</g> to continue</source>
+        <target>Chạm <g id="1">vào đây</g> để tiếp tục</target>
+      </trans-unit>
+      <trans-unit id="empty">
+        <source></source>
+        <target></target>
+      </trans-unit>
+    </body>
+  </file>
+</xliff>

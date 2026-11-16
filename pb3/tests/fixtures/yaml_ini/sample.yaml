@@ -1,0 +1,13 @@
+# Chuỗi YAML mẫu
+menu:
+  new_game: Trò chơi mới
+  settings: Cài đặt
+count: 3
+premium: true
+note: |
+  dòng một
+  dòng hai
+tags: [mẹo, trò chơi]
+flow: {k: v}
+ref: &chao Xin chào
+copy: *chao
