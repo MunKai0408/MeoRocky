@@ -44,13 +44,22 @@ console.log("pytest (micropip) OK");
 
 for (const mf of ["pb3/files.json", "pb3/tests.json"]) {
   const man = JSON.parse(fs.readFileSync(path.join(ROOT, mf), "utf8"));
+  let skipped = [];
   for (const rel of man.files) {
-    const buf = fs.readFileSync(path.join(ROOT, rel));
+    const src = path.join(ROOT, rel);
+    // File nhị phân chưa lên main (20 file trong Release fixtures-v1) sẽ
+    // vắng mặt ở CI checkout — BỎ QUA thay vì crash ENOENT. Test nào cần
+    // chúng sẽ SKIP qua marker needs_fixture của conftest (đã gắn đủ 126
+    // test); test không cần chúng chạy bình thường. Khi Release tồn tại,
+    // job assets vẫn tải đủ 20 file — job này không tải Release để giữ
+    // nhẹ và độc lập (chỉ kiểm chứng runtime trình duyệt).
+    if (!fs.existsSync(src)) { skipped.push(rel); continue; }
+    const buf = fs.readFileSync(src);
     const target = "/pb3web/" + rel.slice(4);
     pyodide.FS.mkdirTree(target.slice(0, target.lastIndexOf("/")));
     pyodide.FS.writeFile(target, new Uint8Array(buf));
   }
-  console.log(mf + ": " + man.files.length + " file");
+  console.log(mf + ": " + man.files.length + " file (" + skipped.length + " thiếu, bỏ qua: " + skipped.join(", ") + ")");
 }
 const b64 = fs.readFileSync(path.join(ROOT, "fonts", "BeVietnamPro-Regular.ttf.b64"), "utf8").replace(/\s+/g, "");
 pyodide.FS.mkdirTree("/pb3web/fonts");
