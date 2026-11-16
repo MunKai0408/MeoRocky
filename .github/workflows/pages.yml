@@ -1,0 +1,250 @@
+# Deploy PB3 web lên GitHub Pages (sau khi test xanh).
+#
+# CẦN JOSEPH ĐỔI PAGES SOURCE TRÊN github.com TRƯỚC KHI FILE NÀY CÓ TÁC DỤNG:
+#   Settings → Pages → Build and deployment → Source: GitHub Actions.
+# Tới khi đổi thì deploy theo branch cũ vẫn chạy (file này chỉ thêm, không
+# thay đổi gì đang chạy). Deploy chỉ chạy khi push lên main (không chạy ở
+# pull request); job test chạy ở cả push lẫn pull request.
+#
+# Job test GIỐNG HỆT .github/workflows/test.yml (3 job: unit + assets +
+# pyodide-node, Python 3.12 (xem header test.yml: setup-python bỏ 3.9
+# trên Ubuntu 26.04), lz4 + pytest, khôi phục font,
+# STRICT_FIXTURES=1, pytest -q -rs). Nếu sửa test.yml thì sửa cả đây cho
+# khớp — xem header test.yml để biết vì sao có 3 job và fixture lấy từ
+# Release asset nào. Deploy chỉ cần unit + assets xanh (pyodide-node là
+# kiểm chứng thêm, không gate deploy).
+#
+# Job build-deploy KHÔNG tải Pyodide: Pyodide 314.0.8 đã vendor sẵn trong
+# repo ở pyodide/ (cùng origin, không CDN, không downgrade). Job chỉ đóng
+# gói đúng các file web root vào artifact rồi deploy-pages:
+#   index.html, app.js, worker.js, gt.js, kb-store.js, translate.js,
+#   file-reader.js, worker-pool.js, sw.js, register-sw.js, diagnostics.html,
+#   test.html, fonts/, pb3/, pyodide/, README.md, .nojekyll
+# Một số file trong danh sách (kb-store.js, translate.js, file-reader.js,
+# worker-pool.js, sw.js, register-sw.js, diagnostics.html) thuộc các phase
+# sau, chưa có trong repo lúc viết file này: bước staging chỉ copy file
+# đang có và cảnh báo file thiếu, KHÔNG fail vì chúng (fail chỉ khi thiếu
+# file lõi: index.html, app.js, worker.js, pyodide/, pb3/).
+name: test-and-deploy
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  FIXTURES_TAG: fixtures-v1
+  FIXTURES_ASSET: pb3-fixtures-v1.zip
+  STRICT_FIXTURES: "1"
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+jobs:
+  unit:
+    name: unit (không cần fixture nhị phân)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12 (CI — setup-python bỏ 3.9 trên Ubuntu 26.04)
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install lz4 + pytest (suite cần, ngoài stdlib)
+        run: pip install lz4 pytest
+
+      - name: Kiểm tra fixture đã có trên main (8 file, test dùng thật)
+        run: |
+          python3 - <<'EOF'
+          import pathlib
+          have = [
+            "pb3/kb/pb3_kb.sqlite",
+            "pb3/tests/fixtures/apple_plist/b.plist",
+            "pb3/tests/fixtures/apple_strings/b.strings",
+            "pb3/tests/fixtures/extract/ambig.zip",
+            "pb3/tests/fixtures/extract/game1.zip",
+            "pb3/tests/fixtures/generic_strings/sample.bin",
+            "pb3/tests/fixtures/json_text/unicode.json",
+            "pb3/tests/fixtures/po_mo/sample.mo",
+          ]
+          gone = [f for f in have if not pathlib.Path(f).is_file()]
+          for f in have:
+              print(("THIEU " if f in gone else "CO    ") + f)
+          if gone:
+              raise SystemExit("Thieu %d/%d file fixture tren main." % (len(gone), len(have)))
+          print("Du 8/8 file fixture tren main.")
+          EOF
+
+      - name: Khôi phục font (giải mã .b64 có sẵn trong repo)
+        run: |
+          python3 - <<'EOF'
+          import base64, pathlib
+          raw = base64.b64decode(pathlib.Path("fonts/BeVietnamPro-Regular.ttf.b64").read_text().replace("\n", "").replace(" ", ""))
+          pathlib.Path("pb3/fonts/BeVietnamPro-Regular.ttf").write_bytes(raw)
+          print("font bytes:", len(raw))
+          EOF
+
+      - name: Run unit tests (1436 test, không cần fixture nhị phân)
+        working-directory: pb3
+        run: |
+          set -o pipefail
+          python3 -m pytest tests -q -rs -m "not needs_fixture" 2>&1 | tee ../test-unit.log
+
+      - name: Upload test log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pb3-test-unit-log
+          path: test-unit.log
+          if-no-files-found: warn
+
+  assets:
+    name: assets (đủ fixture, toàn bộ suite)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12 (CI — setup-python bỏ 3.9 trên Ubuntu 26.04)
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install lz4 + pytest (suite cần, ngoài stdlib)
+        run: pip install lz4 pytest
+
+      - name: Cache fixture nhị phân (Release asset)
+        id: cache-fixtures
+        uses: actions/cache@v4
+        with:
+          path: /tmp/pb3-fixtures-v1.zip
+          # Đổi key khi đổi FIXTURES_TAG, nếu không CI dùng cache cũ.
+          key: pb3-fixtures-fixtures-v1
+
+      - name: Tải fixture nhị phân (Release asset fixtures-v1)
+        if: steps.cache-fixtures.outputs.cache-hit != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download "$FIXTURES_TAG" --pattern "$FIXTURES_ASSET" --dir /tmp
+          ls -l /tmp/"$FIXTURES_ASSET"
+
+      - name: Giải nén + kiểm tra đủ 20 fixture
+        run: |
+          python3 - <<'EOF'
+          import pathlib, zipfile
+          zipfile.ZipFile("/tmp/pb3-fixtures-v1.zip").extractall("pb3")
+          want = """tests/fixtures/sqlite_loc/a.sqlite
+          tests/fixtures/unity/nested.ipa
+          tests/fixtures/unity/nested_v8.ipa
+          tests/fixtures/unity/resources.assets
+          tests/fixtures/unity/sample.unity3d
+          tests/fixtures/unity/sample_lz4.unity3d
+          tests/fixtures/unity/sample_lzma.unity3d
+          tests/fixtures/unity/sample_typetree.assets
+          tests/fixtures/unity/sample_v21.assets
+          tests/fixtures/unity/sample_v23.assets
+          tests/fixtures/unity/sample_v6.unity3d
+          tests/fixtures/unity/sample_v8.unity3d
+          tests/fixtures/unity/sample_v8_lz4.unity3d
+          tests/fixtures/unity/sharedassets0.assets
+          tests/fixtures/unreal_locres/legacy.locres
+          tests/fixtures/unreal_locres/vi.locres
+          tests/fixtures/unreal_pak/game_v11.pak
+          tests/fixtures/unreal_pak/game_v8.pak
+          tests/fixtures/xml_strings/unicode.xml
+          tests/fixtures/zip/sample.ipa""".splitlines()
+          gone = [f for f in want if not pathlib.Path("pb3", f).is_file()]
+          for f in want:
+              print(("THIEU " if f in gone else "CO    ") + f)
+          if gone:
+              raise SystemExit("Thieu %d/%d fixture tu Release asset." % (len(gone), len(want)))
+          print("Du 20/20 fixture tu Release asset.")
+          EOF
+
+      - name: Khôi phục font (giải mã .b64 có sẵn trong repo)
+        run: |
+          python3 - <<'EOF'
+          import base64, pathlib
+          raw = base64.b64decode(pathlib.Path("fonts/BeVietnamPro-Regular.ttf.b64").read_text().replace("\n", "").replace(" ", ""))
+          pathlib.Path("pb3/fonts/BeVietnamPro-Regular.ttf").write_bytes(raw)
+          print("font bytes:", len(raw))
+          EOF
+
+      - name: Run full test suite (1562 test, STRICT_FIXTURES=1)
+        working-directory: pb3
+        run: |
+          set -o pipefail
+          python3 -m pytest tests -q -rs 2>&1 | tee ../test-full.log
+
+      - name: Upload test log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pb3-test-full-log
+          path: test-full.log
+          if-no-files-found: warn
+
+  pyodide-node:
+    name: pyodide-node (smoke qua Pyodide, kiểm chứng runtime trình duyệt)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Run pytest smoke qua Pyodide (Node)
+        run: node .github/scripts/pyodide_smoke.mjs
+
+  build-deploy:
+    name: build + deploy Pages
+    needs: [unit, assets]
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Đóng gói file web (Pyodide đã vendor sẵn, không tải lại)
+        run: |
+          rm -rf _site && mkdir -p _site
+          missing=""
+          for f in index.html app.js worker.js gt.js kb-store.js translate.js file-reader.js worker-pool.js sw.js register-sw.js diagnostics.html test.html README.md; do
+            if [ -f "$f" ]; then cp "$f" _site/; else missing="$missing $f"; fi
+          done
+          for d in fonts pb3 pyodide; do
+            if [ -d "$d" ]; then cp -r "$d" _site/; else echo "THIEU THU MUC LOI: $d" && exit 1; fi
+          done
+          for f in index.html app.js worker.js; do
+            if [ ! -f "_site/$f" ]; then echo "THIEU FILE LOI: $f" && exit 1; fi
+          done
+          touch _site/.nojekyll
+          if [ -n "$missing" ]; then echo "CANH BAO: file phase sau chua co (chi copy file dang co):$missing"; fi
+          echo "--- _site ---"
+          find _site -maxdepth 1 | sort
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

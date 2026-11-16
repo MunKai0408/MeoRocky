@@ -1,46 +1,91 @@
-# CI cho PB3 (bản web) — chạy TOÀN BỘ suite Python của PB3 (1562 test).
+# CI cho PB3 (bản web) — chạy suite Python của PB3 (1562 test) bằng pytest.
 #
 # QUAN TRỌNG — suite KHÔNG chạy được trong trình duyệt: run_tests.py cần
 # threading/subprocess/CLI thật và ghi file (reports/, thư mục tạm), nên
 # GitHub Actions là nơi duy nhất kiểm chứng suite cho bản web. Trang web
-# chỉ chạy PB3 qua Pyodide (không có test runner).
+# chỉ chạy PB3 qua Pyodide (không có test runner); /test.html chỉ là công
+# cụ debug thủ công, không phải gate CI.
 #
-# Python 3.9 = đúng phiên bản trên iSH của Joseph (Alpine 3.14). Suite
-# cũng đã xanh trên Python 3.12 trong sandbox; nếu actions/setup-python
-# bỏ 3.9 thì nâng lên "3.11" (hoặc "3.12") ở dòng python-version dưới.
+# CI dùng Python 3.12 — KHÔNG phải 3.9: actions/setup-python không còn
+# Python 3.9 cho Ubuntu 26.04 (runs-on ubuntu-latest), nên mọi run đều
+# chết ở bước "Set up Python 3.9" (đã xác minh 11:07: run 43799087701
+# fail sau 6 giây, test chưa bao giờ chạy). Suite patch02 đã xanh 1562
+# test trên Python 3.12 trong sandbox. iSH của Joseph vẫn chạy 3.9
+# bình thường (Alpine 3.14) — chỉ CI dùng 3.12.
 #
-# CHƯA XANH HOÀN TOÀN — 28 file nhị phân/UTF-16 chưa lên main (connector
-# GitHub chỉ nhận file text UTF-8, phải đẩy bằng trình duyệt sau):
-#   pb3/kb/pb3_kb.sqlite (1)
-#   24 fixture nhị phân trong pb3/tests/fixtures/ (.zip/.ipa/.assets/
-#   .unity3d/.pak/.locres/.mo/.sqlite/.bin/b.plist)
-#   3 file text UTF-16 trong pb3/tests/fixtures/ (b.strings, unicode.json,
-#   unicode.xml)
-# Bước "Kiểm tra fixture" dưới đây liệt kê rõ từng file còn thiếu trong
-# log. ĐO THẬT (sandbox, Python 3.12, 2026-11-16): thiếu 28 file này thì
-# suite chạy 1562 test, chỉ đạt 1386, còn 117 lỗi + 58 fail (exit 1) —
-# CI ĐỎ là đúng, KHÔNG phải PASS giả. Trong 175 mục không xanh, 174 do
-# thiếu fixture (105 trực tiếp mở fixture + 69 lỗi kéo theo vì bước
-# extract trước đó không có file để chạy), 1 do test mtime (xem dưới).
-# Khi đủ 28 file, CI đạt 1560/1562.
+# HAI JOB — KHÔNG dùng skip có điều kiện để CI xanh (đó là che coverage):
+#   unit:   chỉ chạy test KHÔNG cần fixture (pytest -m "not needs_fixture",
+#           1436 test). Không cần file nhị phân nào trong 20 file chưa lên
+#           main. 45 test trong số đó dùng 8 file ĐÃ có trên main để chạy
+#           thật (extract/game1.zip, ambig.zip, b.plist, b.strings,
+#           sample.bin, unicode.json, sample.mo, kb/pb3_kb.sqlite) nên
+#           KHÔNG gắn marker — xem tests/conftest.py.
+#   assets: tải đủ 20 fixture còn lại từ Release asset rồi chạy TOÀN BỘ
+#           suite (1562 test) với STRICT_FIXTURES=1 — thiếu file là LỖI,
+#           không skip lén. Fixture được cache (actions/cache) theo tag.
 #
-# 1 TEST SẼ ĐỎ NGAY CẢ KHI ĐỦ FIXTURE (lỗi thật trong cây, chưa sửa):
-# tests/test_support_matrix.py::test_effective_maturity_uses_corpus_not_
-# declared hardcode test_date = "2026-11-15", nhưng ngày này lấy từ mtime
-# của tests/corpus/json_text.json — git checkout đặt lại mtime thành ngày
-# checkout nên test luôn lệch ngày. Sửa đúng: test tự đặt mtime file
-# corpus trong setUp (hoặc đọc ngày từ nội dung file) thay vì hardcode —
-# để dành cho đợt vá sau, KHÔNG sửa test cho vừa CI ở đây.
+# FIXTURE QUA RELEASE ASSET (20 file, KHÔNG commit thêm — quyết định của Joseph):
+#   Tag:    fixtures-v1
+#   Asset:  pb3-fixtures-v1.zip — file zip chứa đúng 20 file dưới đây, giữ
+#           nguyên đường dẫn tương đối từ pb3/ (vd. tests/fixtures/unity/
+#           sample.unity3d). Upload: coordinator thực hiện bằng PAT sau khi
+#           Phase 1 xong (xem exp/phase1_ci_results.md); job assets sẽ ĐỎ
+#           cho tới khi Release này tồn tại — đó là trạng thái đúng, không
+#           phải lỗi workflow.
+#   20 file trong asset:
+#     tests/fixtures/sqlite_loc/a.sqlite
+#     tests/fixtures/unity/nested.ipa, nested_v8.ipa, resources.assets,
+#       sample.unity3d, sample_lz4.unity3d, sample_lzma.unity3d,
+#       sample_typetree.assets, sample_v21.assets, sample_v23.assets,
+#       sample_v6.unity3d, sample_v8.unity3d, sample_v8_lz4.unity3d,
+#       sharedassets0.assets
+#     tests/fixtures/unreal_locres/legacy.locres, vi.locres
+#     tests/fixtures/unreal_pak/game_v11.pak, game_v8.pak
+#     tests/fixtures/xml_strings/unicode.xml
+#     tests/fixtures/zip/sample.ipa
+#   Khi fixture đổi (tag mới): đổi cả FIXTURES_TAG dưới đây VÀ key của
+#   actions/cache (pb3-fixtures-<tag>), nếu không CI dùng cache cũ.
+#
+# 8 file đã lên main (test cần chúng chạy thật, không gắn marker):
+#   pb3/kb/pb3_kb.sqlite
+#   pb3/tests/fixtures/apple_plist/b.plist
+#   pb3/tests/fixtures/apple_strings/b.strings
+#   pb3/tests/fixtures/extract/ambig.zip
+#   pb3/tests/fixtures/extract/game1.zip
+#   pb3/tests/fixtures/generic_strings/sample.bin
+#   pb3/tests/fixtures/json_text/unicode.json
+#   pb3/tests/fixtures/po_mo/sample.mo
+#
+# Marker needs_fixture (tests/conftest.py, hợp nhất từ gói web-upgrade của
+# Joseph): test nào mở 1 trong 20 file trên thì gắn
+# @pytest.mark.needs_fixture("đường-dẫn-tương-đối-từ-tests/fixtures/").
+# Chạy LOCAL thiếu file thì test SKIP kèm lý do (pytest -rs) — đúng. Trên CI,
+# job assets chạy STRICT_FIXTURES=1 nên skip bị tắt: thiếu file là fail.
+# ĐO THẬT (sandbox, Python 3.12, 2026-11-16): đủ 28 file + STRICT=1 thì
+# 1562 passed; thiếu 20 file + STRICT=1 thì 122 failed + 4 errors (đỏ đúng);
+# thiếu 20 file không STRICT thì 1436 passed + 126 skipped (chỉ dùng local).
+# Job unit trên cây thiếu 20 file: 1436 passed, 126 deselected, exit 0.
+#
+# TEST NGÀY (tests/test_support_matrix.py): test tự đặt mtime file corpus
+# trong setUp (os.utime về 2026-11-15 12:00 UTC), assertion vẫn strict
+# == "2026-11-15". Timezone KHÔNG phải nguyên nhân (_corpus_date đã đổi
+# sang UTC); git checkout đặt lại mtime mới là nguyên nhân. Đã kiểm chứng:
+# touch corpus về ngày hôm nay rồi chạy test vẫn PASS.
 #
 # Font: file pb3/fonts/BeVietnamPro-Regular.ttf là nhị phân nên chưa lên
 # main; bản web chỉ có fonts/BeVietnamPro-Regular.ttf.b64. Bước "Khôi
 # phục font" dưới đây giải mã đúng file đó (byte-identical, 132948 byte)
 # để 5 test font chạy được — không phải file giả.
 #
-# Phụ thuộc duy nhất ngoài stdlib: lz4 (tests/test_polish.py import
-# lz4.frame ở đầu file, không có fallback; tests/test_unity.py chỉ dùng
-# lz4 khi có, thiếu thì skip). Suite chạy hoàn toàn offline, không cần
-# mạng ngoài pip install lz4. UnityPy KHÔNG cần cho suite.
+# Job pyodide-node (không gate deploy): chạy pytest tier smoke qua Pyodide
+# trong Node (.github/scripts/pyodide_smoke.mjs) để kiểm chứng đúng runtime
+# trình duyệt. 58/59 test smoke xanh; 1 test về pid được deselect có lý do
+# (wasm không có bảng process — xem script). Deploy chỉ cần unit + assets.
+#
+# Phụ thuộc ngoài stdlib: lz4 (tests/test_polish.py import lz4.frame ở đầu
+# file, không có fallback) + pytest (CI chạy bằng pytest, xem dưới). Suite
+# chạy hoàn toàn offline, không cần mạng ngoài pip install. UnityPy KHÔNG
+# cần cho suite.
 name: PB3 test suite
 
 on:
@@ -49,26 +94,32 @@ on:
   pull_request:
     branches: [main]
 
+env:
+  FIXTURES_TAG: fixtures-v1
+  FIXTURES_ASSET: pb3-fixtures-v1.zip
+  STRICT_FIXTURES: "1"
+
 jobs:
-  test:
+  unit:
+    name: unit (không cần fixture nhị phân)
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python 3.9 (bản iSH)
+      - name: Set up Python 3.12 (CI — setup-python bỏ 3.9 trên Ubuntu 26.04)
         uses: actions/setup-python@v5
         with:
-          python-version: "3.9"
+          python-version: "3.12"
 
-      - name: Install lz4 (suite cần, ngoài stdlib)
-        run: pip install lz4
+      - name: Install lz4 + pytest (suite cần, ngoài stdlib)
+        run: pip install lz4 pytest
 
-      - name: Kiểm tra fixture (28 file nhị phân/UTF-16 chưa lên main)
+      - name: Kiểm tra fixture đã có trên main (8 file, test dùng thật)
         run: |
           python3 - <<'EOF'
           import pathlib
-          missing = [
+          have = [
             "pb3/kb/pb3_kb.sqlite",
             "pb3/tests/fixtures/apple_plist/b.plist",
             "pb3/tests/fixtures/apple_strings/b.strings",
@@ -77,31 +128,13 @@ jobs:
             "pb3/tests/fixtures/generic_strings/sample.bin",
             "pb3/tests/fixtures/json_text/unicode.json",
             "pb3/tests/fixtures/po_mo/sample.mo",
-            "pb3/tests/fixtures/sqlite_loc/a.sqlite",
-            "pb3/tests/fixtures/unity/nested.ipa",
-            "pb3/tests/fixtures/unity/nested_v8.ipa",
-            "pb3/tests/fixtures/unity/resources.assets",
-            "pb3/tests/fixtures/unity/sample.unity3d",
-            "pb3/tests/fixtures/unity/sample_lz4.unity3d",
-            "pb3/tests/fixtures/unity/sample_lzma.unity3d",
-            "pb3/tests/fixtures/unity/sample_typetree.assets",
-            "pb3/tests/fixtures/unity/sample_v21.assets",
-            "pb3/tests/fixtures/unity/sample_v23.assets",
-            "pb3/tests/fixtures/unity/sample_v6.unity3d",
-            "pb3/tests/fixtures/unity/sample_v8.unity3d",
-            "pb3/tests/fixtures/unity/sample_v8_lz4.unity3d",
-            "pb3/tests/fixtures/unity/sharedassets0.assets",
-            "pb3/tests/fixtures/unreal_locres/legacy.locres",
-            "pb3/tests/fixtures/unreal_locres/vi.locres",
-            "pb3/tests/fixtures/unreal_pak/game_v11.pak",
-            "pb3/tests/fixtures/unreal_pak/game_v8.pak",
-            "pb3/tests/fixtures/xml_strings/unicode.xml",
-            "pb3/tests/fixtures/zip/sample.ipa",
           ]
-          gone = [f for f in missing if not pathlib.Path(f).is_file()]
-          for f in missing:
+          gone = [f for f in have if not pathlib.Path(f).is_file()]
+          for f in have:
               print(("THIEU " if f in gone else "CO    ") + f)
-          print("Thieu %d/%d file fixture — CI chi xanh hoan toan khi du 28 file." % (len(gone), len(missing)))
+          if gone:
+              raise SystemExit("Thieu %d/%d file fixture tren main." % (len(gone), len(have)))
+          print("Du 8/8 file fixture tren main.")
           EOF
 
       - name: Khôi phục font (giải mã .b64 có sẵn trong repo)
@@ -113,19 +146,118 @@ jobs:
           print("font bytes:", len(raw))
           EOF
 
-      - name: Run full test suite (1562 test)
+      - name: Run unit tests (1436 test, không cần fixture nhị phân)
         working-directory: pb3
         run: |
           set -o pipefail
-          python3 run_tests.py --tier full 2>&1 | tee ../test-full.log
+          python3 -m pytest tests -q -rs -m "not needs_fixture" 2>&1 | tee ../test-unit.log
 
       - name: Upload test log
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: pb3-test-log
-          path: |
-            test-full.log
-            pb3/reports/failures.txt
-            pb3/reports/test_times.json
+          name: pb3-test-unit-log
+          path: test-unit.log
           if-no-files-found: warn
+
+  assets:
+    name: assets (đủ fixture, toàn bộ suite)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12 (CI — setup-python bỏ 3.9 trên Ubuntu 26.04)
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install lz4 + pytest (suite cần, ngoài stdlib)
+        run: pip install lz4 pytest
+
+      - name: Cache fixture nhị phân (Release asset)
+        id: cache-fixtures
+        uses: actions/cache@v4
+        with:
+          path: /tmp/pb3-fixtures-v1.zip
+          # Đổi key khi đổi FIXTURES_TAG, nếu không CI dùng cache cũ.
+          key: pb3-fixtures-fixtures-v1
+
+      - name: Tải fixture nhị phân (Release asset fixtures-v1)
+        if: steps.cache-fixtures.outputs.cache-hit != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download "$FIXTURES_TAG" --pattern "$FIXTURES_ASSET" --dir /tmp
+          ls -l /tmp/"$FIXTURES_ASSET"
+
+      - name: Giải nén + kiểm tra đủ 20 fixture
+        run: |
+          python3 - <<'EOF'
+          import pathlib, zipfile
+          zipfile.ZipFile("/tmp/pb3-fixtures-v1.zip").extractall("pb3")
+          want = """tests/fixtures/sqlite_loc/a.sqlite
+          tests/fixtures/unity/nested.ipa
+          tests/fixtures/unity/nested_v8.ipa
+          tests/fixtures/unity/resources.assets
+          tests/fixtures/unity/sample.unity3d
+          tests/fixtures/unity/sample_lz4.unity3d
+          tests/fixtures/unity/sample_lzma.unity3d
+          tests/fixtures/unity/sample_typetree.assets
+          tests/fixtures/unity/sample_v21.assets
+          tests/fixtures/unity/sample_v23.assets
+          tests/fixtures/unity/sample_v6.unity3d
+          tests/fixtures/unity/sample_v8.unity3d
+          tests/fixtures/unity/sample_v8_lz4.unity3d
+          tests/fixtures/unity/sharedassets0.assets
+          tests/fixtures/unreal_locres/legacy.locres
+          tests/fixtures/unreal_locres/vi.locres
+          tests/fixtures/unreal_pak/game_v11.pak
+          tests/fixtures/unreal_pak/game_v8.pak
+          tests/fixtures/xml_strings/unicode.xml
+          tests/fixtures/zip/sample.ipa""".splitlines()
+          gone = [f for f in want if not pathlib.Path("pb3", f).is_file()]
+          for f in want:
+              print(("THIEU " if f in gone else "CO    ") + f)
+          if gone:
+              raise SystemExit("Thieu %d/%d fixture tu Release asset." % (len(gone), len(want)))
+          print("Du 20/20 fixture tu Release asset.")
+          EOF
+
+      - name: Khôi phục font (giải mã .b64 có sẵn trong repo)
+        run: |
+          python3 - <<'EOF'
+          import base64, pathlib
+          raw = base64.b64decode(pathlib.Path("fonts/BeVietnamPro-Regular.ttf.b64").read_text().replace("\n", "").replace(" ", ""))
+          pathlib.Path("pb3/fonts/BeVietnamPro-Regular.ttf").write_bytes(raw)
+          print("font bytes:", len(raw))
+          EOF
+
+      - name: Run full test suite (1562 test, STRICT_FIXTURES=1)
+        working-directory: pb3
+        run: |
+          set -o pipefail
+          python3 -m pytest tests -q -rs 2>&1 | tee ../test-full.log
+
+      - name: Upload test log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pb3-test-full-log
+          path: test-full.log
+          if-no-files-found: warn
+
+  pyodide-node:
+    name: pyodide-node (smoke qua Pyodide, kiểm chứng runtime trình duyệt)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Run pytest smoke qua Pyodide (Node)
+        run: node .github/scripts/pyodide_smoke.mjs
