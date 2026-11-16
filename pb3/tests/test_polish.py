@@ -143,9 +143,13 @@ class TestPolishUnity(TmpCase):
         v9 = bytearray(read(BUNDLE_V8))
         struct.pack_into(">I", v9, 8, 9)
         self.assertEqual(u.detect_bundle(bytes(v9))["version"], 9)
-        # Inspect trực tiếp bundle v9: hard-abort.
+        # Inspect trực tiếp bundle v9 GIẢ (file v8 chỉ đổi nhãn version,
+        # blocks-info vẫn layout v8 không có offset u64): hard-abort.
+        # Từ C5, v9 thật đã được hỗ trợ đọc nên file giả này không còn
+        # là "version chưa hỗ trợ" (E_UNSUPPORTED_FORMAT) mà là v9
+        # SAI CẤU TRÚC (E_CORRUPT) — vẫn hard-abort như trước.
         self.assertEqual(code_of(u.plan_bytes, bytes(v9), name="x.unity3d"),
-                         "E_UNSUPPORTED_FORMAT")
+                         "E_CORRUPT")
         # Trong container: entry v9 thành dòng "unsupported", các entry khác vẫn plan được.
         buf = io.BytesIO()
         with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:

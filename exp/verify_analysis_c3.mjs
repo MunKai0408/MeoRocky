@@ -90,13 +90,13 @@ const manifest = JSON.parse(fs.readFileSync(SITE + "/manifest.webmanifest", "utf
   const ver = (swSrc.match(/const CACHE_VERSION = "([^"]+)"/) || [])[1];
   const listMatch = swSrc.match(/const PRECACHE_URLS = \[([\s\S]*?)\];/);
   const listed = listMatch ? [...listMatch[1].matchAll(/"([^"]+)"/g)].map((m) => m[1]) : [];
-  const ok = ver === "v10-20261116" && listed.includes("fixtures/selftest.zip") &&
+  const ok = ver === "v11-20261116" && listed.includes("fixtures/selftest.zip") &&
     /const PREFETCH_CACHE = "beartea-prefetch-v1"/.test(swSrc) &&
     /pre\.match\(req\)/.test(swSrc) &&
     /prefetchCache: PREFETCH_CACHE/.test(swSrc) &&
     fs.existsSync(SITE + "/fixtures/selftest.zip");
   rec("static_sw_selftest_precache_prefetch", ok,
-    "CACHE_VERSION=" + ver + " (cần v10-20261116); precache " + listed.length +
+    "CACHE_VERSION=" + ver + " (cần v11-20261116); precache " + listed.length +
     " mục, có fixtures/selftest.zip=" + listed.includes("fixtures/selftest.zip") +
     " (file trên đĩa: " + fs.statSync(SITE + "/fixtures/selftest.zip").size +
     "B); PREFETCH_CACHE const=" + /const PREFETCH_CACHE/.test(swSrc) +
@@ -241,7 +241,7 @@ try {
     for (let i = 0; i < 60; i++) {
       const n = await page.evaluate(async () => {
         const names = await caches.keys();
-        const main = names.find((x) => x.indexOf("beartea-v10-") === 0);
+        const main = names.find((x) => x.indexOf("beartea-v11-") === 0);
         if (!main) return 0;
         const c = await caches.open(main);
         return (await c.keys()).length;
@@ -251,7 +251,7 @@ try {
     }
     return await page.evaluate(async () => {
       const names = await caches.keys();
-      const main = names.find((x) => x.indexOf("beartea-v10-") === 0);
+      const main = names.find((x) => x.indexOf("beartea-v11-") === 0);
       if (!main) return 0;
       return (await (await caches.open(main)).keys()).length;
     });

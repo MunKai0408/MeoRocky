@@ -88,7 +88,7 @@ const indexSrc = fs.readFileSync(SITE + "/index.html", "utf8");
   const listed = listMatch ? [...listMatch[1].matchAll(/"([^"]+)"/g)].map((m) => m[1]) : [];
   const checks = {
     nodeCheck: bad.length === 0,
-    swVersionV10: ver === "v10-20261116",
+    swVersionV10: ver === "v11-20261116",
     swPrecacheOpfs: listed.includes("opfs.js"),
     opfsOnDisk: fs.existsSync(SITE + "/opfs.js"),
     indexLoadsOpfs: /<script src="opfs\.js"><\/script>/.test(indexSrc),
@@ -101,7 +101,7 @@ const indexSrc = fs.readFileSync(SITE + "/index.html", "utf8");
   const missing = Object.entries(checks).filter(([, v]) => !v).map(([k]) => k);
   rec("static_node_check_sw_modal", missing.length === 0,
     "node --check OK: app.js, sw.js, stream.js, opfs.js" + (bad.length ? " | LỖI: " + bad.join(", ") : "") +
-    "; CACHE_VERSION=" + ver + " (cần v10-20261116); precache có opfs.js=" + listed.includes("opfs.js") +
+    "; CACHE_VERSION=" + ver + " (cần v11-20261116); precache có opfs.js=" + listed.includes("opfs.js") +
     " (tổng " + listed.length + " mục); index.html nạp opfs.js + modal Tiếp tục/Hủy + nút Dọn file tạm + CSS modal: " +
     Object.entries(checks).map(([k, v]) => k + "=" + v).join(", ") +
     (missing.length ? " | THIẾU: " + missing.join(", ") : ""),

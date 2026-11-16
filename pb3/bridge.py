@@ -172,6 +172,14 @@ def _parse_unity_bytes(data, name):
     try:
         bf = u.parse_bundle(data, backend, _app.limits, where=name)
     except Exception:
+        # File đúng là UnityFS nhưng parse lỗi (mã hoá / version /
+        # nén chưa hỗ trợ / hỏng): giữ nguyên lỗi thật, đừng rơi xuống
+        # parse_serialized rồi báo lỗi sai — lỗi C5: bundle mã hoá bị
+        # báo E_UNSUPPORTED_FORMAT chung chung thay vì E_ENCRYPTED.
+        # Chỉ rơi xuống parse_serialized khi KHÔNG phải UnityFS (vd
+        # file .assets độc lập, cũng bắt đầu bằng magic khác).
+        if bytes(data[:7]) == u.UNITYFS_MAGIC:
+            raise
         bf = None
     if bf is not None:
         out["bundle"] = True

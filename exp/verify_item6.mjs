@@ -14,7 +14,7 @@
 //  B. Trình duyệt THẬT (Playwright chromium headless shell, 390px, serve
 //     site qua HTTP local): lần thăm 1 chưa chọn file thì không tải
 //     Pyodide/worker.js/pb3 (đo qua request thật + __PB3_BOOT_STATE);
-//     SW đăng ký được, precache đủ 122 mục; chọn file -> boot tới
+//     SW đăng ký được, precache đủ 127 mục (C5 thêm fzstd/index.mjs); chọn file -> boot tới
 //     "Sẵn sàng — 20 plugin" + list được file mẫu; lần thăm 2 OFFLINE
 //     (context.setOffline(true)) vẫn boot tới Sẵn sàng + list được;
 //     SW không phục vụ request dịch (fetch khác origin bị từ chối khi
@@ -107,6 +107,7 @@ for (const f of SHELL_FILES) {
   const listMatch = swSrc.match(/const PRECACHE_URLS = \[([\s\S]*?)\];/);
   const listed = listMatch ? [...listMatch[1].matchAll(/"([^"]+)"/g)].map((m) => m[1]) : [];
   const expected = ["./", ...SHELL_FILES, "worker.js", "manifest.webmanifest", "diagnostics.html",
+    "fzstd/index.mjs",
     "fixtures/selftest.zip",
     "icons/icon-192.png", "icons/icon-512.png", "icons/apple-touch-icon.png",
     "fonts/BeVietnamPro-Regular.ttf.b64",

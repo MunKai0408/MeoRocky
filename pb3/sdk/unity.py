@@ -1,10 +1,11 @@
 """Backend Unity (Claude 05; đặc tả §6, decisions #66+).
 
-Phạm vi: UnityFS v6/v7/v8 (đọc + dựng lại bundle, giữ compression gốc),
-SerializedFile v15–23 (metadata, object table, TextAsset, chuỗi ngắn/dài),
-hybrid backend AUTO / LIBRARY / NATIVE (UnityPy + LZ4 + Python thuần),
-planner, patcher (PATCH_INPLACE / REBUILD_SECTION / REBUILD_ALL),
-diffverify + allow-list + backup/versioning/rollback.
+Phạm vi: UnityFS v6/v7/v8/v9 (đọc; v9 CHỈ ĐỌC, không ghi; Zstd chỉ đọc
+trên web qua fzstd — xem C5), SerializedFile v15–23 (metadata, object
+table, TextAsset, chuỗi ngắn/dài), hybrid backend AUTO / LIBRARY /
+NATIVE (UnityPy + LZ4 + Python thuần), planner, patcher
+(PATCH_INPLACE / REBUILD_SECTION / REBUILD_ALL), diffverify +
+allow-list + backup/versioning/rollback.
 
 Layout đối chiếu UnityPy 1.25.4 (BundleFile.py, SerializedFile.py,
 ObjectReader.py, TypeTreeNode.py, CompressionHelper.py):
@@ -20,6 +21,21 @@ ObjectReader.py, TypeTreeNode.py, CompressionHelper.py):
 - UnityFS v8 cùng layout header với v7 (căn 16 sau header); cờ mã hóa /
   padding chọn theo unityRevision (UnityPy: version_engine), KHÔNG theo
   unityVersion (thường là "5.x.x").
+- UnityFS v9 (C5, chỉ đọc): cùng header với v8; khác biệt DUY NHẤT theo
+  UnityPy master (helpers/CompressionHelper.py, đối chiếu 2026-11-16):
+  mỗi BlockInfo thêm u64 `offset` sau cờ u16, và mỗi block nén được căn
+  16 byte trong vùng block data (đọc block bằng offset, không đọc tuần
+  tự). Header vẫn căn 16 khi version >= 7; entry vẫn (offset u64, size
+  u64, flags u32, tên) — file lớn đã có từ trước nhờ các trường u64.
+- Zstd (C5, chỉ đọc trên web): mã nén 5 — mã trống tiếp theo sau
+  LZHAM=4. UnityPy master (2026-11-16) và tài liệu Unity (chỉ liệt kê
+  LZMA/LZ4/Uncompressed) KHÔNG có cờ Zstd; mã 5 là quy ước mở rộng của
+  PB3 để đón bundle dùng Zstd, chưa có bằng chứng bundle Unity thật nào
+  dùng mã này — fixture C5 là tổng hợp. Giải nén bằng fzstd (JS thuần,
+  vendored ở site/fzstd/) qua cầu nối `js.pb3_zstd_decompress` do
+  worker.js công bố (tiền lệ: `js.pb3_google_translate`); ngoài trình
+  duyệt thì báo lỗi rõ ràng thay vì crash. Ghi Zstd KHÔNG hỗ trợ:
+  dựng lại bundle dùng block không nén (cờ nén 0).
 - LZ4 block: token nibble; LZ4HC cùng format block; LZMA Unity: LZMA1
   thô (props 0x5D, dict 0x800000), đầu 5 byte.
 - TextAsset = aligned_string(m_Name) + aligned_string(m_Script).
@@ -57,11 +73,15 @@ UNITYFS_MAGIC = b"UnityFS"
 UNITY_VERSION = "2019.4.40f1"  # mặc định khi dựng bundle mới (giữ nguyên khi rebuild)
 UNITY6_PLAYER_VERSION = "5.x.x"     # unityVersion trong header bundle Unity 6
 UNITY6_REVISION = "6000.0.23f1"     # unityRevision (engine) của fixture v8/v23
-SUPPORTED_BUNDLE_VERSIONS = (6, 7, 8)
+SUPPORTED_BUNDLE_VERSIONS = (6, 7, 8, 9)  # v9: CHỈ ĐỌC (C5), không ghi
 # SerializedFile: chỉ 15-23 (object table đã kiểm chứng; <15 quá cũ, >23 chưa có fixture).
 SUPPORTED_SF_VERSIONS = (15, 16, 17, 18, 19, 20, 21, 22, 23)
 
-COMPRESSION_NAMES = {0: "none", 1: "lzma", 2: "lz4", 3: "lz4hc", 4: "lzham"}
+# Mã nén block (bit thấp 6 của flags). 5 = zstd: quy ước mở rộng của PB3
+# (xem ghi chú v9/Zstd ở đầu file); UnityPy master không có mã này.
+COMPRESSION_NAMES = {0: "none", 1: "lzma", 2: "lz4", 3: "lz4hc", 4: "lzham",
+                     5: "zstd"}
+COMPRESSION_ZSTD = 5
 COMPRESSION_CODES = {v: k for k, v in COMPRESSION_NAMES.items()}
 LZ4_CHUNK_SIZE = 0x20000  # 128 KiB (Unity chia block LZ4/LZ4HC theo chunk này)
 
@@ -93,6 +113,12 @@ def support_matrix():
     return [
         {"format": "UnityFS v6/v7/v8 (bundle)", "read": "có", "write": "có (dựng lại bundle, giữ compression gốc)",
          "backend": "Python thuần + lz4/lzma", "maturity": "M2"},
+        {"format": "UnityFS v9 (bundle)", "read": "có (chỉ đọc; BlockInfo có offset u64, block căn 16)",
+         "write": "không (v9 chỉ đọc — dựng lại bundle v9 chưa hỗ trợ)",
+         "backend": "Python thuần", "maturity": "M2"},
+        {"format": "Zstd (block bundle, mã nén 5)", "read": "có — CHỈ trên web BearTea (qua fzstd, cầu nối JS)",
+         "write": "không (ghi lại bằng block không nén, cờ 0)",
+         "backend": "fzstd 0.1.1 (MIT, vendored site/fzstd/)", "maturity": "M2"},
         {"format": "SerializedFile v15-23 (.assets)", "read": "có (metadata, object table, TextAsset)",
          "write": "có (patch TextAsset: PATCH_INPLACE / REBUILD_SECTION)",
          "backend": "Python thuần", "maturity": "M2"},
@@ -433,8 +459,55 @@ class UnityBackend:
                                       % probe["unitypy"]["detail"])
 
     # ---- nén/giải nén ------------------------------------------------
+    def _decompress_zstd(self, data, uncompressed_size, where="unity"):
+        """Giải nén 1 block Zstd qua fzstd bên JS (C5, chỉ có trên web).
+
+        Cầu nối theo đúng tiền lệ Google Translate (bridge.py):
+        worker.js công bố `globalThis.pb3_zstd_decompress(data, size)`
+        (hàm JS đồng bộ, trả Uint8Array); Python gọi qua module `js`.
+        Ngoài trình duyệt (CPython/iSH: không có module `js`, hoặc worker
+        chưa nạp được fzstd) thì báo E_UNSUPPORTED_FORMAT với lý do rõ
+        ràng — không crash khó hiểu, không giả vờ giải nén được.
+        Pyodide chuyển bytes Python -> Uint8Array cho JS, và trả
+        Uint8Array về dưới dạng JsProxy (có buffer protocol nên
+        bytes(...) dùng được; dự phòng to_py())."""
+        try:
+            import js as _js
+            _zstd = getattr(_js, "pb3_zstd_decompress", None)
+        except Exception:
+            _zstd = None
+        if _zstd is None:
+            raise PB3Error(
+                "E_UNSUPPORTED_FORMAT",
+                "block Zstd cần bộ giải nén fzstd — chỉ có trên web BearTea "
+                "(mở trang web để đọc bundle này; Python ngoài trình duyệt "
+                "không giải nén được Zstd)",
+                message_vi="Block Zstd cần bộ giải nén fzstd — chỉ có trên "
+                           "web BearTea.",
+                where=where)
+        try:
+            out = _zstd(bytes(data), int(uncompressed_size))
+        except PB3Error:
+            raise
+        except Exception as exc:  # noqa: BLE001 - lỗi fzstd -> E_CORRUPT
+            raise PB3Error("E_CORRUPT", "fzstd lỗi: %s" % type(exc).__name__,
+                           where=where)
+        try:
+            raw = bytes(out)
+        except Exception:
+            to_py = getattr(out, "to_py", None)
+            if not callable(to_py):
+                raise PB3Error("E_CORRUPT",
+                               "fzstd trả về kiểu không đọc được: %s"
+                               % type(out).__name__, where=where)
+            raw = bytes(to_py())
+        if len(raw) != uncompressed_size:
+            raise PB3Error("E_CORRUPT", "Zstd giải nén được %d/%d byte"
+                           % (len(raw), uncompressed_size), where=where)
+        return raw
+
     def decompress(self, data, uncompressed_size, compression, where="unity"):
-        """Giải nén một khối theo mã compression (0 none, 1 lzma, 2 lz4, 3 lz4hc)."""
+        """Giải nén một khối theo mã compression (0 none, 1 lzma, 2 lz4, 3 lz4hc, 5 zstd)."""
         if compression == 0:
             if len(data) != uncompressed_size:
                 raise PB3Error("E_CORRUPT", "khối không nén dài %d, khai %d"
@@ -459,11 +532,16 @@ class UnityBackend:
                                    where=where)
                 return bytes(out)
             return lz4pure.decompress_block(data, uncompressed_size, where=where)
+        if compression == COMPRESSION_ZSTD:
+            return self._decompress_zstd(data, uncompressed_size, where=where)
         raise PB3Error("E_UNSUPPORTED_FORMAT", "compression %d (%s) chưa hỗ trợ"
                        % (compression, COMPRESSION_NAMES.get(compression, "?")), where=where)
 
     def compress(self, data, compression, where="unity"):
-        """Nén một khối; LZ4/LZ4HC dùng binding khi có, không thì literal-only."""
+        """Nén một khối; LZ4/LZ4HC dùng binding khi có, không thì literal-only.
+
+        Zstd KHÔNG ghi được (không có encoder): gọi với compression 5 thì
+        báo rõ, bên gọi dựng lại bundle bằng block không nén (cờ 0)."""
         if compression == 0:
             return bytes(data)
         if compression == 1:
@@ -476,6 +554,14 @@ class UnityBackend:
             self.decisions.append("LZ4 ghi bằng encoder thuần Python (literal-only, "
                                   "không nén) vì binding lz4 không có/không dùng.")
             return lz4pure.compress_block_literals(data)
+        if compression == COMPRESSION_ZSTD:
+            raise PB3Error("E_UNSUPPORTED_FORMAT",
+                           "ghi block Zstd chưa hỗ trợ (không có encoder) — "
+                           "dựng lại bundle bằng block không nén "
+                           "(compression='none', cờ nén 0)",
+                           message_vi="Ghi block Zstd chưa hỗ trợ — dựng lại "
+                                      "bundle bằng block không nén.",
+                           where=where)
         raise PB3Error("E_UNSUPPORTED_FORMAT", "compression %d chưa hỗ trợ" % compression,
                        where=where)
 
@@ -513,6 +599,7 @@ class BundleBlock:
     uncompressed_size: int
     compressed_size: int
     flags: int
+    offset: Optional[int] = None  # v9: u64 — vị trí block trong vùng block data (C5)
 
     @property
     def compression(self):
@@ -593,10 +680,16 @@ def detect_bundle(data):
 
 
 def parse_bundle(data, backend=None, limits=None, where="bundle"):
-    """Đọc UnityFS v6/v7/v8: header, blocks info, giải nén từng block, kiểm size.
+    """Đọc UnityFS v6/v7/v8/v9: header, blocks info, giải nén từng block, kiểm size.
 
     v8 cùng layout với v7 (UnityPy không kiểm version, chỉ căn 16 khi
-    version >= 7); cờ mã hóa/padding chọn theo unityRevision (#78)."""
+    version >= 7); cờ mã hóa/padding chọn theo unityRevision (#78).
+    v9 (C5, chỉ đọc): mỗi BlockInfo thêm u64 `offset` sau cờ u16; block
+    data đọc bằng offset (tính từ đầu vùng block data đã căn 16), vì các
+    block nén được căn 16 nên không đọc tuần tự được nữa. Các trường
+    total size / entry offset / entry size vốn đã là u64 nên file lớn
+    không cần đổi gì thêm."""
+
     data = bytes(data)
     backend = backend or UnityBackend("AUTO", limits)
     lim = limits or backend.limits
@@ -620,7 +713,7 @@ def parse_bundle(data, backend=None, limits=None, where="bundle"):
         raise PB3Error("E_ENCRYPTED", "bundle mã hóa (flag 0x%x)" % data_flags,
                        where=where)
     compression = data_flags & 0x3F
-    if compression == 4 or compression > 4:
+    if compression == 4 or compression > COMPRESSION_ZSTD:
         raise PB3Error("E_UNSUPPORTED_FORMAT",
                        "compression %d (%s) chưa hỗ trợ"
                        % (compression, COMPRESSION_NAMES.get(compression, "?")),
@@ -659,7 +752,9 @@ def parse_bundle(data, backend=None, limits=None, where="bundle"):
     blocks = []
     for _ in range(block_count):
         unc, comp_size, flags = ir.unpack("IIH")
-        blocks.append(BundleBlock(unc, comp_size, flags))
+        # v9 (C5): mỗi BlockInfo thêm u64 offset sau cờ u16.
+        offset = ir.u64() if version >= 9 else None
+        blocks.append(BundleBlock(unc, comp_size, flags, offset))
     entry_count = ir.i32()
     if entry_count < 0:
         raise PB3Error("E_CORRUPT", "số entry âm", where=where)
@@ -676,16 +771,28 @@ def parse_bundle(data, backend=None, limits=None, where="bundle"):
     pos = block_data_start
     if new_flags and (data_flags & FLAG_PADDING_NEW):
         pos = _align_up(pos, 16)
+    block_base = pos  # đầu vùng block data (đã căn 16 nếu có cờ padding)
     payload = bytearray()
+    end = pos
     for i, block in enumerate(blocks):
         lim.check_entry_size(block.uncompressed_size, "%s::block%d" % (where, i))
-        chunk = data[pos:pos + block.compressed_size]
+        if version >= 9:
+            # v9 (C5): block nằm ở block_base + offset (các block được
+            # căn 16 nên không đọc tuần tự được); offset thiếu thì lỗi rõ.
+            if block.offset is None or block.offset < 0:
+                raise PB3Error("E_CORRUPT", "block %d (v9) thiếu offset" % i,
+                               where=where)
+            start = block_base + block.offset
+        else:
+            start = pos
+        chunk = data[start:start + block.compressed_size]
         if len(chunk) != block.compressed_size:
             raise PB3Error("E_CORRUPT", "block %d cắt cụt" % i, where=where)
-        pos += block.compressed_size
+        pos = start + block.compressed_size
+        end = max(end, pos)
         payload += backend.decompress(chunk, block.uncompressed_size,
                                       block.compression, where="%s::block%d" % (where, i))
-    if pos > block_data_end:
+    if end > block_data_end:
         raise PB3Error("E_CORRUPT", "block data vượt quá vùng cho phép", where=where)
     payload = bytes(payload)
     for e in entries:
@@ -738,7 +845,7 @@ def stream_bundle_entries(stream_or_path, backend=None, limits=None, where="bund
             raise PB3Error("E_ENCRYPTED", "bundle mã hóa (flag 0x%x)" % data_flags,
                            where=where)
         compression = data_flags & 0x3F
-        if compression == 4 or compression > 4:
+        if compression == 4 or compression > COMPRESSION_ZSTD:
             raise PB3Error("E_UNSUPPORTED_FORMAT",
                            "compression %d (%s) chưa hỗ trợ"
                            % (compression, COMPRESSION_NAMES.get(compression, "?")),
@@ -779,7 +886,9 @@ def stream_bundle_entries(stream_or_path, backend=None, limits=None, where="bund
         blocks = []
         for _ in range(block_count):
             unc, comp_size, flags = ir.unpack("IIH")
-            blocks.append(BundleBlock(unc, comp_size, flags))
+            # v9 (C5): mỗi BlockInfo thêm u64 offset sau cờ u16.
+            offset = ir.u64() if version >= 9 else None
+            blocks.append(BundleBlock(unc, comp_size, flags, offset))
         entry_count = ir.i32()
         if entry_count < 0:
             raise PB3Error("E_CORRUPT", "số entry âm", where=where)
@@ -800,16 +909,25 @@ def stream_bundle_entries(stream_or_path, backend=None, limits=None, where="bund
         pos = block_data_start
         if new_flags and (data_flags & FLAG_PADDING_NEW):
             pos = _align_up(pos, 16)
+        block_base = pos  # đầu vùng block data (đã căn 16 nếu có cờ padding)
         window = bytearray()
         window_start = 0
         next_i = 0
         for i, block in enumerate(blocks):
             lim.check_entry_size(block.uncompressed_size, "%s::block%d" % (where, i))
-            fh.seek(pos)
+            if version >= 9:
+                # v9 (C5): đọc block bằng offset, không đọc tuần tự.
+                if block.offset is None or block.offset < 0:
+                    raise PB3Error("E_CORRUPT", "block %d (v9) thiếu offset" % i,
+                                   where=where)
+                start = block_base + block.offset
+            else:
+                start = pos
+            fh.seek(start)
             chunk = fh.read(block.compressed_size)
             if len(chunk) != block.compressed_size:
                 raise PB3Error("E_CORRUPT", "block %d cắt cụt" % i, where=where)
-            pos += block.compressed_size
+            pos = start + block.compressed_size
             if block_data_end is not None and pos > block_data_end:
                 raise PB3Error("E_CORRUPT", "block data vượt quá vùng cho phép",
                                where=where)
@@ -858,8 +976,27 @@ def build_bundle(entries, *, version=7, unity_version=UNITY_VERSION,
     chuỗi cho cả hai); bundle Unity 6 thật ghi player "5.x.x" + revision
     "6000.0.23f1". `extra_data_flags` OR thêm vào data_flag (để test cờ
     mã hóa/padding); `pad_block_data` đặt cờ 0x200 và căn đầu vùng block
-    data tới 16 (chỉ có ý nghĩa với cờ mới)."""
+    data tới 16 (chỉ có ý nghĩa với cờ mới).
+    RANH GIỚI GHI (C5): version 9 CHỈ ĐỌC — dựng bundle v9 thì từ chối
+    với lý do rõ ràng; compression "zstd" cũng từ chối (không có
+    encoder) — bên gọi (apply_patch) dựng lại bằng compression "none"
+    (block không nén, cờ nén 0)."""
     backend = backend or UnityBackend("AUTO", limits)
+    if version == 9:
+        raise PB3Error("E_UNSUPPORTED_FORMAT",
+                       "UnityFS v9 chỉ đọc — dựng lại bundle v9 chưa hỗ trợ "
+                       "(không ghi v9)",
+                       message_vi="UnityFS v9 chỉ đọc — không ghi được "
+                                  "bundle v9.",
+                       where="bundle")
+    if compression == "zstd":
+        raise PB3Error("E_UNSUPPORTED_FORMAT",
+                       "ghi block Zstd chưa hỗ trợ (không có encoder) — "
+                       "dựng lại bundle bằng block không nén "
+                       "(compression='none', cờ nén 0)",
+                       message_vi="Ghi block Zstd chưa hỗ trợ — dựng lại "
+                                  "bundle bằng block không nén.",
+                       where="bundle")
     if unity_revision is None:
         unity_revision = unity_version
     comp_code = COMPRESSION_CODES[compression]
@@ -2394,6 +2531,16 @@ def apply_patch(req):
             raise PB3Error("E_CONFIG_INVALID", "patch trong bundle cần tên entry",
                            where=req.kind)
         bundle = parse_bundle(data, backend, lim, where="bundle")
+        if bundle.version >= 9:
+            # v9 CHỈ ĐỌC (C5): patch luôn dựng lại bundle (kể cả
+            # PATCH_INPLACE cũng đóng gói lại container) nên từ chối
+            # sớm với lý do rõ ràng thay vì lỗi khó hiểu ở bước ghi.
+            raise PB3Error(
+                "E_UNSUPPORTED_FORMAT",
+                "bundle UnityFS v9 chỉ đọc — chưa hỗ trợ patch (ghi lại "
+                "bundle v9 chưa được hỗ trợ)",
+                message_vi="Bundle UnityFS v9 chỉ đọc — chưa hỗ trợ patch.",
+                where="bundle")
         before_snap = _snapshot_bundle(bundle)
         assets_bytes = bundle.get_entry(req.entry)
         sf = parse_serialized(assets_bytes, lim, where=req.entry)
@@ -2480,10 +2627,15 @@ def apply_patch(req):
             new_entries.append((e.name, e.flags,
                                 new_assets if e.name == req.entry
                                 else bundle.get_entry(e.name)))
+        # Đường ghi (C5): bundle gốc nén Zstd thì không ghi lại được
+        # bằng Zstd (không có encoder) — dựng lại bằng block không nén
+        # (cờ nén 0). Bundle LZMA/LZ4/none vẫn giữ compression gốc.
+        rebuild_compression = ("none" if bundle.compression_name == "zstd"
+                               else bundle.compression_name)
         out_bytes = build_bundle(new_entries, version=bundle.version,
                                  unity_version=bundle.unity_version,
                                  unity_revision=bundle.unity_revision,
-                                 compression=bundle.compression_name,
+                                 compression=rebuild_compression,
                                  blocks_info_at_end=bundle.blocks_info_at_end,
                                  extra_data_flags=bundle.data_flags & FLAG_OLD_WEB,
                                  pad_block_data=bundle.uses_padding,

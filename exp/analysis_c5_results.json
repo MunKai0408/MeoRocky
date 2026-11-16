@@ -1,0 +1,73 @@
+{
+  "when": "2026-11-16T12:41:40.862Z",
+  "total": 13,
+  "passed": 13,
+  "failures": 0,
+  "results": {
+    "static_fzstd_v9_zstd_markers": {
+      "ok": true,
+      "detail": "node --check OK: worker.js, sw.js, fzstd/index.mjs; fzstd/index.mjs=24407B, export decompress, LICENSE MIT © 2020 Arjun Barrett + README ghi công 101arrowz/fzstd; CACHE_VERSION=v11-20261116 (cần v11-20261116); precache có fzstd/index.mjs=true (tổng 127 mục, cần 127); worker.js dynamic import fzstd + globalThis.pb3_zstd_decompress + fallback null khi lỗi; sdk/unity.py: nodeCheck=true, fzstdOnDisk=true, fzstdExportsDecompress=true, licenseMIT=true, licenseNote=true, swVersionV11=true, swPrecacheFzstd=true, swPrecacheCount127=true, workerDynamicImport=true, workerExposesBridge=true, workerFallbackNull=true, workerNoStaticFzstdImport=true, unityV9Supported=true, unityZstdCode5=true, unityJsBridge=true, unityJsBridgeClearError=true, unityV9OffsetRead=true, unityV9OffsetUse=true, unityV9WriteGuard=true, unityZstdWriteGuard=true, unityPatchV9Refuse=true, unityPatchZstdToNone=true, unityMatrixV9Zstd=true, bridgeKeepsBundleError=true, indexNoteV9=true",
+      "seconds": 0.5
+    },
+    "python_c5_tests_system": {
+      "ok": true,
+      "detail": "python3 -m unittest tests.test_unity.TestBundleV9Zstd -v: Ran 13 test, 11 ok, skipped=2, exit=0 (2 test parse/patch Zstd đầy đủ SKIP vì hệ thống thiếu gói `zstandard` — ghi rõ, không tính PASS giả; chạy đủ ở S2b)",
+      "seconds": 0.3
+    },
+    "python_c5_tests_with_zstandard": {
+      "ok": true,
+      "detail": "venv /tmp/zstdvenv/bin/python: Ran 13 test, 13 ok, skipped=0, exit=0 (bộ giải `zstandard` đứng chỗ fzstd trong module `js` giả)",
+      "seconds": 0.4
+    },
+    "shell_size_after_c5": {
+      "ok": true,
+      "detail": "shell lần tải đầu sau C5: index.html raw=55759B gzip=15905B; kb-store.js raw=8192B gzip=3212B; worker-pool.js raw=14404B gzip=5058B; stream.js raw=18358B gzip=6141B; opfs.js raw=12753B gzip=4045B; app.js raw=198447B gzip=55879B; gt.js raw=34379B gzip=9599B | TỔNG raw=342292B (334.3KB), gzip=99839B (97.5KB). fzstd/index.mjs KHÔNG nằm trong shell lần tải đầu (worker import lúc boot): raw=24407B gzip=6843B; cộng vào tổng tải sau boot thì raw=366699B. Ngưỡng raw 100KB vẫn chưa đạt như mục 6 đã ghi (app.js monolith) — C5 không đổi kết luận.",
+      "seconds": 0
+    },
+    "static_fixture_headers": {
+      "ok": true,
+      "detail": "header fixture: zstd=v7/comp5/flags0x45, v9=v9/comp0/flags0x40, v9zstd=v9/comp5/flags0x45, lz4=v7/comp2/flags0xc2, enc=v8/comp0/flags0x1440; blocks-info v9 (không nén): 2 block [{\"unc\":3774,\"comp\":3774,\"fl\":64,\"off\":0},{\"unc\":3773,\"comp\":3773,\"fl\":64,\"off\":3776}] (offset block 2 = 3776 = căn 16 của 3774 — chứng minh block không nằm sát nhau, phải đọc bằng offset)",
+      "seconds": 0
+    },
+    "browser_boot": {
+      "ok": true,
+      "detail": "boot tới Sẵn sàng (390px)",
+      "seconds": 9.5
+    },
+    "browser_fzstd_direct": {
+      "ok": true,
+      "detail": "import ./fzstd/index.mjs trong trang -> decompress(c5_zstd_frame.bin 57B) = \"Xin chao BearTea - cau noi Zstd thu nghiem 12345\" (48 byte, khớp từng byte câu mẫu); dữ liệu rác [1,2,3,4,5] ném lỗi=true (không trả rác)",
+      "seconds": 0
+    },
+    "browser_inspect_zstd_v7": {
+      "ok": true,
+      "detail": "Inspect c5_bundle_zstd.unity3d (v7, mã nén 5) -> unity-result=\"Bundle Unity: 2019.4.40f1 · nén zstd · 2 entryCAB-0123456789abcdef0123456789abcdef — Unity 2019.4.40f1 · 3 object · 2 TextAsset#1001 greeting: Xin chao 9 Kings!#1002 longtext: Dòng dài để thử chuỗi dài: xin chào thế giới! xin chào thế giới! xin chào thế giới! xin chào thế giới! xin chào thế giới! xi\"; thẻ Trang chủ=\"File: c5_bundle_zstd.unity3dUnity Version: 2019.4.40f1 · bundle zstd4 object · 3 TextAssetĐã sẵn sàng An toàn & Riêng tưXử lý 100% trên thiết bị của bạn — file \"; #error=\"\" (TextAsset đọc được = block Zstd đã qua fzstd trong worker rồi về Python qua js.pb3_zstd_decompress)",
+      "seconds": 0.8
+    },
+    "browser_inspect_v9_none": {
+      "ok": true,
+      "detail": "Inspect c5_bundle_v9.unity3d (v9, mã nén 0, blocks-info có offset u64) -> unity-result=\"Bundle Unity: 5.x.x · nén none · 2 entryCAB-0123456789abcdef0123456789abcdef — Unity 6000.0.23f1 · 3 object · 2 TextAsset#4001 greeting: Xin chao Unity 6!#4002 longtext: Dòng dài để thử chuỗi dài: xin chào thế giới! xin chào thế giới! xin chào thế giới! xin chào thế giới! xin chào thế giới! xin chào\"; #error=\"\" (fixture header version=9 đã kiểm ở S4; parse thành công trên trình duyệt thật chứng minh v9 đọc được, trước C5 bị từ chối E_UNSUPPORTED_FORMAT)",
+      "seconds": 0.2
+    },
+    "browser_inspect_v9_zstd": {
+      "ok": true,
+      "detail": "Inspect c5_bundle_v9_zstd.unity3d (v9 + mã nén 5) -> unity-result=\"Bundle Unity: 5.x.x · nén zstd · 2 entryCAB-0123456789abcdef0123456789abcdef — Unity 6000.0.23f1 · 3 object · 2 TextAsset#4001 greeting: Xin chao Unity 6!#4002 longtext: Dòng dài để thử chuỗi dài: xin chào thế giới! xin chào thế giới! xin chào thế giới! xin chào thế giới! xin chào thế giới! xin chào\"; #error=\"\"",
+      "seconds": 0.2
+    },
+    "browser_inspect_lz4_control": {
+      "ok": true,
+      "detail": "Inspect c5_bundle_lz4_control.unity3d (v7, LZ4) -> unity-result=\"Bundle Unity: 2019.4.40f1 · nén lz4 · 2 entryCAB-0123456789abcdef0123456789abcdef — Unity 2019.4.40f1 · 3 object · 2 TextAsset#1001 greeting: Xin chao 9 Kings!#1002 longtext: Dòng dài để thử chuỗi dài\"; #error=\"\" (hồi quy: đường đọc cũ không vỡ)",
+      "seconds": 0.1
+    },
+    "browser_encrypted_refused_clearly": {
+      "ok": true,
+      "detail": "Inspect c5_bundle_encrypted.unity3d (cờ 0x1400) -> banner #error=\"Inspect Unity lỗi: E_ENCRYPTED: Dữ liệu hoặc binary được mã hóa/bảo vệ.\"; unity-result trống (không parse được gì — từ chối sạch, không crash, không \"Lỗi không rõ\")",
+      "seconds": 0.1
+    },
+    "browser_390_no_overflow_no_errors": {
+      "ok": true,
+      "detail": "390px: scrollWidth=390 clientWidth=390 (không tràn); pageerror cả phiên: không có",
+      "seconds": 0
+    }
+  }
+}

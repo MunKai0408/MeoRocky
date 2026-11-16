@@ -5,6 +5,7 @@ Fixture tự tạo trong tests/fixtures/unity/ (xây bằng tests/fixtures/unity
 build_fixtures.py, độc lập với UnityPy); UnityPy chỉ là bên xác minh độc lập
 ngoài sandbox. Không dùng IPA thật của người dùng.
 """
+import base64
 import hashlib
 import importlib.metadata
 import importlib.util
@@ -14,6 +15,7 @@ import struct
 import subprocess
 import sys
 import tempfile
+import types
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -32,6 +34,9 @@ BUNDLE_LZMA = FX / "sample_lzma.unity3d"
 BUNDLE_V6 = FX / "sample_v6.unity3d"
 BUNDLE_V8 = FX / "sample_v8.unity3d"
 BUNDLE_V8_LZ4 = FX / "sample_v8_lz4.unity3d"
+BUNDLE_V9 = FX / "sample_v9.unity3d"
+BUNDLE_ZSTD = FX / "sample_zstd.unity3d"
+BUNDLE_V9_ZSTD = FX / "sample_v9_zstd.unity3d"
 TYPETREE = FX / "sample_typetree.assets"
 V21 = FX / "sample_v21.assets"
 V23 = FX / "sample_v23.assets"
@@ -187,9 +192,9 @@ class TestBundleParse(unittest.TestCase):
     def test_unsupported_version_raises(self):
         data = bytearray(read(BUNDLE))
         # version là u32 big-endian ở offset 8 (sau "UnityFS\0")
-        # v9: không có bằng chứng tồn tại (Unity 6 mới nhất vẫn dùng v8),
-        # không bịa hỗ trợ (decisions #77).
-        data[8:12] = struct.pack(">I", 9)  # UnityFS v9 (chưa hỗ trợ)
+        # v9 đã hỗ trợ đọc từ C5 (fixture tổng hợp sample_v9.unity3d);
+        # v10 vẫn chưa có bằng chứng tồn tại, không bịa hỗ trợ.
+        data[8:12] = struct.pack(">I", 10)  # UnityFS v10 (chưa hỗ trợ)
         with self.assertRaises(PB3Error) as cm:
             u.parse_bundle(bytes(data), nat())
         self.assertEqual(cm.exception.code, "E_UNSUPPORTED_FORMAT")
@@ -496,6 +501,203 @@ class TestSerializedV23(unittest.TestCase):
         # entry còn lại giữ nguyên
         before = u.parse_bundle(read(BUNDLE_V8), nat())
         self.assertEqual(bundle.get_entry(ENTRY2), before.get_entry(ENTRY2))
+
+
+class TestBundleV9Zstd(unittest.TestCase):
+    """UnityFS v9 (chỉ đọc) + block Zstd qua cầu nối JS (mục C5).
+
+    Fixture tổng hợp (tests/fixtures/unity/build_fixtures.py): v9 theo
+    đúng layout UnityPy master — BlockInfo thêm u64 offset, block căn
+    16; Zstd mã nén 5 (quy ước mở rộng của PB3 — UnityPy master không
+    có mã này, chưa thấy bundle Unity thật nào dùng Zstd).
+    Giải nén Zstd THẬT chỉ chứng minh được trên web (fzstd trong
+    worker — xem exp/verify_analysis_c5.mjs); ở CPython, test dùng
+    module `js` giả để kiểm chứng đường gọi Python -> JS, còn test
+    parse đầy đủ thì dùng gói `zstandard` làm bộ giải đứng chỗ fzstd
+    (bỏ qua khi chưa cài — không bịa PASS).
+    """
+
+    # Frame Zstd thật, sinh bằng `zstandard` 0.25.0 level 3 từ
+    # _TINY_PLAIN; dùng để thử cầu nối JS mà không cần encoder lúc
+    # chạy test.
+    _TINY_PLAIN = b"Xin chao BearTea - cau noi Zstd thu nghiem 12345"
+    _TINY_FRAME_B64 = ("KLUv/SAwgQEAWGluIGNoYW8gQmVhclRlYSAtIGNhdSBub2kg"
+                       "WnN0ZCB0aHUgbmdoaWVtIDEyMzQ1")
+
+    @staticmethod
+    def _fake_js(decode):
+        fake = types.ModuleType("js")
+        fake.pb3_zstd_decompress = decode
+        return fake
+
+    @pytest.mark.needs_fixture("unity/sample_v9.unity3d")
+    def test_v9_none_parse(self):
+        b = u.parse_bundle(read(BUNDLE_V9), nat())
+        self.assertEqual(b.version, 9)
+        self.assertEqual(b.unity_version, "5.x.x")
+        self.assertEqual(b.unity_revision, "6000.0.23f1")
+        self.assertEqual(b.compression_name, "none")
+        self.assertEqual([e.name for e in b.entries], [ENTRY1, ENTRY2])
+        # Offset v9: block 0 ở 0, block 1 ở đầu vùng đã căn 16.
+        self.assertEqual(b.blocks[0].offset, 0)
+        self.assertEqual(b.blocks[1].offset,
+                         (b.blocks[0].compressed_size + 15) // 16 * 16)
+        self.assertGreater(b.blocks[1].offset, b.blocks[0].compressed_size)
+        sf = u.parse_serialized(b.get_entry(ENTRY1))
+        self.assertEqual(sf.version, 23)
+        self.assertEqual(sf.text_assets()[0][2], "Xin chao Unity 6!")
+
+    @pytest.mark.needs_fixture("unity/sample_v9.unity3d")
+    def test_v9_stream_matches_parse(self):
+        parsed = u.parse_bundle(read(BUNDLE_V9), nat())
+        streamed = dict(u.stream_bundle_entries(str(BUNDLE_V9), nat()))
+        self.assertEqual(sorted(streamed), sorted([ENTRY1, ENTRY2]))
+        for name, data in streamed.items():
+            self.assertEqual(data, parsed.get_entry(name))
+
+    @pytest.mark.needs_fixture("unity/sample_zstd.unity3d",
+                               "unity/sample_v9_zstd.unity3d")
+    def test_zstd_without_js_raises_clear_error(self):
+        # CPython: không có module `js` -> lỗi rõ ràng, không crash.
+        for path in (BUNDLE_ZSTD, BUNDLE_V9_ZSTD):
+            with self.subTest(path=path.name):
+                with self.assertRaises(PB3Error) as cm:
+                    u.parse_bundle(read(path), nat())
+                self.assertEqual(cm.exception.code, "E_UNSUPPORTED_FORMAT")
+                self.assertIn("fzstd", str(cm.exception))
+                self.assertIn("BearTea", str(cm.exception))
+
+    def test_zstd_decompress_calls_js_bridge(self):
+        frame = base64.b64decode(self._TINY_FRAME_B64)
+        calls = []
+
+        def fake_decode(data, size):
+            calls.append((bytes(data), size))
+            return bytes(self._TINY_PLAIN)
+
+        with mock.patch.dict(sys.modules, {"js": self._fake_js(fake_decode)}):
+            out = nat().decompress(frame, len(self._TINY_PLAIN), 5)
+        self.assertEqual(out, self._TINY_PLAIN)
+        self.assertEqual(calls, [(frame, len(self._TINY_PLAIN))])
+
+    def test_zstd_decompress_accepts_jsproxy_with_to_py(self):
+        # Pyodide trả Uint8Array dưới dạng JsProxy: bytes(...) dùng
+        # được nhờ buffer protocol; khi không được thì dùng to_py().
+        frame = base64.b64decode(self._TINY_FRAME_B64)
+
+        class _FakeJsProxy:
+            def __init__(self, data):
+                self._data = data
+
+            def to_py(self):
+                return self._data
+
+        def fake_decode(data, size):
+            return _FakeJsProxy(bytes(self._TINY_PLAIN))
+
+        with mock.patch.dict(sys.modules, {"js": self._fake_js(fake_decode)}):
+            out = nat().decompress(frame, len(self._TINY_PLAIN), 5)
+        self.assertEqual(out, self._TINY_PLAIN)
+
+    def test_zstd_decompress_size_mismatch_raises(self):
+        frame = base64.b64decode(self._TINY_FRAME_B64)
+
+        def fake_decode(data, size):
+            return b"ngan"
+
+        with mock.patch.dict(sys.modules, {"js": self._fake_js(fake_decode)}):
+            with self.assertRaises(PB3Error) as cm:
+                nat().decompress(frame, len(self._TINY_PLAIN), 5)
+        self.assertEqual(cm.exception.code, "E_CORRUPT")
+
+    @pytest.mark.needs_fixture("unity/sample_zstd.unity3d",
+                               "unity/sample_v9_zstd.unity3d")
+    def test_zstd_full_parse_with_real_decoder(self):
+        try:
+            import zstandard
+        except ImportError:
+            self.skipTest("cần gói zstandard để giả lập fzstd "
+                          "(pip install zstandard)")
+        dec = zstandard.ZstdDecompressor()
+
+        def fake_decode(data, size):
+            return dec.decompress(bytes(data), max_output_size=size)
+
+        with mock.patch.dict(sys.modules, {"js": self._fake_js(fake_decode)}):
+            b7 = u.parse_bundle(read(BUNDLE_ZSTD), nat())
+            self.assertEqual(b7.version, 7)
+            self.assertEqual(b7.compression_name, "zstd")
+            self.assertEqual([e.name for e in b7.entries], [ENTRY1, ENTRY2])
+            sf7 = u.parse_serialized(b7.get_entry(ENTRY1))
+            self.assertEqual(sf7.text_assets()[0][2], "Xin chao 9 Kings!")
+            b9 = u.parse_bundle(read(BUNDLE_V9_ZSTD), nat())
+            self.assertEqual(b9.version, 9)
+            self.assertEqual(b9.compression_name, "zstd")
+            self.assertEqual(b9.blocks[0].offset, 0)
+            sf9 = u.parse_serialized(b9.get_entry(ENTRY1))
+            self.assertEqual(sf9.text_assets()[0][2], "Xin chao Unity 6!")
+
+    def test_build_bundle_v9_raises(self):
+        with self.assertRaises(PB3Error) as cm:
+            u.build_bundle([("a", 0, b"x")], version=9, backend=nat())
+        self.assertEqual(cm.exception.code, "E_UNSUPPORTED_FORMAT")
+        self.assertIn("chỉ đọc", str(cm.exception))
+
+    def test_build_bundle_zstd_raises(self):
+        with self.assertRaises(PB3Error) as cm:
+            u.build_bundle([("a", 0, b"x")], compression="zstd", backend=nat())
+        self.assertEqual(cm.exception.code, "E_UNSUPPORTED_FORMAT")
+        self.assertIn("không nén", str(cm.exception))
+
+    def test_build_bundle_none_writes_flag_zero(self):
+        built = u.build_bundle([("a", 0, b"hello"), ("b", 0, b"world")],
+                               compression="none", backend=nat())
+        parsed = u.parse_bundle(built, nat())
+        self.assertEqual(parsed.compression_name, "none")
+        self.assertTrue(all((blk.flags & 0x3F) == 0 for blk in parsed.blocks))
+
+    @pytest.mark.needs_fixture("unity/sample_zstd.unity3d")
+    def test_patch_zstd_bundle_rebuilds_uncompressed(self):
+        try:
+            import zstandard
+        except ImportError:
+            self.skipTest("cần gói zstandard để giả lập fzstd "
+                          "(pip install zstandard)")
+        dec = zstandard.ZstdDecompressor()
+
+        def fake_decode(data, size):
+            return dec.decompress(bytes(data), max_output_size=size)
+
+        with mock.patch.dict(sys.modules, {"js": self._fake_js(fake_decode)}):
+            r = u.apply_patch(u.PatchRequest(
+                data=read(BUNDLE_ZSTD), kind="bundle", entry=ENTRY1,
+                path_id=1001, old_text="9 Kings!", new_text="8 Kings!"))
+        self.assertTrue(r.verified)
+        out = u.parse_bundle(r.output_bytes, nat())
+        # Đường ghi C5: bundle gốc Zstd -> dựng lại bằng block không nén.
+        self.assertEqual(out.compression_name, "none")
+        self.assertTrue(all((blk.flags & 0x3F) == 0 for blk in out.blocks))
+        sf = u.parse_serialized(out.get_entry(ENTRY1))
+        self.assertEqual(sf.text_assets()[0][2], "Xin chao 8 Kings!")
+        # Entry còn lại giữ nguyên byte.
+        self.assertEqual(out.get_entry(ENTRY2), read(SHARED))
+
+    @pytest.mark.needs_fixture("unity/sample_v9.unity3d")
+    def test_patch_v9_refuses(self):
+        with self.assertRaises(PB3Error) as cm:
+            u.apply_patch(u.PatchRequest(
+                data=read(BUNDLE_V9), kind="bundle", entry=ENTRY1,
+                path_id=4001, old_text="Unity 6", new_text="Unity 7"))
+        self.assertEqual(cm.exception.code, "E_UNSUPPORTED_FORMAT")
+        self.assertIn("chỉ đọc", str(cm.exception))
+
+    def test_support_matrix_mentions_v9_zstd(self):
+        rows = u.support_matrix()
+        text = " ".join(r["format"] + " " + r["read"] + " " + r["write"]
+                        for r in rows)
+        self.assertIn("v9", text)
+        self.assertIn("Zstd", text)
+        self.assertIn("fzstd", text)
 
 
 class TestBackendModes(unittest.TestCase):

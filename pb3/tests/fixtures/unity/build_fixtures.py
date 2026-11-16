@@ -3,6 +3,11 @@
 
 - UnityFS v6/v7/v8 (không nén / LZ4 / LZMA), SerializedFile v17/v21/v23
   (không type tree / có type tree blob), bundle lồng trong IPA.
+- UnityFS v9 + Zstd (mục C5): v9 chỉ đọc — mỗi BlockInfo thêm u64
+  offset, block nén căn 16; Zstd (mã nén 5) qua gói `zstandard` (chỉ
+  cần lúc SINH fixture, không cần lúc chạy test — file sinh ra được
+  commit). Thiếu `zstandard` thì main() bỏ qua fixture Zstd và in rõ
+  lý do, các fixture khác vẫn sinh đủ.
 - Layout đối chiếu UnityPy 1.25.4 (files/BundleFile.py,
   files/SerializedFile.py, files/ObjectReader.py,
   helpers/TypeTreeNode.py): bundle big-endian, SerializedFile
@@ -217,6 +222,16 @@ def _lz4_block(data):
     return lz4.block.compress(data, store_size=False)
 
 
+def _compress_zstd(data):
+    """Nén Zstd bằng gói `zstandard` (chỉ có lúc sinh fixture)."""
+    try:
+        import zstandard
+    except ImportError:
+        raise RuntimeError("sinh fixture Zstd cần gói `zstandard` "
+                           "(pip install zstandard); chưa cài nên bỏ qua")
+    return zstandard.ZstdCompressor(level=3).compress(data)
+
+
 def _compress(data, kind):
     if kind == "none":
         return data
@@ -224,34 +239,45 @@ def _compress(data, kind):
         return _lz4_block(data)
     if kind == "lzma":
         return compress_lzma_unity(data)
+    if kind == "zstd":
+        return _compress_zstd(data)
     raise ValueError(kind)
 
 
 def build_bundle(version=7, unity_version=UNITY_VERSION, entries=(),
                  compression="none", blocks_info_at_end=False,
-                 unity_revision=None, extra_data_flags=0, pad_block_data=False):
-    """entries: [(name, flags, data)]. compression: none|lz4|lzma.
+                 unity_revision=None, extra_data_flags=0, pad_block_data=False,
+                 block_split=None):
+    """entries: [(name, flags, data)]. compression: none|lz4|lzma|zstd.
 
     Trả bytes UnityFS. data_flag: 0x40 (combined) | comp; +0x80 nếu
-    blocks info ở cuối. Block flags: 64 (không nén, theo UnityPy) / 1 / 2.
+    blocks info ở cuối. Block flags: 64 (không nén, theo UnityPy) / 1 / 2 / 5.
     `unity_revision` mặc định = `unity_version`; `pad_block_data` đặt cờ
     0x200 và căn đầu vùng block data tới 16 (cờ mới, Unity 6).
-    """
+    v9 (C5): mỗi BlockInfo thêm u64 offset; mỗi block trong vùng block
+    data được căn 16 (đệm NUL sau từng block). `block_split` (byte) chia
+    payload thành nhiều block để thử offset/căn — mặc định 1 block
+    (trừ LZ4 chia 128 KiB như trước)."""
+
     if unity_revision is None:
         unity_revision = unity_version
-    comp_code = {"none": 0, "lz4": 2, "lzma": 1}[compression]
+    comp_code = {"none": 0, "lz4": 2, "lzma": 1, "zstd": 5}[compression]
     data_flag = 0x40 | comp_code | extra_data_flags
     if blocks_info_at_end:
         data_flag |= 0x80
     if pad_block_data:
         data_flag |= 0x200
     payload = b"".join(d for _, _, d in entries)
-    # chia block: LZ4 theo chunk 128 KiB, còn lại 1 block
+    # chia block: LZ4 theo chunk 128 KiB, còn lại 1 block (hoặc chia theo
+    # block_split khi gọi tường minh — dùng cho fixture v9/Zstd).
     raw_blocks = []
     if compression == "lz4":
         step = 0x20000
         for i in range(0, len(payload), step):
             raw_blocks.append(payload[i:i + step])
+    elif block_split:
+        for i in range(0, len(payload), block_split):
+            raw_blocks.append(payload[i:i + block_split])
     else:
         raw_blocks = [payload] if payload else []
     blocks = []
@@ -260,18 +286,26 @@ def build_bundle(version=7, unity_version=UNITY_VERSION, entries=(),
         comp = _compress(chunk, compression)
         if len(comp) >= len(chunk) and compression != "none":
             block_data.write(chunk)
-            blocks.append((len(chunk), len(chunk), 0))
+            off = block_data.tell() - len(chunk)
+            blocks.append((len(chunk), len(chunk), 0, off))
         else:
+            off = block_data.tell()
             block_data.write(comp)
             flag = 64 if compression == "none" else comp_code
-            blocks.append((len(chunk), len(comp), flag))
+            blocks.append((len(chunk), len(comp), flag, off))
+        if version >= 9:
+            # v9 (C5, theo UnityPy chunk_based_compress): căn từng block
+            # nén tới 16 byte trong vùng block data.
+            block_data.write(b"\x00" * ((-block_data.tell()) % 16))
     block_bytes = block_data.getvalue()
     # blocks info (chưa nén)
     info = io.BytesIO()
     info.write(b"\x00" * 16)  # hash
     info.write(struct.pack(">i", len(blocks)))
-    for unc, comp_size, flag in blocks:
+    for unc, comp_size, flag, off in blocks:
         info.write(struct.pack(">IIH", unc, comp_size, flag))
+        if version >= 9:
+            info.write(struct.pack(">Q", off))
     info.write(struct.pack(">i", len(entries)))
     offset = 0
     for name, flags, data in entries:
@@ -382,6 +416,14 @@ def main():
         version=8, unity_version=UNITY6_PLAYER_VERSION,
         unity_revision=UNITY6_REVISION, entries=entries_v8, compression="lz4",
         blocks_info_at_end=True, pad_block_data=True)
+    # v9 (C5, chỉ đọc): player "5.x.x" + revision Unity 6, 2 block không
+    # nén — block thứ 2 bắt đầu ở offset đã căn 16 (thử đọc bằng offset,
+    # không đọc tuần tự). Payload v23 để Inspect hiện đủ TextAsset.
+    payload_v8 = b"".join(d for _, _, d in entries_v8)
+    bundle_v9 = build_bundle(
+        version=9, unity_version=UNITY6_PLAYER_VERSION,
+        unity_revision=UNITY6_REVISION, entries=entries_v8, compression="none",
+        block_split=(len(payload_v8) + 1) // 2)
     files = {
         "resources.assets": resources,
         "sharedassets0.assets": shared,
@@ -394,9 +436,26 @@ def main():
         "sample_v6.unity3d": bundle_v6,
         "sample_v8.unity3d": bundle_v8,
         "sample_v8_lz4.unity3d": bundle_v8_lz4,
+        "sample_v9.unity3d": bundle_v9,
         "nested.ipa": build_nested_ipa(bundle),
         "nested_v8.ipa": build_nested_ipa(bundle_v8),
     }
+    # Zstd (C5): cần gói `zstandard` lúc sinh; thiếu thì bỏ qua 2 file
+    # này và in rõ lý do (không làm hỏng các fixture khác).
+    try:
+        import zstandard  # noqa: F401 - chỉ kiểm tra có mặt
+        bundle_zstd = build_bundle(version=7, entries=entries,
+                                   compression="zstd")
+        bundle_v9_zstd = build_bundle(
+            version=9, unity_version=UNITY6_PLAYER_VERSION,
+            unity_revision=UNITY6_REVISION, entries=entries_v8,
+            compression="zstd", block_split=(len(payload_v8) + 1) // 2)
+        files["sample_zstd.unity3d"] = bundle_zstd
+        files["sample_v9_zstd.unity3d"] = bundle_v9_zstd
+    except ImportError:
+        print("BO QUA fixture Zstd: chua cai goi `zstandard` "
+              "(pip install zstandard) — sample_zstd.unity3d / "
+              "sample_v9_zstd.unity3d khong duoc sinh lai.")
     for name, data in files.items():
         with open(os.path.join(HERE, name), "wb") as fh:
             fh.write(data)

@@ -69,6 +69,37 @@ async function boot() {
     status("Không tải được binding lz4, dùng lz4pure (chậm hơn).");
   }
 
+  // Zstd qua fzstd (mục C5): bộ giải nén Zstd thuần JS, vendored cùng
+  // nguồn ở fzstd/index.mjs (MIT, Arjun Barrett). Python (sdk/unity.py)
+  // gọi hàm này qua module `js` — ĐÚNG tiền lệ Google Translate ở dưới:
+  // phải gán vào globalThis thật, `pyodide.globals.set` chỉ đặt biến
+  // toàn cục PYTHON, module `js` không thấy nó.
+  // Dùng dynamic import + try/catch để boot KHÔNG chết nếu file fzstd
+  // thiếu/lỗi: khi đó globalThis.pb3_zstd_decompress = null và Python
+  // báo lỗi rõ ràng "cần fzstd trên web" khi gặp block Zstd.
+  // fzstd.decompress(data): không truyền out thì cỡ giải nén đọc từ
+  // header frame; frame không kèm content size thì thử lại với buffer
+  // đúng cỡ kỳ vọng (expectedSize từ header block của bundle).
+  status("Đang tải bộ giải nén Zstd (fzstd)…");
+  try {
+    const fzstd = await import("./fzstd/index.mjs");
+    const fzstdDecompress = fzstd.decompress;
+    globalThis.pb3_zstd_decompress = (data, expectedSize) => {
+      const input = data instanceof Uint8Array ? data : new Uint8Array(data);
+      try {
+        return fzstdDecompress(input);
+      } catch (e) {
+        if (typeof expectedSize === "number" && expectedSize > 0) {
+          return fzstdDecompress(input, new Uint8Array(expectedSize));
+        }
+        throw e;
+      }
+    };
+  } catch (e) {
+    globalThis.pb3_zstd_decompress = null;
+    status("Không tải được fzstd — bundle nén Zstd sẽ báo lỗi rõ ràng.");
+  }
+
   status("Đang tải mã PB3…");
   const man = await (await fetch("pb3/files.json")).json();
   const files = man.files;

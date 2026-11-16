@@ -15,13 +15,13 @@
 // Bản SW mới tự kích hoạt (skipWaiting) và xóa cache cũ ở sự kiện
 // activate, nên user không bao giờ kẹt bản cũ.
 //
-// Lưu ý dung lượng: precache ~18,4 MB (Pyodide ~16,5 MB + PB3 ~1,4 MB +
-// shell ~0,24 MB + font 0,18 MB). Nạp 1 lần ở lần thăm đầu (nền, không
+// Lưu ý dung lượng: precache ~18,5 MB (Pyodide ~16,5 MB + PB3 ~1,4 MB +
+// shell ~0,24 MB + font 0,18 MB + fzstd 24KB). Nạp 1 lần ở lần thăm đầu (nền, không
 // chặn vẽ trang); lần sau đọc từ Cache Storage, không tốn mạng nữa.
 
 // ĐỔI SỐ NÀY MỖI KHI DEPLOY BẢN MỚI (bất kỳ file nào trong PRECACHE_URLS
 // đổi nội dung). Bản cũ sẽ bị xóa ở activate.
-const CACHE_VERSION = "v10-20261116";
+const CACHE_VERSION = "v11-20261116";
 const CACHE_NAME = "beartea-" + CACHE_VERSION;
 // Cache riêng cho prefetch Pyodide sau first paint (Mục C3): app.js ghi
 // file đã tải trước vào đây; SW dùng làm dự phòng khi cache chính trượt
@@ -31,9 +31,10 @@ const PREFETCH_CACHE = "beartea-prefetch-v1";
 // Danh sách precache: shell tĩnh + Pyodide vendored + mã PB3 (khớp đúng
 // pb3/files.json mà worker.js tải lúc boot) + font đi kèm + fixture tự
 // kiểm tra (C2/C3: fixtures/selftest.zip để lần thăm 2 offline vẫn chạy
-// được "Tự kiểm tra"). Sinh từ đĩa lúc viết file này (127 mục); thêm/bớt
-// file vendored thì cập nhật cả danh sách này, không thì lần thăm 2
-// offline sẽ thiếu file đó.
+// được "Tự kiểm tra"). Sinh từ đĩa lúc viết file này (127 mục — đếm
+// thật bằng eval, comment cũ ghi 127 khi danh sách mới có 126);
+// thêm/bớt file vendored thì cập nhật cả danh sách này, không thì
+// lần thăm 2 offline sẽ thiếu file đó.
 const PRECACHE_URLS = [
   "./",
   "index.html",
@@ -44,6 +45,7 @@ const PRECACHE_URLS = [
   "opfs.js",
   "kb-store.js",
   "gt.js",
+  "fzstd/index.mjs",
   "manifest.webmanifest",
   "diagnostics.html",
   "fixtures/selftest.zip",

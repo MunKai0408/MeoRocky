@@ -359,7 +359,7 @@
   <div id="tab-unity" class="card" hidden>
     <h2>Inspect Unity</h2>
     <p class="note">Đọc bundle .unity3d hoặc file .assets độc lập bằng parser thuần của PB3
-    (UnityFS v8, SerializedFile v23). Không dùng UnityPy trên web. Nếu file đang
+    (UnityFS v6–v9 — v9 chỉ đọc; block nén Zstd đọc được qua fzstd, SerializedFile v23). Không dùng UnityPy trên web. Nếu file đang
     chọn là ZIP/IPA thì trang liệt kê các bundle/.assets bên trong để bạn chọn 1
     cái inspect trực tiếp.
     Asset nhị phân (texture/âm thanh): chỉ đọc, dùng bản iSH.</p>
@@ -372,7 +372,7 @@
     <details>
       <summary>Tùy chọn nâng cao</summary>
       <p class="note">Inspect không có tùy chọn nào thêm — mọi bundle/.assets đều được đọc
-      bằng cùng một parser thuần (UnityFS v8, SerializedFile v23). Kết quả inspect
+      bằng cùng một parser thuần (UnityFS v6–v9, v9 chỉ đọc; block Zstd đọc qua fzstd; SerializedFile v23). Kết quả inspect
       (Unity Version, số object, TextAsset) hiện ở dưới và ở thẻ “Thông tin Unity”
       trên Trang chủ.</p>
     </details>

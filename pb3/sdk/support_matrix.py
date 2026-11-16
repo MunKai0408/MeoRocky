@@ -179,7 +179,7 @@ def generate(root, rows=None, manifests=None, kb_stats=None) -> Tuple[str, dict]
     unity_rows = _unity.support_matrix()
     fixture_only = [p["id"] for p in plugins]
     # Unity/Godot/Unreal đọc-ghi cũng mới test fixture (patch Unity chưa có game thật).
-    fixture_only += ["UnityFS v6/v7/v8 + SerializedFile v15–23 (đọc/ghi, fixture)",
+    fixture_only += ["UnityFS v6/v7/v8/v9 + SerializedFile v15–23 (v9 chỉ đọc, Zstd chỉ đọc trên web, fixture)",
                      "Godot PCK v1/v2 (đọc, fixture)",
                      "Unreal PAK UE4/UE5 (đọc, fixture)"]
 
