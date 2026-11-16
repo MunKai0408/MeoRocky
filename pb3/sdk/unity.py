@@ -1,0 +1,2107 @@
+"""Backend Unity (Claude 05; đặc tả §6, decisions #66+).
+
+Phạm vi: UnityFS v6/v7/v8 (đọc + dựng lại bundle, giữ compression gốc),
+SerializedFile v15–23 (metadata, object table, TextAsset, chuỗi ngắn/dài),
+hybrid backend AUTO / LIBRARY / NATIVE (UnityPy + LZ4 + Python thuần),
+planner, patcher (PATCH_INPLACE / REBUILD_SECTION / REBUILD_ALL),
+diffverify + allow-list + backup/versioning/rollback.
+
+Layout đối chiếu UnityPy 1.25.4 (BundleFile.py, SerializedFile.py,
+ObjectReader.py, TypeTreeNode.py, CompressionHelper.py):
+- UnityFS: big-endian; header = signature, version, unity version,
+  unity revision, total size u64, comp/uncomp blocks-info size, flags;
+  blocks info = hash 16 byte + số block + (unc, comp, flags u16) +
+  số entry + (offset u64, size u64, flags u32, tên).
+- SerializedFile: 4 số đầu header LUÔN big-endian; phần sau theo cờ
+  endian; object table v15/16 có script_type_index + is_stripped,
+  v17+ không; byte_start u64 chỉ từ v22; type tree v23+ có content hash
+  16 byte + kích thước blob, blob mở đầu bằng magic "mhtt" + format
+  version (size 0 = type đó không có type tree).
+- UnityFS v8 cùng layout header với v7 (căn 16 sau header); cờ mã hóa /
+  padding chọn theo unityRevision (UnityPy: version_engine), KHÔNG theo
+  unityVersion (thường là "5.x.x").
+- LZ4 block: token nibble; LZ4HC cùng format block; LZMA Unity: LZMA1
+  thô (props 0x5D, dict 0x800000), đầu 5 byte.
+- TextAsset = aligned_string(m_Name) + aligned_string(m_Script).
+
+Chỉ tuyên bố hỗ trợ loại/version đã có fixture + test
+(handoff/account_05.md, account_05b.md).
+Không có câu `import UnityPy`/`import lz4` nào trong file (quy tắc iSH):
+chỉ gọi qua importlib.import_module khi thật sự cần, có guard; probe chỉ
+dùng find_spec + importlib.metadata (không thực thi module — import thật
+UnityPy trên iSH mất ~1 phút và từng treo suite > 149s).
+Chạy được trên Python 3.9 (không dùng cú pháp 3.10+, không tomllib).
+"""
+from __future__ import annotations
+
+import copy
+import hashlib
+import importlib
+import io
+import lzma
+import re
+import struct
+from dataclasses import dataclass, field
+from importlib import metadata as importlib_metadata
+from importlib.util import find_spec
+from typing import Dict, List, Optional, Tuple
+
+from core import hashing
+from core.errors import PB3Error, error_from_exception
+from core.limits import Limits
+from sdk import lz4pure
+from sdk.manifest import WRITE_MODES
+
+UNITYFS_MAGIC = b"UnityFS"
+UNITY_VERSION = "2019.4.40f1"  # mặc định khi dựng bundle mới (giữ nguyên khi rebuild)
+UNITY6_PLAYER_VERSION = "5.x.x"     # unityVersion trong header bundle Unity 6
+UNITY6_REVISION = "6000.0.23f1"     # unityRevision (engine) của fixture v8/v23
+SUPPORTED_BUNDLE_VERSIONS = (6, 7, 8)
+# SerializedFile: chỉ 15-23 (object table đã kiểm chứng; <15 quá cũ, >23 chưa có fixture).
+SUPPORTED_SF_VERSIONS = (15, 16, 17, 18, 19, 20, 21, 22, 23)
+
+COMPRESSION_NAMES = {0: "none", 1: "lzma", 2: "lz4", 3: "lz4hc", 4: "lzham"}
+COMPRESSION_CODES = {v: k for k, v in COMPRESSION_NAMES.items()}
+LZ4_CHUNK_SIZE = 0x20000  # 128 KiB (Unity chia block LZ4/LZ4HC theo chunk này)
+
+# Cờ UnityFS (bit thấp 6 = compression; 0x40 combined; 0x80 blocks info ở cuối).
+FLAG_COMBINED = 0x40
+FLAG_BLOCKS_INFO_AT_END = 0x80
+FLAG_OLD_WEB = 0x100
+FLAG_PADDING_NEW = 0x200       # cờ mới: block info cần đệm ở đầu
+FLAG_ENCRYPTION_OLD = 0x200    # cờ cũ: cùng bit 0x200 là mã hóa
+FLAG_ENCRYPTION_NEW = 0x1400
+
+# Directory flag: entry là SerializedFile.
+DIR_FLAG_SERIALIZED = 0x04
+
+CLASS_NAMES = {
+    1: "GameObject", 2: "Component", 4: "Transform", 20: "Camera",
+    21: "Material", 23: "MeshRenderer", 28: "Texture2D", 43: "Mesh",
+    48: "Shader", 49: "TextAsset", 114: "MonoBehaviour", 115: "MonoScript",
+    142: "AssetBundle", 21: "Material",
+}
+
+
+def class_name(class_id):
+    return CLASS_NAMES.get(class_id, "class_%d" % class_id)
+
+
+def support_matrix():
+    """Bảng hỗ trợ Unity (chỉ nâng theo bằng chứng; xem handoff/account_05.md)."""
+    return [
+        {"format": "UnityFS v6/v7/v8 (bundle)", "read": "có", "write": "có (dựng lại bundle, giữ compression gốc)",
+         "backend": "Python thuần + lz4/lzma", "maturity": "M2"},
+        {"format": "SerializedFile v15-23 (.assets)", "read": "có (metadata, object table, TextAsset)",
+         "write": "có (patch TextAsset: PATCH_INPLACE / REBUILD_SECTION)",
+         "backend": "Python thuần", "maturity": "M2"},
+        {"format": "LZ4 block / LZ4HC", "read": "có", "write": "có",
+         "backend": "binding lz4 (ưu tiên) / Python thuần (literal-only khi ghi)",
+         "maturity": "M2"},
+        {"format": "LZ4 frame", "read": "có", "write": "chỉ qua binding lz4",
+         "backend": "binding lz4.frame (ưu tiên) / Python thuần (chỉ đọc)",
+         "maturity": "M2"},
+        {"format": "LZMA (Unity raw)", "read": "có", "write": "có",
+         "backend": "lzma (thư viện chuẩn)", "maturity": "M2"},
+        {"format": "UnityPy (object phức tạp)", "read": "khi cài được",
+         "write": "khi cài được", "backend": "UnityPy 1.25.4 (iSH đã chứng minh)",
+         "maturity": "M2"},
+        {"format": "SerializedFile v<15 / v>23, UnityWeb/UnityRaw, LZHAM, bundle mã hóa",
+         "read": "không", "write": "không",
+         "backend": "chưa có (E_UNSUPPORTED_FORMAT / E_ENCRYPTED)", "maturity": "M0"},
+    ]
+
+
+# ------------------------------------------------------------------ reader
+class _Reader:
+    """Đọc nhị phân có kiểm tra giới hạn (không đọc quá buffer)."""
+
+    def __init__(self, data, endian="<", where="unity"):
+        self._b = bytes(data)
+        self.endian = endian
+        self.where = where
+        self.pos = 0
+
+    def __len__(self):
+        return len(self._b)
+
+    def remaining(self):
+        return len(self._b) - self.pos
+
+    def _need(self, n):
+        if n < 0 or self.pos + n > len(self._b):
+            raise PB3Error("E_CORRUPT", "đọc vượt quá dữ liệu (%d byte tại %d)"
+                           % (n, self.pos), where=self.where)
+
+    def read(self, n):
+        self._need(n)
+        out = self._b[self.pos:self.pos + n]
+        self.pos += n
+        return out
+
+    def unpack(self, fmt):
+        size = struct.calcsize(fmt)
+        self._need(size)
+        out = struct.unpack_from(self.endian + fmt, self._b, self.pos)
+        self.pos += size
+        return out[0] if len(out) == 1 else out
+
+    def u8(self):
+        return self.unpack("B")
+
+    def u16(self):
+        return self.unpack("H")
+
+    def i16(self):
+        return self.unpack("h")
+
+    def i32(self):
+        return self.unpack("i")
+
+    def u32(self):
+        return self.unpack("I")
+
+    def i64(self):
+        return self.unpack("q")
+
+    def u64(self):
+        return self.unpack("Q")
+
+    def boolean(self):
+        return self.u8() != 0
+
+    def align(self, alignment=4, base=0):
+        """Căn vị trí tới bội của alignment (tính từ đầu buffer + base)."""
+        target = -((base + self.pos) % alignment) % alignment
+        self._need(target)
+        self.pos += target
+
+    def string_to_null(self, max_length=32767):
+        end = self._b.find(b"\x00", self.pos)
+        if end < 0 or end - self.pos > max_length:
+            raise PB3Error("E_CORRUPT", "chuỗi không có NUL kết thúc", where=self.where)
+        raw = self._b[self.pos:end]
+        self.pos = end + 1
+        try:
+            return raw.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise error_from_exception(exc, where=self.where)
+
+    def aligned_string(self):
+        """Chuỗi SerializedFile: i32 độ dài + bytes + đệm tới bội 4."""
+        size = self.i32()
+        if size < 0 or size > self.remaining():
+            raise PB3Error("E_CORRUPT", "chuỗi dài %d byte không hợp lệ" % size,
+                           where=self.where)
+        raw = self.read(size)
+        self.align(4)
+        try:
+            return raw.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise error_from_exception(exc, where=self.where)
+
+
+def _writer(endian="<"):
+    return _Writer(endian)
+
+
+class _Writer:
+    def __init__(self, endian="<"):
+        self.buf = io.BytesIO()
+        self.endian = endian
+
+    def tell(self):
+        return self.buf.tell()
+
+    def write(self, data):
+        return self.buf.write(data)
+
+    def pack(self, fmt, *values):
+        return self.buf.write(struct.pack(self.endian + fmt, *values))
+
+    def pack_be(self, fmt, *values):
+        """Ghi big-endian (header SerializedFile luôn big-endian)."""
+        return self.buf.write(struct.pack(">" + fmt, *values))
+
+    def align(self, alignment=4, base=0):
+        """Đệm NUL để (base + vị trí) chia hết cho alignment."""
+        need = (-(base + self.buf.tell())) % alignment
+        if need:
+            self.buf.write(b"\x00" * need)
+
+    def align16(self):
+        self.align(16)
+
+    def string_to_null(self, text):
+        self.buf.write(text.encode("utf-8") + b"\x00")
+
+    def aligned_string(self, text):
+        raw = text.encode("utf-8")
+        self.pack("i", len(raw))
+        self.buf.write(raw)
+        self.align(4)
+
+    def bytes(self):
+        return self.buf.getvalue()
+
+
+def _align_up(n, alignment):
+    return (n + alignment - 1) // alignment * alignment
+
+
+def parse_unity_version(text):
+    """'2019.4.40f1' -> (2019, 4, 40); '5.6.7f1' -> (5, 6, 7); lạ -> ()."""
+    m = re.match(r"(\d+)\.(\d+)\.(\d+)", text or "")
+    if not m:
+        return ()
+    return (int(m.group(1)), int(m.group(2)), int(m.group(3)))
+
+
+def _uses_new_flags(engine_version):
+    """Cờ mới từ Unity 2020.3.34 / 2021.3.2 / 2022.1.1 (theo UnityPy).
+
+    BẮT BUỘC dùng unityRevision (engine, vd "6000.0.23f1"), KHÔNG dùng
+    unityVersion (player, thường là "5.x.x" nên parse ra ()). UnityPy
+    (BundleFile.parse_version) cũng lấy version_engine. Dùng nhầm player
+    version thì bundle Unity 2019 thật sẽ bị nhận cờ mới: cờ mã hóa 0x200
+    bị bỏ qua, cờ padding 0x200 bị hiểu sai (bug tiềm ẩn, decisions #78).
+    Không parse được -> True (mặc định cờ mới, đúng với bundle hiện đại)."""
+    v = parse_unity_version(engine_version)
+    if not v:
+        return True
+    if v[0] < 2020:
+        return False
+    if v[0] == 2020 and v < (2020, 3, 34):
+        return False
+    if v[0] == 2021 and v < (2021, 3, 2):
+        return False
+    if v[0] == 2022 and v < (2022, 1, 1):
+        return False
+    return True
+
+
+# ------------------------------------------------------------------ LZMA Unity
+def decompress_lzma_unity(data, where="lzma"):
+    """Giải nén LZMA1 thô kiểu Unity (đầu 5 byte: props + dict)."""
+    data = bytes(data)
+    if len(data) < 5:
+        raise PB3Error("E_CORRUPT", "dữ liệu LZMA quá ngắn", where=where)
+    props = data[0]
+    dict_size = struct.unpack_from("<I", data, 1)[0]
+    lc = props % 9
+    rem = props // 9
+    pb = rem // 5
+    lp = rem % 5
+    try:
+        dec = lzma.LZMADecompressor(
+            format=lzma.FORMAT_RAW,
+            filters=[{"id": lzma.FILTER_LZMA1, "dict_size": dict_size,
+                      "lc": lc, "lp": lp, "pb": pb}])
+        out = dec.decompress(data[5:])
+    except (lzma.LZMAError, ValueError) as exc:
+        raise PB3Error("E_BAD_ARCHIVE", "LZMA lỗi: %s" % type(exc).__name__, where=where)
+    if not dec.eof and dec.unused_data:
+        raise PB3Error("E_CORRUPT", "LZMA: dữ liệu thừa sau luồng", where=where)
+    return out
+
+
+def compress_lzma_unity(data):
+    """Nén LZMA1 thô kiểu Unity (props 0x5D, dict 0x800000)."""
+    filt = [{"id": lzma.FILTER_LZMA1, "dict_size": 0x800000, "lc": 3, "lp": 0, "pb": 2}]
+    comp = lzma.LZMACompressor(format=lzma.FORMAT_RAW, filters=filt)
+    return struct.pack("<BI", 0x5D, 0x800000) + comp.compress(bytes(data)) + comp.flush()
+
+
+# ------------------------------------------------------------- probe backend
+def _spec_info(module_name, dist_name):
+    """Kiểm tra sự hiện diện bằng find_spec (KHÔNG thực thi module).
+
+    Trả (present, version|None, err|None). find_spec chỉ quét sys.path nên
+    nhanh ngay cả với gói lớn như UnityPy: import thật UnityPy trên iSH
+    mất ~1 phút và từng treo suite > 149s ở test_auto_init_logs_unitypy_decision
+    (handoff/account_05.md §3). Version lấy từ metadata của gói đã cài
+    (không thực thi code); thiếu metadata thì version là None.
+    """
+    try:
+        spec = find_spec(module_name)
+    except Exception as exc:  # noqa: BLE001 - find_spec lạ (vd parent thiếu)
+        return False, None, "%s: %s" % (type(exc).__name__, str(exc)[:120])
+    if spec is None:
+        return False, None, "không có trên sys.path"
+    try:
+        version = importlib_metadata.version(dist_name)
+    except Exception:  # noqa: BLE001 - không có metadata (vd cài tay)
+        version = None
+    return True, version, None
+
+
+def _probe_backends_uncached():
+    """Probe thật (không cache): Python thuần + lz4 + UnityPy."""
+    out = {"python": {"status": "ok", "detail": "stdlib + parser thuần Python"}}
+    present, version, err = _spec_info("lz4.block", "lz4")
+    if not present:
+        out["lz4"] = {"status": "missing",
+                      "detail": "không tìm thấy lz4.block (%s)" % err}
+    else:
+        frame_present, _, frame_err = _spec_info("lz4.frame", "lz4")
+        out["lz4"] = {"status": "ok", "version": version if version is not None else "?",
+                      "detail": "lz4.block OK" + ("; lz4.frame OK" if frame_present else
+                                                   "; lz4.frame thiếu (%s)" % frame_err)}
+    present, version, err = _spec_info("UnityPy", "UnityPy")
+    if not present:
+        out["unitypy"] = {"status": "missing",
+                          "detail": "không tìm thấy UnityPy (%s)" % err}
+    else:
+        out["unitypy"] = {"status": "ok", "version": version if version is not None else "?",
+                          "detail": "UnityPy OK"}
+    return out
+
+
+_PROBE_CACHE = None
+
+
+def probe_backends():
+    """Thăm dò Python thuần + lz4 + UnityPy (không raise; chỉ báo cáo).
+
+    Chỉ kiểm tra sự hiện diện bằng find_spec, KHÔNG import module (import
+    UnityPy trên iSH từng treo suite > 149s). Kết quả cache theo tiến trình;
+    trả về bản sao để bên gọi không làm bẩn cache.
+    """
+    global _PROBE_CACHE
+    if _PROBE_CACHE is None:
+        _PROBE_CACHE = _probe_backends_uncached()
+    return copy.deepcopy(_PROBE_CACHE)
+
+
+def _reset_probe_cache():
+    """Xóa cache probe (chỉ dùng trong test để mô phỏng môi trường khác)."""
+    global _PROBE_CACHE
+    _PROBE_CACHE = None
+
+
+class UnityBackend:
+    """Hybrid backend Unity (đặc tả 6.3): AUTO / LIBRARY / NATIVE.
+
+    - AUTO: UnityPy + lz4 binding khi có; fallback Python thuần có log lý do.
+    - LIBRARY: bắt buộc UnityPy + lz4 binding; thiếu -> E_UNSUPPORTED_ON_ISH.
+    - NATIVE: chỉ Python thuần, không gọi thư viện ngoài.
+    `decisions` ghi lại mọi lựa chọn/fallback (để in ra + ghi report).
+    """
+
+    MODES = ("AUTO", "LIBRARY", "NATIVE")
+    MATURITY = "M2"  # bằng chứng: fixture sandbox; REBUILD_ALL cần M4 nên bị khóa
+
+    def __init__(self, mode="AUTO", limits=None):
+        if mode not in self.MODES:
+            raise PB3Error("E_CONFIG_INVALID", "mode backend phải thuộc %s" % "|".join(self.MODES),
+                           where="UnityBackend")
+        self.mode = mode
+        self.limits = limits or Limits()
+        self.decisions = []
+        probe = probe_backends()
+        self.probe = probe
+        self.has_lz4_binding = probe["lz4"]["status"] == "ok"
+        self.has_unitypy = probe["unitypy"]["status"] == "ok"
+        if mode == "LIBRARY":
+            missing = [k for k in ("lz4", "unitypy") if probe[k]["status"] != "ok"]
+            if missing:
+                raise PB3Error(
+                    "E_UNSUPPORTED_ON_ISH",
+                    "chế độ LIBRARY cần %s nhưng %s"
+                    % (" + ".join(missing), "; ".join(probe[k]["detail"] for k in missing)),
+                    hint="Dùng AUTO để fallback Python thuần, hoặc cài gói còn thiếu.",
+                    where="UnityBackend")
+            self.decisions.append("LIBRARY: dùng UnityPy + lz4 binding (đã kiểm tra có mặt).")
+        elif mode == "NATIVE":
+            self.decisions.append("NATIVE: chỉ dùng Python thuần (không gọi UnityPy/lz4).")
+        else:
+            if self.has_lz4_binding:
+                self.decisions.append("AUTO: LZ4 dùng binding lz4 %s."
+                                      % probe["lz4"].get("version", "?"))
+            else:
+                self.decisions.append("AUTO: lz4 binding thiếu (%s); LZ4 block dùng "
+                                      "decoder/encoder thuần Python."
+                                      % probe["lz4"]["detail"])
+            if self.has_unitypy:
+                self.decisions.append("AUTO: UnityPy %s có mặt; dùng cho object phức tạp."
+                                      % probe["unitypy"].get("version", "?"))
+            else:
+                self.decisions.append("AUTO: UnityPy thiếu (%s); chỉ dùng parser thuần "
+                                      "cho object đã hiểu (TextAsset); object phức tạp "
+                                      "sẽ báo E_UNSUPPORTED_ON_ISH."
+                                      % probe["unitypy"]["detail"])
+
+    # ---- nén/giải nén ------------------------------------------------
+    def decompress(self, data, uncompressed_size, compression, where="unity"):
+        """Giải nén một khối theo mã compression (0 none, 1 lzma, 2 lz4, 3 lz4hc)."""
+        if compression == 0:
+            if len(data) != uncompressed_size:
+                raise PB3Error("E_CORRUPT", "khối không nén dài %d, khai %d"
+                               % (len(data), uncompressed_size), where=where)
+            return bytes(data)
+        if compression == 1:
+            out = decompress_lzma_unity(data, where=where)
+            if len(out) != uncompressed_size:
+                raise PB3Error("E_CORRUPT", "LZMA giải nén được %d/%d byte"
+                               % (len(out), uncompressed_size), where=where)
+            return out
+        if compression in (2, 3):
+            if self.mode != "NATIVE" and self.has_lz4_binding:
+                # Không dùng câu `import lz4...` (quy tắc iSH: import nặng
+                # không được xuất hiện trong mã, kể cả trong hàm) mà dùng
+                # importlib.import_module.
+                lz4_block = importlib.import_module("lz4.block")
+                try:
+                    out = lz4_block.decompress(bytes(data), uncompressed_size)
+                except Exception as exc:  # noqa: BLE001 - lỗi binding -> E_CORRUPT
+                    raise PB3Error("E_CORRUPT", "lz4.block lỗi: %s" % type(exc).__name__,
+                                   where=where)
+                return bytes(out)
+            return lz4pure.decompress_block(data, uncompressed_size, where=where)
+        raise PB3Error("E_UNSUPPORTED_FORMAT", "compression %d (%s) chưa hỗ trợ"
+                       % (compression, COMPRESSION_NAMES.get(compression, "?")), where=where)
+
+    def compress(self, data, compression, where="unity"):
+        """Nén một khối; LZ4/LZ4HC dùng binding khi có, không thì literal-only."""
+        if compression == 0:
+            return bytes(data)
+        if compression == 1:
+            return compress_lzma_unity(data)
+        if compression in (2, 3):
+            if self.mode != "NATIVE" and self.has_lz4_binding:
+                lz4_block = importlib.import_module("lz4.block")
+                mode = "high_compression" if compression == 3 else "default"
+                return lz4_block.compress(bytes(data), mode=mode, store_size=False)
+            self.decisions.append("LZ4 ghi bằng encoder thuần Python (literal-only, "
+                                  "không nén) vì binding lz4 không có/không dùng.")
+            return lz4pure.compress_block_literals(data)
+        raise PB3Error("E_UNSUPPORTED_FORMAT", "compression %d chưa hỗ trợ" % compression,
+                       where=where)
+
+    def decompress_frame(self, data, where="lz4-frame"):
+        """Giải nén LZ4 frame: binding khi có, không thì Python thuần."""
+        if self.mode != "NATIVE" and self.has_lz4_binding:
+            lz4_frame = importlib.import_module("lz4.frame")
+            try:
+                return lz4_frame.decompress(bytes(data))
+            except Exception as exc:  # noqa: BLE001
+                raise PB3Error("E_CORRUPT", "lz4.frame lỗi: %s" % type(exc).__name__,
+                               where=where)
+        return lz4pure.decompress_frame(data, where=where)
+
+    def unitypy_load(self, data, where="unitypy"):
+        """Mở dữ liệu bằng UnityPy (chỉ AUTO/LIBRARY và khi import được)."""
+        if self.mode == "NATIVE":
+            raise PB3Error("E_UNSUPPORTED_ON_ISH",
+                           "chế độ NATIVE không gọi UnityPy", where=where)
+        if not self.has_unitypy:
+            raise PB3Error("E_UNSUPPORTED_ON_ISH",
+                           "UnityPy không tìm thấy (%s); object phức tạp cần UnityPy"
+                           % self.probe["unitypy"]["detail"], where=where)
+        unitypy = importlib.import_module("UnityPy")
+        try:
+            return unitypy.load(bytes(data))
+        except Exception as exc:  # noqa: BLE001 - lỗi UnityPy -> E_CORRUPT
+            raise PB3Error("E_CORRUPT", "UnityPy không đọc được: %s" % type(exc).__name__,
+                           where=where)
+
+
+# ------------------------------------------------------------------ UnityFS
+@dataclass
+class BundleBlock:
+    uncompressed_size: int
+    compressed_size: int
+    flags: int
+
+    @property
+    def compression(self):
+        return self.flags & 0x3F
+
+
+@dataclass
+class BundleEntry:
+    name: str
+    offset: int
+    size: int
+    flags: int
+
+    @property
+    def is_serialized(self):
+        return bool(self.flags & DIR_FLAG_SERIALIZED)
+
+
+@dataclass
+class BundleFile:
+    signature: str
+    version: int
+    unity_version: str
+    unity_revision: str
+    total_size: int
+    data_flags: int
+    blocks: List[BundleBlock] = field(default_factory=list)
+    entries: List[BundleEntry] = field(default_factory=list)
+    payload: bytes = b""
+    source_hash: str = ""
+    where: str = field(default="bundle", repr=False, compare=False)
+
+    @property
+    def compression(self):
+        return self.data_flags & 0x3F
+
+    @property
+    def compression_name(self):
+        return COMPRESSION_NAMES.get(self.compression, "?")
+
+    @property
+    def blocks_info_at_end(self):
+        return bool(self.data_flags & FLAG_BLOCKS_INFO_AT_END)
+
+    @property
+    def uses_padding(self):
+        new_flags = _uses_new_flags(self.unity_revision)
+        return bool(self.data_flags & FLAG_PADDING_NEW) if new_flags else False
+
+    def entry_names(self):
+        return [e.name for e in self.entries]
+
+    def get_entry(self, name):
+        for e in self.entries:
+            if e.name == name:
+                if e.offset < 0 or e.size < 0 or e.offset + e.size > len(self.payload):
+                    raise PB3Error("E_CORRUPT", "entry %r vượt quá payload" % name,
+                                   where=self.where + "::" + name)
+                return self.payload[e.offset:e.offset + e.size]
+        raise PB3Error("E_INPUT_NOT_FOUND", "không có entry %r trong bundle" % name,
+                       where=self.where + "::" + name)
+
+
+def detect_bundle(data):
+    """Nhận diện UnityFS: trả dict (version, unity_version) hoặc None."""
+    if len(data) < 8 or bytes(data[:7]) != UNITYFS_MAGIC:
+        return None
+    try:
+        r = _Reader(data, ">", where="bundle")
+        r.read(8)  # signature + NUL
+        version = r.u32()
+        player = r.string_to_null()
+        engine = r.string_to_null()
+    except PB3Error:
+        return None
+    return {"signature": "UnityFS", "version": version,
+            "unity_version": player, "unity_revision": engine}
+
+
+def parse_bundle(data, backend=None, limits=None, where="bundle"):
+    """Đọc UnityFS v6/v7/v8: header, blocks info, giải nén từng block, kiểm size.
+
+    v8 cùng layout với v7 (UnityPy không kiểm version, chỉ căn 16 khi
+    version >= 7); cờ mã hóa/padding chọn theo unityRevision (#78)."""
+    data = bytes(data)
+    backend = backend or UnityBackend("AUTO", limits)
+    lim = limits or backend.limits
+    if len(data) < 8 or data[:7] != UNITYFS_MAGIC:
+        raise PB3Error("E_UNSUPPORTED_FORMAT", "không phải UnityFS (magic sai)",
+                       where=where)
+    r = _Reader(data, ">", where=where)
+    r.read(8)
+    version = r.u32()
+    if version not in SUPPORTED_BUNDLE_VERSIONS:
+        raise PB3Error("E_UNSUPPORTED_FORMAT",
+                       "UnityFS version %d chưa hỗ trợ (chỉ %s)"
+                       % (version, "/".join(map(str, SUPPORTED_BUNDLE_VERSIONS))),
+                       where=where)
+    unity_version = r.string_to_null()
+    unity_revision = r.string_to_null()
+    total_size, comp_info_size, uncomp_info_size, data_flags = r.unpack("QIII")
+    new_flags = _uses_new_flags(unity_revision)
+    encryption_flag = FLAG_ENCRYPTION_NEW if new_flags else FLAG_ENCRYPTION_OLD
+    if data_flags & encryption_flag:
+        raise PB3Error("E_ENCRYPTED", "bundle mã hóa (flag 0x%x)" % data_flags,
+                       where=where)
+    compression = data_flags & 0x3F
+    if compression == 4 or compression > 4:
+        raise PB3Error("E_UNSUPPORTED_FORMAT",
+                       "compression %d (%s) chưa hỗ trợ"
+                       % (compression, COMPRESSION_NAMES.get(compression, "?")),
+                       where=where)
+    if total_size != len(data):
+        # Chỉ cảnh báo: một số file ghi size 0 hoặc lệch; cấu trúc mới quyết định.
+        backend.decisions.append("cảnh báo: total size khai %d, file thật %d."
+                                 % (total_size, len(data)))
+    if version >= 7 or parse_unity_version(unity_revision) >= (2019, 4, 15):
+        r.align(16)
+    blocks_info_at_end = bool(data_flags & FLAG_BLOCKS_INFO_AT_END)
+    if comp_info_size > len(data) or uncomp_info_size > lim.max_entry_bytes:
+        raise PB3Error("E_CORRUPT", "kích thước blocks info không hợp lệ", where=where)
+    if blocks_info_at_end:
+        info_start = len(data) - comp_info_size
+        if info_start < r.pos:
+            raise PB3Error("E_CORRUPT", "blocks info ở cuối vượt ra ngoài file",
+                           where=where)
+        info_comp = data[info_start:]
+        block_data_start = r.pos
+        block_data_end = info_start
+    else:
+        info_comp = data[r.pos:r.pos + comp_info_size]
+        if len(info_comp) != comp_info_size:
+            raise PB3Error("E_CORRUPT", "blocks info cắt cụt", where=where)
+        block_data_start = r.pos + comp_info_size
+        block_data_end = len(data)
+    info_raw = backend.decompress(info_comp, uncomp_info_size, compression,
+                                  where=where + "::blocks-info")
+    ir = _Reader(info_raw, ">", where=where + "::blocks-info")
+    ir.read(16)  # hash dữ liệu (không kiểm ở đây)
+    block_count = ir.i32()
+    if block_count < 0 or block_count > 100000:
+        raise PB3Error("E_CORRUPT", "số block %d không hợp lệ" % block_count,
+                       where=where)
+    blocks = []
+    for _ in range(block_count):
+        unc, comp_size, flags = ir.unpack("IIH")
+        blocks.append(BundleBlock(unc, comp_size, flags))
+    entry_count = ir.i32()
+    if entry_count < 0:
+        raise PB3Error("E_CORRUPT", "số entry âm", where=where)
+    lim.check_entries(entry_count, where)
+    entries = []
+    for _ in range(entry_count):
+        offset, size, flags = ir.unpack("qqi")
+        name = ir.string_to_null()
+        entries.append(BundleEntry(name, offset, size, flags))
+    # giải nén block data (kiểm kích thước TRƯỚC khi giải nén: tránh
+    # zip-bomb — một block khai uncompressed_size khổng lồ không được giải
+    # nén trước khi kiểm; tổng cũng bị chặn bởi max_total_uncompressed).
+    lim.check_total(sum(b.uncompressed_size for b in blocks), where)
+    pos = block_data_start
+    if new_flags and (data_flags & FLAG_PADDING_NEW):
+        pos = _align_up(pos, 16)
+    payload = bytearray()
+    for i, block in enumerate(blocks):
+        lim.check_entry_size(block.uncompressed_size, "%s::block%d" % (where, i))
+        chunk = data[pos:pos + block.compressed_size]
+        if len(chunk) != block.compressed_size:
+            raise PB3Error("E_CORRUPT", "block %d cắt cụt" % i, where=where)
+        pos += block.compressed_size
+        payload += backend.decompress(chunk, block.uncompressed_size,
+                                      block.compression, where="%s::block%d" % (where, i))
+    if pos > block_data_end:
+        raise PB3Error("E_CORRUPT", "block data vượt quá vùng cho phép", where=where)
+    payload = bytes(payload)
+    for e in entries:
+        if e.offset < 0 or e.size < 0 or e.offset + e.size > len(payload):
+            raise PB3Error("E_CORRUPT", "entry %r vượt quá payload" % e.name,
+                           where=where)
+    return BundleFile(
+        signature="UnityFS", version=version, unity_version=unity_version,
+        unity_revision=unity_revision, total_size=total_size,
+        data_flags=data_flags, blocks=blocks, entries=entries,
+        payload=payload, source_hash=hashing.sha256_bytes(data), where=where)
+
+
+def build_bundle(entries, *, version=7, unity_version=UNITY_VERSION,
+                 unity_revision=None, compression="none", blocks_info_at_end=False,
+                 extra_data_flags=0, pad_block_data=False, backend=None,
+                 limits=None):
+    """Dựng UnityFS từ entries [(name, flags, data)].
+
+    Giữ đúng layout UnityPy ghi: header big-endian, căn 16 (v7+),
+    blocks info (hash 16 byte 0 + block + entry), block LZ4 chia 128 KiB,
+    LZMA/none một block. Dùng cho patcher (dựng lại bundle) và test.
+    `unity_revision` mặc định = `unity_version` (fixture cũ ghi cùng một
+    chuỗi cho cả hai); bundle Unity 6 thật ghi player "5.x.x" + revision
+    "6000.0.23f1". `extra_data_flags` OR thêm vào data_flag (để test cờ
+    mã hóa/padding); `pad_block_data` đặt cờ 0x200 và căn đầu vùng block
+    data tới 16 (chỉ có ý nghĩa với cờ mới)."""
+    backend = backend or UnityBackend("AUTO", limits)
+    if unity_revision is None:
+        unity_revision = unity_version
+    comp_code = COMPRESSION_CODES[compression]
+    data_flag = FLAG_COMBINED | comp_code | extra_data_flags
+    if blocks_info_at_end:
+        data_flag |= FLAG_BLOCKS_INFO_AT_END
+    if pad_block_data:
+        data_flag |= FLAG_PADDING_NEW
+    payload = b"".join(d for _, _, d in entries)
+    if compression == "lz4":
+        chunks = [payload[i:i + LZ4_CHUNK_SIZE]
+                  for i in range(0, len(payload), LZ4_CHUNK_SIZE)] or [b""]
+    else:
+        chunks = [payload]
+    blocks = []
+    block_data = io.BytesIO()
+    for chunk in chunks:
+        comp = backend.compress(chunk, comp_code)
+        if compression != "none" and len(comp) >= len(chunk):
+            block_data.write(chunk)
+            blocks.append(BundleBlock(len(chunk), len(chunk), 0))
+        else:
+            block_data.write(comp)
+            flag = 64 if compression == "none" else comp_code
+            blocks.append(BundleBlock(len(chunk), len(comp), flag))
+    block_bytes = block_data.getvalue()
+    info = _Writer(">")
+    info.write(b"\x00" * 16)
+    info.pack("i", len(blocks))
+    for b in blocks:
+        info.pack("IIH", b.uncompressed_size, b.compressed_size, b.flags)
+    info.pack("i", len(entries))
+    offset = 0
+    for name, flags, data in entries:
+        info.pack("qqi", offset, len(data), flags)
+        info.string_to_null(name)
+        offset += len(data)
+    info_raw = info.bytes()
+    info_comp = backend.compress(info_raw, comp_code)
+    out = _Writer(">")
+    out.write(b"UnityFS\x00")
+    out.pack("I", version)
+    out.string_to_null(unity_version)
+    out.string_to_null(unity_revision)
+    header_pos = out.tell()
+    out.pack("QIII", 0, len(info_comp), len(info_raw), data_flag)
+    if version >= 7 or parse_unity_version(unity_revision) >= (2019, 4, 15):
+        out.align16()
+    if blocks_info_at_end:
+        if pad_block_data:
+            out.align16()
+        out.write(block_bytes)
+        out.write(info_comp)
+    else:
+        out.write(info_comp)
+        if pad_block_data:
+            out.align16()
+        out.write(block_bytes)
+    total = out.tell()
+    raw = bytearray(out.bytes())
+    struct.pack_into(">Q", raw, header_pos, total)
+    return bytes(raw)
+
+
+# ------------------------------------------------------------ SerializedFile
+@dataclass
+class TypeTreeNode:
+    type: str
+    name: str
+    byte_size: int
+    index: int
+    level: int
+    meta_flag: int
+    children: List["TypeTreeNode"] = field(default_factory=list)
+
+
+@dataclass
+class SerializedType:
+    class_id: int
+    script_type_index: int = -1
+    script_id: Optional[bytes] = None
+    old_type_hash: bytes = b"\x00" * 16
+    is_stripped: bool = False
+    node: Optional[TypeTreeNode] = None
+    raw_typetree: bytes = b""  # blob gốc (ghi lại nguyên vẹn khi rebuild)
+    type_dependencies: Optional[List[int]] = None
+    ref_names: Optional[Tuple[str, str, str]] = None
+    # v23+: content hash của type tree (XXH3, 16 byte); ghi lại nguyên vẹn.
+    type_tree_content_hash: bytes = b"\x00" * 16
+
+
+@dataclass
+class SerializedObject:
+    path_id: int
+    byte_start: int  # tương đối so với data_offset
+    byte_size: int
+    type_id: int
+    class_id: int
+    script_type_index: Optional[int] = None
+    is_stripped: Optional[bool] = None
+
+
+@dataclass
+class SerializedFile:
+    version: int  # header version (15-23)
+    unity_version: str = ""
+    target_platform: int = 0
+    enable_type_tree: bool = False
+    types: List[SerializedType] = field(default_factory=list)
+    objects: List[SerializedObject] = field(default_factory=list)
+    script_types: List[Tuple[int, int]] = field(default_factory=list)
+    externals: List[Dict] = field(default_factory=list)
+    ref_types: List[SerializedType] = field(default_factory=list)
+    user_information: str = ""
+    data_offset: int = 0
+    metadata_size: int = 0
+    file_size: int = 0
+    endian: str = "<"
+    source_hash: str = ""
+    raw: bytes = b""
+    # vị trí vùng object table trong file (để rebuild giữ nguyên metadata còn lại)
+    object_table_offset: int = 0
+    object_table_end: int = 0
+    # cache text_assets() (lazy; SerializedFile không đổi sau khi parse)
+    _text_cache: Optional[List] = field(default=None, repr=False, compare=False)
+    _by_path_id: Optional[dict] = field(default=None, repr=False, compare=False)
+    where: str = field(default="assets", repr=False, compare=False)
+
+    def get_object(self, path_id):
+        # Chỉ mục lười theo path_id: tra cứu O(1) thay vì quét tuyến tính
+        # cả bảng object mỗi lần (plan một file có hàng nghìn object và
+        # hàng trăm TextAsset thì quét tuyến tính chiếm phần lớn thời gian).
+        if self._by_path_id is None:
+            self._by_path_id = {o.path_id: o for o in self.objects}
+        try:
+            return self._by_path_id[path_id]
+        except KeyError:
+            raise PB3Error("E_INPUT_NOT_FOUND", "không có object path_id=%d" % path_id,
+                           where=self.where + "::%d" % path_id)
+
+    def object_bytes(self, path_id):
+        o = self.get_object(path_id)
+        start = self.data_offset + o.byte_start
+        end = start + o.byte_size
+        if end > len(self.raw):
+            raise PB3Error("E_CORRUPT", "object %d vượt quá file" % path_id,
+                           where=self.where + "::%d" % path_id)
+        return self.raw[start:end]
+
+    def text_assets(self, warnings=None):
+        """[(path_id, name, script)] cho mọi object TextAsset (class 49).
+
+        Kết quả cache theo instance (SerializedFile không đổi sau khi parse).
+        Object TextAsset hỏng (không đọc được) bị bỏ qua kèm ghi chú vào
+        `warnings` (nếu có) thay vì làm hỏng cả file; tìm đúng object đích
+        bị hỏng thì xem `find_text_asset` (raise kèm path_id)."""
+        if self._text_cache is not None:
+            return list(self._text_cache)
+        out = []
+        notes = []
+        for o in self.objects:
+            if o.class_id == 49:
+                try:
+                    name, script = read_text_asset_bytes(
+                        self.object_bytes(o.path_id), self.endian)
+                except PB3Error as exc:
+                    notes.append("bỏ qua TextAsset path_id=%d (%s)"
+                                 % (o.path_id, exc.code))
+                    continue
+                out.append((o.path_id, name, script))
+        if warnings is not None:
+            warnings.extend(notes)
+        self._text_cache = out
+        return list(out)
+
+    def find_text_asset(self, name=None, path_id=None):
+        if path_id is not None:
+            # tìm đúng object đích: hỏng thì raise kèm path_id (không bỏ qua).
+            for o in self.objects:
+                if o.class_id == 49 and o.path_id == path_id:
+                    try:
+                        n, script = read_text_asset_bytes(
+                            self.object_bytes(o.path_id), self.endian)
+                    except PB3Error as exc:
+                        raise PB3Error("E_CORRUPT",
+                                       "TextAsset path_id=%d đọc lỗi: %s"
+                                       % (path_id, exc.code),
+                                       where="path_id=%d" % path_id)
+                    return o.path_id, n, script
+            raise PB3Error("E_INPUT_NOT_FOUND", "không có TextAsset path_id=%d"
+                           % path_id, where=self.where + "::%d" % path_id)
+        for pid, n, script in self.text_assets():
+            if name is not None and n == name:
+                return pid, n, script
+        raise PB3Error("E_INPUT_NOT_FOUND", "không có TextAsset %r" % name,
+                       where=self.where + "::" + name)
+
+
+def read_text_asset_bytes(data, endian="<"):
+    """TextAsset = aligned_string(m_Name) + aligned_string(m_Script)."""
+    r = _Reader(data, endian, where="TextAsset")
+    name = r.aligned_string()
+    script = r.aligned_string()
+    return name, script
+
+
+def read_text_asset_head(data, endian="<"):
+    """Chỉ đọc tên + độ dài script (số ký tự) của TextAsset, không giữ
+    lại chuỗi script sau khi đếm xong.
+
+    Dùng cho lập plan: plan chỉ cần tên (đoán dạng file) và độ dài script
+    (>1000 thì đoán "text (chuỗi dài)"), nên giữ cả script 5MB trong bộ
+    nhớ chỉ để lấy 2 số đó là phí. Kết quả y hệt read_text_asset_bytes:
+    độ dài là số KÝ TỰ (script decode UTF-8), script ASCII thì đếm bằng
+    số byte không cần decode, script không phải UTF-8 hợp lệ thì raise
+    PB3Error như bản đọc đủ, đệm căn 4 cuối script cũng kiểm tra y hệt
+    (đọc tới mà thiếu đệm thì raise, không trả kết quả nửa vời).
+
+    Đọc trực tiếp bằng struct.unpack_from trên bytes (không dựng _Reader):
+    cùng thứ tự kiểm tra và cùng thông điệp lỗi như aligned_string/i32/
+    align (kể cả lỗi "đọc vượt quá dữ liệu (N byte tại P)"), chỉ rẻ hơn
+    vì khỏi tạo đối tượng + gọi hàm từng trường."""
+    b = bytes(data)
+    n = len(b)
+    where = "TextAsset"
+    if n < 4:
+        raise PB3Error("E_CORRUPT", "đọc vượt quá dữ liệu (4 byte tại 0)",
+                       where=where)
+    (size,) = struct.unpack_from(endian + "i", b, 0)
+    if size < 0 or size > n - 4:
+        raise PB3Error("E_CORRUPT", "chuỗi dài %d byte không hợp lệ" % size,
+                       where=where)
+    pos = 4 + size
+    pad = (-pos) % 4
+    if pos + pad > n:
+        raise PB3Error("E_CORRUPT", "đọc vượt quá dữ liệu (%d byte tại %d)"
+                       % (pad, pos), where=where)
+    pos += pad
+    try:
+        name = b[4:4 + size].decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise error_from_exception(exc, where=where)
+    if pos + 4 > n:
+        raise PB3Error("E_CORRUPT", "đọc vượt quá dữ liệu (4 byte tại %d)" % pos,
+                       where=where)
+    (size,) = struct.unpack_from(endian + "i", b, pos)
+    pos += 4
+    if size < 0 or size > n - pos:
+        raise PB3Error("E_CORRUPT", "chuỗi dài %d byte không hợp lệ" % size,
+                       where=where)
+    raw = b[pos:pos + size]
+    pos += size
+    pad = (-pos) % 4
+    if pos + pad > n:
+        raise PB3Error("E_CORRUPT", "đọc vượt quá dữ liệu (%d byte tại %d)"
+                       % (pad, pos), where=where)
+    if raw.isascii():
+        return name, size
+    try:
+        return name, len(raw.decode("utf-8"))
+    except UnicodeDecodeError as exc:
+        raise error_from_exception(exc, where=where)
+
+
+def _parse_typetree_blob(reader, version, where):
+    """Blob type tree (v>=12): node_count, stringbuffer, node 24/32 byte.
+
+    v23+ (UnityPy 1.25.4 TypeTreeNode.parse_blob): blob mở đầu bằng magic
+    "mhtt" + format version (i32, phải bằng version) trước node_count."""
+    start = reader.pos
+    if version >= 23:
+        magic = reader.read(4)
+        if magic != b"mhtt":
+            raise PB3Error("E_CORRUPT", "type tree blob v23 thiếu magic 'mhtt'",
+                           where=where)
+        fmt_version = reader.i32()
+        if fmt_version != version:
+            raise PB3Error("E_CORRUPT",
+                           "type tree blob v23: format version %d != %d"
+                           % (fmt_version, version), where=where)
+    node_count = reader.i32()
+    buf_size = reader.i32()
+    if node_count < 0 or node_count > 100000 or buf_size < 0:
+        raise PB3Error("E_CORRUPT", "type tree blob: số node/buffer lạ", where=where)
+    fmt = "hBBIIiii" + ("Q" if version >= 19 else "")
+    node_size = struct.calcsize("<" + fmt)
+    raw_nodes = reader.read(node_size * node_count)
+    strbuf = reader.read(buf_size)
+    raw_blob = reader._b[start:reader.pos]
+    nodes = []
+    for values in struct.iter_unpack("<" + fmt, raw_nodes):
+        ver, level, tflags, type_off, name_off, bsize, index, meta = values[:8]
+        nodes.append((ver, level, tflags, type_off, name_off, bsize, index, meta))
+
+    def _str(off):
+        if off & 0x80000000:
+            return "common_%d" % (off & 0x7FFFFFFF)
+        end = strbuf.find(b"\x00", off)
+        if end < 0:
+            raise PB3Error("E_CORRUPT", "type tree blob: chuỗi không kết thúc",
+                           where=where)
+        return strbuf[off:end].decode("utf-8", "replace")
+
+    fake = TypeTreeNode("", "", 0, 0, -1, 0, [])
+    stack = [fake]
+    parent = fake
+    prev = fake
+    for ver, level, tflags, type_off, name_off, bsize, index, meta in nodes:
+        node = TypeTreeNode(_str(type_off), _str(name_off), bsize, index,
+                            level, meta, [])
+        if level > prev.level:
+            stack.append(parent)
+            parent = prev
+        elif level < prev.level:
+            while level <= parent.level:
+                if len(stack) <= 1:
+                    raise PB3Error("E_CORRUPT",
+                                   "type tree blob: cấp node thụt lùi không hợp lệ "
+                                   "(level %d)" % level, where=where)
+                parent = stack.pop()
+        parent.children.append(node)
+        prev = node
+    root = fake.children[0] if fake.children else None
+    return root, raw_blob
+
+
+def _parse_serialized_type(reader, version, enable_type_tree, is_ref_type, where):
+    class_id = reader.i32()
+    typ = SerializedType(class_id=class_id)
+    if version >= 16:
+        typ.is_stripped = reader.boolean()
+    if version >= 17:
+        typ.script_type_index = reader.i16()
+    if version >= 13:
+        if ((is_ref_type and typ.script_type_index >= 0)
+                or (version < 16 and class_id < 0)
+                or (version >= 16 and class_id == 114)):
+            typ.script_id = reader.read(16)
+        typ.old_type_hash = reader.read(16)
+    if enable_type_tree:
+        if version >= 23:
+            # UnityPy 1.25.4 (SerializedType.read): v23+ có content hash
+            # (XXH3, 16 byte) + kích thước blob đã serialize; size 0 nghĩa
+            # là type này không có type tree (node = None).
+            typ.type_tree_content_hash = reader.read(16)
+            serialized_size = reader.i32()
+            if serialized_size < 0 or serialized_size > 10000000:
+                raise PB3Error("E_CORRUPT",
+                               "type tree v23: serialized size %d lạ"
+                               % serialized_size, where=where)
+            if serialized_size:
+                blob_start = reader.pos
+                typ.node, typ.raw_typetree = _parse_typetree_blob(reader, version,
+                                                                  where)
+                if reader.pos - blob_start != serialized_size:
+                    raise PB3Error("E_CORRUPT",
+                                   "type tree v23: blob dài %d, khai %d"
+                                   % (reader.pos - blob_start, serialized_size),
+                                   where=where)
+            else:
+                typ.node = None
+                typ.raw_typetree = b""
+        elif version >= 12 or version == 10:
+            typ.node, typ.raw_typetree = _parse_typetree_blob(reader, version, where)
+        else:
+            raise PB3Error("E_UNSUPPORTED_FORMAT",
+                           "type tree kiểu cũ (v<12) chưa hỗ trợ", where=where)
+        if version >= 21:
+            if is_ref_type:
+                cls = reader.string_to_null()
+                ns = reader.string_to_null()
+                asm = reader.string_to_null()
+                typ.ref_names = (cls, ns, asm)
+            else:
+                count = reader.i32()
+                if count < 0 or count > 100000:
+                    raise PB3Error("E_CORRUPT", "type_dependencies lạ", where=where)
+                typ.type_dependencies = [reader.i32() for _ in range(count)]
+    return typ
+
+
+def _parse_object_table_slow(r, sf, version, object_count, data, data_offset, where):
+    """Vòng lặp đọc bảng object gốc (dùng _Reader từng trường).
+
+    Dùng cho v11-16 (entry có script_idx i16 + is_stripped u8 rồi đệm tới
+    bội 4; entry cuối không có đệm đuôi nên vùng bảng không thẳng hàng)
+    và cho bảng rỗng (không align khi không có entry nào)."""
+    seen = set()
+    for _ in range(object_count):
+        r.align(4)
+        path_id = r.i64()
+        byte_start = r.u64() if version >= 22 else r.u32()
+        byte_size = r.u32()
+        type_id = r.i32()
+        script_idx = None
+        is_stripped = None
+        if 11 <= version < 17:
+            script_idx = r.i16()
+        if version in (15, 16):
+            is_stripped = r.u8()
+        if type_id < 0 or type_id >= len(sf.types):
+            raise PB3Error("E_CORRUPT", "object %d: type_id %d lạ"
+                           % (path_id, type_id), where=where)
+        if path_id in seen:
+            raise PB3Error("E_CORRUPT", "object path_id %d trùng" % path_id,
+                           where=where)
+        seen.add(path_id)
+        if byte_start + byte_size > len(data) - data_offset:
+            raise PB3Error("E_CORRUPT", "object %d vượt quá data section" % path_id,
+                           where=where)
+        sf.objects.append(SerializedObject(
+            path_id=path_id, byte_start=byte_start, byte_size=byte_size,
+            type_id=type_id, class_id=sf.types[type_id].class_id,
+            script_type_index=script_idx, is_stripped=is_stripped))
+
+
+def _parse_object_table_fast(r, sf, version, object_count, data, data_offset, where):
+    """Đọc bảng object bằng struct.iter_unpack (C) thay vì gọi _Reader
+    ~8 lần mỗi entry.
+
+    Chỉ dùng khi kích thước entry == stride (không có đệm trong entry):
+    v<11 và v17-21 (20 byte: path_id i64 + byte_start u32 + byte_size u32
+    + type_id i32), v>=22 (24 byte: byte_start u64). v11-16 có script_idx
+    i16 (+ is_stripped u8 ở v15-16) rồi đệm tới bội 4 — entry cuối không
+    có đệm đuôi nên vùng bảng không phải bội của stride, giữ vòng lặp
+    _Reader cũ cho đúng từng byte. Kiểm tra (type_id lạ, path_id trùng,
+    vượt data section) y hệt vòng lặp cũ, cùng thông điệp lỗi; r.pos cuối
+    cũng y hệt (bắt đầu sau align(4) đầu bảng, kết thúc đúng cuối entry)."""
+    r.align(4)
+    fmt = (r.endian + "qQII") if version >= 22 else (r.endian + "qIII")
+    stride = struct.calcsize(fmt)
+    r._need(object_count * stride)
+    start = r.pos
+    end = start + object_count * stride
+    seen = set()
+    types = sf.types
+    ntypes = len(types)
+    limit = len(data) - data_offset
+    unpack = struct.Struct(fmt).iter_unpack
+    for path_id, byte_start, byte_size, type_id in unpack(data[start:end]):
+        if type_id < 0 or type_id >= ntypes:
+            raise PB3Error("E_CORRUPT", "object %d: type_id %d lạ"
+                           % (path_id, type_id), where=where)
+        if path_id in seen:
+            raise PB3Error("E_CORRUPT", "object path_id %d trùng" % path_id,
+                           where=where)
+        seen.add(path_id)
+        if byte_start + byte_size > limit:
+            raise PB3Error("E_CORRUPT", "object %d vượt quá data section" % path_id,
+                           where=where)
+        sf.objects.append(SerializedObject(
+            path_id=path_id, byte_start=byte_start, byte_size=byte_size,
+            type_id=type_id, class_id=types[type_id].class_id,
+            script_type_index=None, is_stripped=None))
+    r.pos = end
+
+
+def parse_serialized(data, limits=None, where="assets"):
+    """Đọc SerializedFile v15-23: header, metadata, object table.
+
+    Header 4 số đầu LUÔN big-endian; phần sau theo cờ endian."""
+    data = bytes(data)
+    lim = limits or Limits()
+    if len(data) < 20:
+        raise PB3Error("E_CORRUPT", "SerializedFile quá ngắn", where=where)
+    hr = _Reader(data, ">", where=where)
+    metadata_size, file_size, version, data_offset = hr.unpack("IIII")
+    if version not in SUPPORTED_SF_VERSIONS:
+        raise PB3Error("E_UNSUPPORTED_FORMAT",
+                       "SerializedFile version %d chưa hỗ trợ (chỉ %s)"
+                       % (version, "/".join(map(str, SUPPORTED_SF_VERSIONS))),
+                       where=where)
+    endian_flag = data[16] != 0
+    endian = ">" if endian_flag else "<"
+    if version >= 22:
+        # header mở rộng: CẢ 48 byte đầu đều big-endian (theo UnityPy:
+        # SerializedFile.save ghi bằng EndianBinaryWriter() mặc định ">";
+        # chỉ metadata + data mới theo cờ endian). Đọc bằng endian của
+        # file là BUG (ghi chú #80): metadata_size/file_size/data_offset
+        # bị đảo byte, UnityPy từ chối file v22/v23 do PB3 ghi.
+        xr = _Reader(data[20:], ">", where=where)
+        metadata_size = xr.u32()
+        file_size = xr.u64()
+        data_offset = xr.u64()
+        xr.read(8)  # unknown
+    if data_offset < 20 or data_offset > len(data):
+        raise PB3Error("E_CORRUPT", "data_offset %d không hợp lệ" % data_offset,
+                       where=where)
+    if file_size != len(data):
+        # Chỉ cảnh báo: một số file ghi file_size 0; cấu trúc mới quyết định.
+        pass
+    r = _Reader(data, endian, where=where)
+    r.pos = 20 if version < 22 else 48
+    sf = SerializedFile(version=version, endian=endian, raw=data,
+                        data_offset=data_offset, metadata_size=metadata_size,
+                        file_size=file_size,
+                        source_hash=hashing.sha256_bytes(data), where=where)
+    if version >= 7:
+        sf.unity_version = r.string_to_null()
+    if version >= 8:
+        sf.target_platform = r.i32()
+    if version >= 13:
+        sf.enable_type_tree = r.boolean()
+    type_count = r.i32()
+    if type_count < 0 or type_count > 100000:
+        raise PB3Error("E_CORRUPT", "số type %d không hợp lệ" % type_count, where=where)
+    for _ in range(type_count):
+        sf.types.append(_parse_serialized_type(r, version, sf.enable_type_tree,
+                                               False, where))
+    object_count = r.i32()
+    if object_count < 0:
+        raise PB3Error("E_CORRUPT", "số object âm", where=where)
+    lim.check_entries(object_count, where)
+    sf.object_table_offset = r.pos
+    if object_count and (version < 11 or 17 <= version):
+        # v<11, v17-21, v>=22: entry không đệm -> đọc hàng loạt bằng C.
+        _parse_object_table_fast(r, sf, version, object_count, data,
+                                 data_offset, where)
+    else:
+        _parse_object_table_slow(r, sf, version, object_count, data,
+                                 data_offset, where)
+    sf.object_table_end = r.pos
+    if version >= 11:
+        script_count = r.i32()
+        if script_count < 0 or script_count > 100000:
+            raise PB3Error("E_CORRUPT", "số script type lạ", where=where)
+        for _ in range(script_count):
+            idx = r.i32()
+            if version < 14:
+                local = r.i32()
+            else:
+                r.align(4)
+                local = r.i64()
+            sf.script_types.append((idx, local))
+    ext_count = r.i32()
+    if ext_count < 0 or ext_count > 100000:
+        raise PB3Error("E_CORRUPT", "số external lạ", where=where)
+    for _ in range(ext_count):
+        ext = {}
+        if version >= 6:
+            ext["temp_empty"] = r.string_to_null()
+        if version >= 5:
+            ext["guid"] = r.read(16)
+            ext["type"] = r.i32()
+        ext["path"] = r.string_to_null()
+        sf.externals.append(ext)
+    if version >= 20:
+        ref_count = r.i32()
+        if ref_count < 0 or ref_count > 100000:
+            raise PB3Error("E_CORRUPT", "số ref type lạ", where=where)
+        for _ in range(ref_count):
+            sf.ref_types.append(_parse_serialized_type(r, version,
+                                                       sf.enable_type_tree, True,
+                                                       where))
+    if version >= 5:
+        sf.user_information = r.string_to_null()
+    return sf
+
+
+def build_serialized(sf, object_data, *, version=None, unity_version=None):
+    """Dựng lại toàn bộ SerializedFile từ model đã parse + dữ liệu object mới.
+
+    object_data: {path_id: bytes}. Metadata ghi lại từ model (type tree blob
+    giữ nguyên byte gốc). Dùng cho REBUILD_ALL; REBUILD_SECTION dùng đường
+    phẫu thuật nhanh hơn (giữ nguyên metadata gốc ngoài object table)."""
+    version = version if version is not None else sf.version
+    unity_version = unity_version if unity_version is not None else sf.unity_version
+    meta = _Writer(sf.endian)
+    if version >= 7:
+        meta.string_to_null(unity_version)
+    if version >= 8:
+        meta.pack("i", sf.target_platform)
+    if version >= 13:
+        meta.write(b"\x01" if sf.enable_type_tree else b"\x00")
+    meta.pack("i", len(sf.types))
+    for typ in sf.types:
+        _write_serialized_type(meta, sf, typ, False, version)
+    meta.pack("i", len(sf.objects))
+    data = _Writer(sf.endian)
+    entries = []
+    for o in sf.objects:   # giữ NGUYÊN thứ tự object gốc (không sort theo path_id)
+        payload = object_data.get(o.path_id)
+        if payload is None:
+            payload = sf.object_bytes(o.path_id)
+        data.align(8)
+        start = data.tell()
+        data.write(payload)
+        entries.append((o, start, len(payload)))
+    # object table cần byte_start -> ghi sau khi dựng data (ghi đè vùng đã chừa)
+    meta_bytes_first = meta.bytes()
+    meta2 = _Writer(sf.endian)
+    meta2.write(meta_bytes_first)
+    # object table: vị trí hiện tại của meta2 = sau types
+    for o, start, size in entries:
+        meta2.align(4)
+        meta2.pack("q", o.path_id)
+        if version >= 22:
+            meta2.pack("Q", start)
+        else:
+            meta2.pack("I", start)
+        meta2.pack("I", size)
+        meta2.pack("i", o.type_id)
+        if 11 <= version < 17:
+            meta2.pack("h", o.script_type_index if o.script_type_index is not None else -1)
+        if version in (15, 16):
+            meta2.write(bytes([o.is_stripped if o.is_stripped is not None else 0]))
+    if version >= 11:
+        meta2.pack("i", len(sf.script_types))
+        for idx, local in sf.script_types:
+            meta2.pack("i", idx)
+            if version < 14:
+                meta2.pack("i", local)
+            else:
+                meta2.align(4)
+                meta2.pack("q", local)
+    meta2.pack("i", len(sf.externals))
+    for ext in sf.externals:
+        if version >= 6:
+            meta2.string_to_null(ext.get("temp_empty", ""))
+        if version >= 5:
+            meta2.write(ext.get("guid", b"\x00" * 16))
+            meta2.pack("i", ext.get("type", 0))
+        meta2.string_to_null(ext.get("path", ""))
+    if version >= 20:
+        meta2.pack("i", len(sf.ref_types))
+        for typ in sf.ref_types:
+            _write_serialized_type(meta2, sf, typ, True, version)
+    if version >= 5:
+        meta2.string_to_null(sf.user_information)
+    meta_bytes = meta2.bytes()
+    data_bytes = data.bytes()
+    header_size = 20 if version < 22 else 48
+    data_offset = _align_up(header_size + len(meta_bytes), 16)
+    file_size = data_offset + len(data_bytes)
+    out = _Writer(sf.endian)
+    if version < 22:
+        out.pack_be("IIII", len(meta_bytes), file_size, version, data_offset)
+    else:
+        out.pack_be("IIII", 0, 0, version, 0)
+    out.write(b"\x01" if sf.endian == ">" else b"\x00")
+    out.write(b"\x00" * 3)
+    if version >= 22:
+        # header mở rộng big-endian (như 4 số đầu), không theo endian file.
+        out.pack_be("I", len(meta_bytes))
+        out.pack_be("Q", file_size)
+        out.pack_be("Q", data_offset)
+        out.pack_be("Q", 0)
+    out.write(meta_bytes)
+    out.align16()
+    out.write(data_bytes)
+    return out.bytes()
+
+
+def _write_serialized_type(writer, sf, typ, is_ref_type, version):
+    writer.pack("i", typ.class_id)
+    if version >= 16:
+        writer.write(b"\x01" if typ.is_stripped else b"\x00")
+    if version >= 17:
+        writer.pack("h", typ.script_type_index)
+    if version >= 13:
+        if ((is_ref_type and typ.script_type_index >= 0)
+                or (version < 16 and typ.class_id < 0)
+                or (version >= 16 and typ.class_id == 114)):
+            writer.write(typ.script_id if typ.script_id is not None else b"\x00" * 16)
+        writer.write(typ.old_type_hash)
+    if sf.enable_type_tree:
+        if version >= 23:
+            # UnityPy 1.25.4 (SerializedType.write): hash + độ dài blob + blob.
+            writer.write(typ.type_tree_content_hash or b"\x00" * 16)
+            writer.pack("i", len(typ.raw_typetree))
+        writer.write(typ.raw_typetree)
+        if version >= 21:
+            if is_ref_type:
+                cls, ns, asm = typ.ref_names or ("", "", "")
+                writer.string_to_null(cls)
+                writer.string_to_null(ns)
+                writer.string_to_null(asm)
+            else:
+                deps = typ.type_dependencies or []
+                writer.pack("i", len(deps))
+                for d in deps:
+                    writer.pack("i", d)
+
+
+# ------------------------------------------------------------ engine detector
+@dataclass
+class EngineVerdict:
+    engine: str  # "unity" | "unknown"
+    level: str   # "CHẮC CHẮN" | "CÓ KHẢ NĂNG" | "CHƯA ĐỦ BẰNG CHỨNG"
+    reasons: List[str] = field(default_factory=list)
+
+
+_UNITY_STRONG = (
+    "globalgamemanagers", "resources.assets", ".unity3d", "Data/Managed",
+    "UnityFramework", "libmono", "il2cpp",
+)
+_UNITY_WEAK = ("sharedassets", "StreamingAssets", ".assets", ".resS", "Data/level")
+
+
+def detect_engine(names):
+    """Nhận diện engine từ danh sách tên entry (đặc tả 6.2; chỉ gợi ý)."""
+    names = [str(n) for n in names]
+    strong, weak, reasons = [], [], []
+    for name in names:
+        low = name.lower()
+        for sig in _UNITY_STRONG:
+            if sig.lower() in low and sig not in strong:
+                strong.append(sig)
+                reasons.append("có %r (%s)" % (sig, name))
+        for sig in _UNITY_WEAK:
+            if sig.lower() in low and sig not in weak:
+                weak.append(sig)
+    if len(strong) >= 2:
+        level = "CHẮC CHẮN"
+    elif len(strong) == 1 or len(weak) >= 2:
+        level = "CÓ KHẢ NĂNG"
+    else:
+        level = "CHƯA ĐỦ BẰNG CHỨNG"
+    engine = "unity" if level != "CHƯA ĐỦ BẰNG CHỨNG" else "unknown"
+    if engine == "unknown":
+        reasons.append("không thấy dấu hiệu Unity (cần globalgamemanagers, "
+                       "resources.assets, *.unity3d, Data/Managed...)")
+    return EngineVerdict(engine=engine, level=level, reasons=reasons)
+
+
+# ------------------------------------------------------------------ planner
+@dataclass
+class PlanRow:
+    container: str   # file/container chứa
+    entry: str       # entry trong container ("" nếu chính file đó)
+    kind: str        # "bundle" | "assets" | "file"
+    object_type: str
+    path_id: Optional[int]
+    offset: int
+    size: int
+    guess: str       # "text" | "json" | "table" | "binary" | ...
+    name: str = ""
+
+
+@dataclass
+class UnityPlan:
+    verdict: EngineVerdict
+    rows: List[PlanRow] = field(default_factory=list)
+    warnings: List[str] = field(default_factory=list)
+    decisions: List[str] = field(default_factory=list)
+    partial: bool = False  # True khi có entry lỗi/bỏ qua (E_PARSE_PARTIAL)
+
+
+def _guess_for(entry_name, object_type, script_len=0):
+    low = entry_name.lower()
+    if object_type == "TextAsset":
+        if low.endswith(".json"):
+            return "json"
+        if low.endswith((".csv", ".tsv")):
+            return "table"
+        if script_len > 1000:
+            return "text (chuỗi dài)"
+        return "text"
+    if low.endswith(".json"):
+        return "json"
+    if low.endswith((".csv", ".tsv")):
+        return "table"
+    if low.endswith((".txt", ".strings", ".xml", ".plist")):
+        return "text"
+    return "binary"
+
+
+def _dedupe(seq):
+    """Giữ thứ tự, mỗi giá trị một lần (quyết định backend lặp lại gây nhiễu)."""
+    return list(dict.fromkeys(seq))
+
+
+def _level_rank(level):
+    return {"CHƯA ĐỦ BẰNG CHỨNG": 0, "CÓ KHẢ NĂNG": 1, "CHẮC CHẮN": 2}.get(level, 0)
+
+
+# Magic của định dạng chắc chắn KHÔNG phải Unity (ảnh/nhạc/font): prefix-probe
+# 64 byte mà khớp thì plan bỏ qua luôn, không đọc cả entry (X12).
+def _is_plain_media(prefix: bytes) -> bool:
+    """64 byte đầu có phải ảnh/nhạc/font chắc chắn không phải Unity không.
+    'RIFF' cần kiểm tra thêm WEBP/WAVE ở offset 8; MP4 ('ftyp' ở offset 4)
+    và MP3 frame-sync cũng tính. SerializedFile/UnityFS/TAR/ZIP không có
+    magic này nên không bao giờ bị bỏ qua nhầm."""
+    if prefix.startswith((b"\x89PNG\r\n\x1a\n", b"\xff\xd8\xff", b"GIF87a",
+                          b"GIF89a", b"BM", b"\x00\x00\x01\x00", b"OggS",
+                          b"ID3", b"\x00\x01\x00\x00", b"OTTO")):
+        return True
+    if prefix.startswith(b"RIFF") and prefix[8:12] in (b"WEBP", b"WAVE"):
+        return True
+    if len(prefix) >= 8 and prefix[4:8] == b"ftyp":
+        return True
+    if len(prefix) >= 2 and prefix[0] == 0xFF and (prefix[1] & 0xE0) == 0xE0:
+        return True
+    return False
+
+
+def plan_bytes(data, *, name="<bytes>", backend=None, limits=None,
+               max_entry_bytes=None, on_entry=None):
+    """Lập bản đồ dữ liệu cho bytes (container/bundle/assets/file).
+    on_entry(done, total, name): callback sau mỗi entry (X5, cho thanh tiến độ;
+    None = không báo). max_entry_bytes=None -> limits.plan_max_entry_bytes (X12)."""
+    data = bytes(data)
+    backend = backend or UnityBackend("AUTO", limits)
+    lim = limits or backend.limits
+    plan_max = max_entry_bytes if max_entry_bytes is not None else lim.plan_max_entry_bytes
+    rows, warnings = [], []
+    verdict = EngineVerdict("unknown", "CHƯA ĐỦ BẰNG CHỨNG", [])
+    det = detect_bundle(data)
+    if det is not None:
+        # File bundle ĐƠN LẺ: hard-abort giữ nguyên (v9 -> E_UNSUPPORTED_FORMAT,
+        # decision #81); chỉ container mới bền bỉ từng entry.
+        bundle = parse_bundle(data, backend, lim, where=name)
+        verdict = EngineVerdict("unity", "CHẮC CHẮN",
+                                ["UnityFS v%d (%s)" % (bundle.version,
+                                                       bundle.unity_revision
+                                                       or bundle.unity_version)])
+        partial = False
+        entries = list(bundle.entries)
+        for i, e in enumerate(entries, 1):
+            rows.append(PlanRow(name, e.name, "bundle", "bundle-entry", None,
+                                e.offset, e.size,
+                                "assets" if e.name.lower().endswith((".assets", ".ress"))
+                                else "binary", e.name))
+            entry_bytes = bundle.get_entry(e.name)
+            if e.is_serialized or e.name.lower().endswith(".assets"):
+                if not _plan_assets_bytes(entry_bytes, name, e.name, backend, lim,
+                                          rows, warnings):
+                    partial = True
+            if on_entry is not None:
+                on_entry(i, len(entries), e.name)
+        return UnityPlan(verdict, rows, warnings, _dedupe(backend.decisions),
+                         partial=partial)
+    # thử container (ZIP/IPA/TAR...) qua Claude 04
+    from sdk.containers import open_vfs
+    try:
+        vfs = open_vfs(data, limits=lim, source_name=name)
+    except PB3Error:
+        vfs = None
+    if vfs is not None:
+        try:
+            inv = vfs.inventory()
+            names = [e.name for e in inv.entries if not e.is_dir]
+            verdict = detect_engine(names)
+            partial = False
+            entries = [e for e in inv.entries if not e.is_dir]
+            total = len(entries)
+            for i, e in enumerate(entries, 1):
+                if e.size > plan_max:
+                    rows.append(PlanRow(name, e.name, "file", "entry", None, 0,
+                                        e.size, "binary (lớn, chưa đọc)", e.name))
+                    warnings.append("entry %s %d byte > giới hạn plan, chưa đọc"
+                                    % (e.name, e.size))
+                    if on_entry is not None:
+                        on_entry(i, total, e.name)
+                    continue
+                # Prefix-probe (X12): 64 byte đầu mà là ảnh/nhạc/font thì bỏ
+                # qua luôn — dòng kết quả giống hệt như khi đọc đủ rồi đệ quy
+                # (plan_bytes đệ quy cho dữ liệu lạ chỉ trả 1 dòng "file").
+                try:
+                    _prefix = vfs.slice(e.name, 0, 64)
+                except (PB3Error, AttributeError):
+                    _prefix = None
+                if _prefix is not None and _is_plain_media(_prefix):
+                    vpath = name + "::" + e.name
+                    rows.append(PlanRow(vpath, "", "file", "file", None, 0, e.size,
+                                        _guess_for(vpath, ""), vpath))
+                    if on_entry is not None:
+                        on_entry(i, total, e.name)
+                    continue
+                try:
+                    entry_bytes = vfs.read(e.name, None)
+                except PB3Error as exc:
+                    rows.append(PlanRow(name, e.name, "unsupported", "unsupported",
+                                        None, 0, e.size,
+                                        "không hỗ trợ (%s)" % exc.code, e.name))
+                    warnings.append("không đọc được %s: %s" % (e.name, exc.code))
+                    partial = True
+                    if on_entry is not None:
+                        on_entry(i, total, e.name)
+                    continue
+                try:
+                    sub = plan_bytes(entry_bytes, name=name + "::" + e.name,
+                                     backend=backend, limits=lim,
+                                     max_entry_bytes=plan_max)
+                except PB3Error as exc:
+                    # Entry lỗi (vd bundle UnityFS v9) không dừng cả container:
+                    # thành dòng "unsupported" + cảnh báo kèm mã/gợi ý (D-POLISH-1).
+                    rows.append(PlanRow(name, e.name, "unsupported", "unsupported",
+                                        None, 0, e.size,
+                                        "không hỗ trợ (%s)" % exc.code, e.name))
+                    warnings.append("bỏ qua %s: %s (%s); cần plugin hỗ trợ "
+                                    "định dạng này nếu muốn xem tiếp"
+                                    % (e.name, exc.code, exc.detail or exc.message_vi))
+                    partial = True
+                    if on_entry is not None:
+                        on_entry(i, total, e.name)
+                    continue
+                for row in sub.rows:
+                    rows.append(row)
+                warnings.extend(sub.warnings)
+                if sub.partial:
+                    partial = True
+                if on_entry is not None:
+                    on_entry(i, total, e.name)
+                if sub.verdict.engine == "unity" and (
+                        verdict.engine != "unity"
+                        or _level_rank(sub.verdict.level) > _level_rank(verdict.level)):
+                    # Nâng verdict theo sub-plan mạnh hơn, nhưng GIỮ lý do của
+                    # container (tên entry chứa '.unity3d'...) để báo cáo đủ bằng chứng.
+                    verdict = EngineVerdict(
+                        "unity", sub.verdict.level,
+                        _dedupe(verdict.reasons + sub.verdict.reasons))
+            if partial:
+                warnings.append("chỉ parse được một phần (E_PARSE_PARTIAL): "
+                                "có entry lỗi/bỏ qua, xem các dòng 'unsupported'.")
+            return UnityPlan(verdict, rows, warnings, _dedupe(backend.decisions),
+                             partial=partial)
+        finally:
+            close = getattr(vfs, "close", None)
+            if close is not None:
+                close()
+    # thử SerializedFile trực tiếp
+    try:
+        sf = parse_serialized(data, lim, where=name)
+    except PB3Error:
+        sf = None
+    if sf is not None:
+        verdict = EngineVerdict("unity", "CÓ KHẢ NĂNG",
+                                ["SerializedFile v%d (%s)" % (sf.version,
+                                                              sf.unity_version)])
+        _plan_assets_rows(sf, name, "", rows)
+        return UnityPlan(verdict, rows, warnings, _dedupe(backend.decisions))
+    rows.append(PlanRow(name, "", "file", "file", None, 0, len(data),
+                        _guess_for(name, ""), name))
+    return UnityPlan(verdict, rows, warnings, _dedupe(backend.decisions))
+
+
+def _plan_assets_bytes(data, container, entry, backend, lim, rows, warnings):
+    """Parse một .assets trong bundle/container; trả False nếu không parse được."""
+    try:
+        sf = parse_serialized(data, lim, where=entry)
+    except PB3Error as exc:
+        hint = ""
+        if exc.code == "E_UNSUPPORTED_FORMAT":
+            hint = "; cần plugin hỗ trợ SerializedFile version này"
+        elif exc.code == "E_ENCRYPTED":
+            hint = "; PB3 không giải mã dữ liệu mã hóa"
+        warnings.append("không parse được %s: %s%s" % (entry, exc.code, hint))
+        return False
+    _plan_assets_rows(sf, container, entry, rows)
+    return True
+
+
+def _plan_assets_rows(sf, container, entry, rows):
+    for o in sf.objects:
+        guess = "binary"
+        name = ""
+        if o.class_id == 49:
+            try:
+                # chỉ cần tên + độ dài script để đoán dạng: không đọc thân
+                name, script_len = read_text_asset_head(
+                    sf.object_bytes(o.path_id), sf.endian)
+                guess = _guess_for(name, "TextAsset", script_len)
+            except PB3Error:
+                guess = "text (đọc lỗi)"
+        rows.append(PlanRow(container, entry, "assets", class_name(o.class_id),
+                            o.path_id, o.byte_start, o.byte_size, guess, name))
+
+
+# ------------------------------------------------------------------ patcher
+@dataclass
+class PatchReport:
+    target: str
+    write_mode: str
+    write_mode_used: str
+    backend_mode: str
+    backend_decisions: List[str] = field(default_factory=list)
+    warnings: List[str] = field(default_factory=list)
+    changed: List[str] = field(default_factory=list)
+    size_before: int = 0
+    size_after: int = 0
+    old_script_len: int = 0
+    new_script_len: int = 0
+    occurrences: int = 0
+
+
+@dataclass
+class PatchResult:
+    output_bytes: bytes
+    unit: str  # "bundle" | "assets"
+    write_mode_used: str
+    report: PatchReport
+    verified: bool
+    verify_details: List[str] = field(default_factory=list)
+
+
+@dataclass
+class PatchRequest:
+    data: bytes
+    kind: str  # "bundle" | "assets"
+    entry: Optional[str] = None  # entry trong bundle (None nếu assets độc lập)
+    path_id: Optional[int] = None
+    object_name: Optional[str] = None
+    old_text: str = ""
+    new_text: str = ""
+    write_mode: str = "PATCH_INPLACE"
+    allow_escalate: bool = True
+    confirm: bool = False  # bắt buộc cho REBUILD_ALL
+    backend: Optional[UnityBackend] = None
+    limits: Optional[Limits] = None
+    temp_dir: Optional[str] = None  # giữ bản ứng viên khi verify lỗi
+    from_container: bool = False  # đơn vị nằm trong container/IPA (cần ký lại gói ngoài)
+
+
+def _header_size(version):
+    return 20 if version < 22 else 48
+
+
+def _meta_end(sf):
+    """Cuối metadata thật (không tính đệm căn 16 tới data_offset)."""
+    return _header_size(sf.version) + sf.metadata_size
+
+
+def _snapshot_assets(sf):
+    return {
+        # metadata chia 3 vùng: trước object table / object table / sau table.
+        # PATCH_INPLACE không được đổi vùng nào; REBUILD_SECTION/ALL chỉ được
+        # đổi vùng object table.
+        "meta_head": hashing.sha256_bytes(
+            sf.raw[_header_size(sf.version):sf.object_table_offset]),
+        "meta_table": hashing.sha256_bytes(
+            sf.raw[sf.object_table_offset:sf.object_table_end]),
+        "meta_tail": hashing.sha256_bytes(
+            sf.raw[sf.object_table_end:_meta_end(sf)]),
+        "objects": {o.path_id: hashing.sha256_bytes(sf.object_bytes(o.path_id))
+                    for o in sf.objects},
+        "order": [o.path_id for o in sf.objects],
+        "data_offset": sf.data_offset,
+    }
+
+
+def _snapshot_bundle(bundle):
+    return {
+        "entries": {e.name: hashing.sha256_bytes(bundle.get_entry(e.name))
+                    for e in bundle.entries},
+        "order": [e.name for e in bundle.entries],
+        "flags": [e.flags for e in bundle.entries],
+    }
+
+
+def _verify_assets(before, after_sf, expected_changed, expected_scripts,
+                   write_mode_used):
+    """Kiểm tra bảo toàn sau khi ghi (đặc tả 6.7). Trả (ok, [chi tiết])."""
+    details = []
+    ok = True
+    after = _snapshot_assets(after_sf)
+    changed = {pid for pid in before["objects"]
+               if before["objects"].get(pid) != after["objects"].get(pid)}
+    changed.update(pid for pid in after["objects"] if pid not in before["objects"])
+    if changed != set(expected_changed):
+        ok = False
+        details.append("tập object thay đổi %s != dự kiến %s"
+                       % (sorted(changed), sorted(expected_changed)))
+    if before["meta_head"] != after["meta_head"]:
+        ok = False
+        details.append("metadata trước object table thay đổi")
+    if before["meta_tail"] != after["meta_tail"]:
+        ok = False
+        details.append("metadata sau object table thay đổi")
+    if write_mode_used == "PATCH_INPLACE" and before["meta_table"] != after["meta_table"]:
+        ok = False
+        details.append("PATCH_INPLACE làm đổi object table")
+    if before["order"] != after["order"]:
+        ok = False
+        details.append("thứ tự object thay đổi")
+    if write_mode_used == "REBUILD_SECTION" and before["data_offset"] != after["data_offset"]:
+        ok = False
+        details.append("data_offset đổi %d -> %d"
+                       % (before["data_offset"], after["data_offset"]))
+    for pid, expect in expected_scripts.items():
+        try:
+            _name, script = read_text_asset_bytes(after_sf.object_bytes(pid),
+                                                  after_sf.endian)
+        except PB3Error as exc:
+            ok = False
+            details.append("object %d đọc lại lỗi: %s" % (pid, exc.code))
+            continue
+        if script.encode("utf-8") != expect:
+            ok = False
+            details.append("object %d đọc lại khác giá trị mong muốn" % pid)
+    if write_mode_used == "REBUILD_SECTION":
+        # Chỉ REBUILD_SECTION mới dựng lại data section nên mới được ép các
+        # bất biến của bản dựng lại; PATCH_INPLACE giữ nguyên layout gốc
+        # (file thật có thể có byte_start lẻ — vẫn hợp lệ, UnityPy đọc được).
+        for o in after_sf.objects:
+            if o.byte_start % 4 != 0:
+                ok = False
+                details.append("object %d: byte_start %d không chia hết cho 4"
+                               % (o.path_id, o.byte_start))
+    if ok:
+        details.append("verify OK: %d object đổi đúng dự kiến, còn lại giữ nguyên hash"
+                       % len(changed))
+    return ok, details
+
+
+def _patch_text_asset_inplace(sf_bytes, sf, path_id, old_script_b, new_script_b):
+    """PATCH_INPLACE: thay bytes trong file gốc; bắt buộc độ dài không đổi
+    (đệm NUL do phía gọi thực hiện và ghi vào report)."""
+    if len(new_script_b) != len(old_script_b):
+        raise PB3Error("E_WRITE_DISABLED",
+                       "PATCH_INPLACE cần độ dài không đổi (%d != %d)"
+                       % (len(new_script_b), len(old_script_b)),
+                       where=sf.where + "::%d" % path_id)
+    o = sf.get_object(path_id)
+    obj_start = sf.data_offset + o.byte_start
+    obj = sf.raw[obj_start:obj_start + o.byte_size]
+    # vị trí script trong object: sau aligned_string(name)
+    probe = _Reader(obj, sf.endian, where="TextAsset")
+    probe.aligned_string()
+    script_pos = probe.pos
+    if obj[script_pos:script_pos + 4] != struct.pack(sf.endian + "i", len(old_script_b)):
+        raise PB3Error("E_CORRUPT", "không tìm thấy trường script ở vị trí dự kiến",
+                       where=sf.where + "::%d" % path_id)
+    if obj[script_pos + 4:script_pos + 4 + len(old_script_b)] != old_script_b:
+        raise PB3Error("E_CORRUPT", "nội dung script đã đổi so với lúc đọc",
+                       where=sf.where + "::%d" % path_id)
+    out = bytearray(sf_bytes)
+    out[obj_start + script_pos + 4:obj_start + script_pos + 4 + len(new_script_b)] = new_script_b
+    return bytes(out)
+
+
+def _rebuild_assets_section(sf, path_id, new_object_data):
+    """REBUILD_SECTION: giữ metadata gốc ngoài object table, dựng lại data."""
+    raw = sf.raw
+    hs = _header_size(sf.version)
+    meta_head = raw[hs:sf.object_table_offset]
+    meta_tail = raw[sf.object_table_end:_meta_end(sf)]
+    data = _Writer(sf.endian)
+    entries = []
+    for o in sf.objects:   # giữ NGUYÊN thứ tự object gốc (không sort theo path_id)
+        payload = new_object_data.get(o.path_id)
+        if payload is None:
+            payload = sf.object_bytes(o.path_id)
+        data.align(8)
+        start = data.tell()
+        data.write(payload)
+        entries.append((o, start, len(payload)))
+    table = _Writer(sf.endian)
+    for o, start, size in entries:
+        # căn 4 theo vị trí tuyệt đối: đầu table nằm ở object_table_offset
+        table.align(4, base=sf.object_table_offset)
+        table.pack("q", o.path_id)
+        if sf.version >= 22:
+            table.pack("Q", start)
+        else:
+            table.pack("I", start)
+        table.pack("I", size)
+        table.pack("i", o.type_id)
+        if 11 <= sf.version < 17:
+            table.pack("h", o.script_type_index if o.script_type_index is not None else -1)
+        if sf.version in (15, 16):
+            table.write(bytes([o.is_stripped if o.is_stripped is not None else 0]))
+    data_bytes = data.bytes()
+    header_size = _header_size(sf.version)
+    data_offset = _align_up(header_size + len(meta_head) + len(table.bytes())
+                            + len(meta_tail), 16)
+    file_size = data_offset + len(data_bytes)
+    out = _Writer(sf.endian)
+    if sf.version < 22:
+        out.pack_be("IIII", len(meta_head) + len(table.bytes()) + len(meta_tail),
+                    file_size, sf.version, data_offset)
+    else:
+        out.pack_be("IIII", 0, 0, sf.version, 0)
+    out.write(b"\x01" if sf.endian == ">" else b"\x00")
+    out.write(b"\x00" * 3)
+    if sf.version >= 22:
+        # header mở rộng big-endian (như 4 số đầu), không theo endian file.
+        out.pack_be("I", len(meta_head) + len(table.bytes()) + len(meta_tail))
+        out.pack_be("Q", file_size)
+        out.pack_be("Q", data_offset)
+        out.pack_be("Q", 0)
+    out.write(meta_head)
+    out.write(table.bytes())
+    out.write(meta_tail)
+    out.align16()
+    out.write(data_bytes)
+    return out.bytes()
+
+
+def apply_patch(req):
+    """Patch một TextAsset; trả PatchResult (đã diffverify).
+
+    Đơn vị đầu ra nhỏ nhất (6.6): assets độc lập -> chính file đó;
+    trong bundle -> chỉ bundle đó (KHÔNG đóng gói lại IPA ngoài)."""
+    if req.write_mode not in WRITE_MODES:
+        raise PB3Error("E_CONFIG_INVALID", "write_mode phải thuộc %s"
+                       % "|".join(WRITE_MODES), where=req.entry or req.kind)
+    backend = req.backend or UnityBackend("AUTO", req.limits)
+    lim = req.limits or backend.limits
+    data = bytes(req.data)
+    if req.kind == "bundle":
+        if not req.entry:
+            raise PB3Error("E_CONFIG_INVALID", "patch trong bundle cần tên entry",
+                           where=req.kind)
+        bundle = parse_bundle(data, backend, lim, where="bundle")
+        before_snap = _snapshot_bundle(bundle)
+        assets_bytes = bundle.get_entry(req.entry)
+        sf = parse_serialized(assets_bytes, lim, where=req.entry)
+        unit = "bundle"
+    elif req.kind == "assets":
+        bundle = None
+        before_snap = None
+        sf = parse_serialized(data, lim, where="assets")
+        assets_bytes = data
+        unit = "assets"
+    else:
+        raise PB3Error("E_CONFIG_INVALID", "kind phải là bundle|assets", where=req.kind)
+    if req.path_id is not None:
+        pid, name, script = sf.find_text_asset(path_id=req.path_id)
+    elif req.object_name is not None:
+        pid, name, script = sf.find_text_asset(name=req.object_name)
+    else:
+        raise PB3Error("E_CONFIG_INVALID", "patch cần path_id hoặc tên TextAsset",
+                       where=req.entry or req.kind)
+    old_b = req.old_text.encode("utf-8")
+    new_b = req.new_text.encode("utf-8")
+    script_b = script.encode("utf-8")
+    occurrences = script_b.count(old_b) if old_b else 0
+    if occurrences == 0:
+        raise PB3Error("E_CONFIG_INVALID",
+                       "không tìm thấy chuỗi cũ trong TextAsset %r" % name,
+                       where="path_id=%d" % pid)
+    new_script_b = script_b.replace(old_b, new_b, 1)
+    new_obj_data = aligned_string_bytes(name, new_script_b, sf.endian)
+    old_obj_data = sf.object_bytes(pid)
+    mode = req.write_mode
+    pad_note = []
+    expected_script = new_script_b
+    if mode == "PATCH_INPLACE":
+        if len(new_obj_data) > len(old_obj_data):
+            if req.allow_escalate:
+                mode = "REBUILD_SECTION"
+                pad_note.append("chuỗi mới dài hơn: PATCH_INPLACE không chứa được, "
+                                "chuyển REBUILD_SECTION (theo 6.5).")
+            else:
+                raise PB3Error("E_WRITE_DISABLED",
+                               "chuỗi mới dài hơn %d byte; PATCH_INPLACE từ chối "
+                               "(không cắt cụt). Bật REBUILD_SECTION."
+                               % (len(new_obj_data) - len(old_obj_data)),
+                               where="path_id=%d" % pid)
+        elif len(new_script_b) > len(script_b):
+            # #180 (C10): chuỗi mới dài hơn nhưng kích thước object đã căn
+            # bằng nhau (vd +1 byte trong cùng khối căn 4): PATCH_INPLACE chỉ
+            # ghi đè đúng độ dài nên không chứa được — leo lên REBUILD_SECTION.
+            if req.allow_escalate:
+                mode = "REBUILD_SECTION"
+                pad_note.append("chuỗi mới dài hơn trong cùng khối căn: PATCH_INPLACE "
+                                "không chứa được, chuyển REBUILD_SECTION (theo 6.5, #180).")
+            # Không cho leo: rơi xuống _patch_text_asset_inplace -> E_WRITE_DISABLED như cũ.
+        if mode == "PATCH_INPLACE":
+            if len(new_script_b) < len(script_b):
+                # đệm NUL trong script để giữ nguyên độ dài object (theo 6.5).
+                # So theo độ dài script (không phải object): -1 byte trong cùng
+                # khối căn trước đây cũng lỗi E_WRITE_DISABLED (#180 mirror, C10).
+                pad = len(script_b) - len(new_script_b)
+                new_script_b = new_script_b + b"\x00" * pad
+                expected_script = new_script_b
+                new_obj_data = aligned_string_bytes(name, new_script_b, sf.endian)
+                pad_note.append("chuỗi mới ngắn hơn %d byte: đệm NUL trong script "
+                                "(giữ nguyên độ dài object)" % pad)
+            new_assets = _patch_text_asset_inplace(assets_bytes, sf, pid,
+                                                   script_b, new_script_b)
+    if mode == "REBUILD_SECTION":
+        new_assets = _rebuild_assets_section(sf, pid, {pid: new_obj_data})
+    elif mode == "REBUILD_ALL":
+        if UnityBackend.MATURITY < "M4":
+            raise PB3Error("E_WRITE_DISABLED",
+                           "REBUILD_ALL cần maturity M4 (hiện %s); dùng "
+                           "PATCH_INPLACE/REBUILD_SECTION."
+                           % UnityBackend.MATURITY, where=req.entry or req.kind)
+        if not req.confirm:
+            raise PB3Error("E_WRITE_DISABLED",
+                           "REBUILD_ALL cần xác nhận người dùng (dry-run + diff).",
+                           where=req.entry or req.kind)
+        new_assets = build_serialized(sf, {pid: new_obj_data})
+    if unit == "bundle":
+        new_entries = []
+        for e in bundle.entries:
+            new_entries.append((e.name, e.flags,
+                                new_assets if e.name == req.entry
+                                else bundle.get_entry(e.name)))
+        out_bytes = build_bundle(new_entries, version=bundle.version,
+                                 unity_version=bundle.unity_version,
+                                 unity_revision=bundle.unity_revision,
+                                 compression=bundle.compression_name,
+                                 blocks_info_at_end=bundle.blocks_info_at_end,
+                                 extra_data_flags=bundle.data_flags & FLAG_OLD_WEB,
+                                 pad_block_data=bundle.uses_padding,
+                                 backend=backend, limits=lim)
+    else:
+        out_bytes = new_assets
+    # ---- diffverify (6.7): parse lại + so sánh
+    verify_details = []
+    verified = True
+    if unit == "assets":
+        after_sf = parse_serialized(out_bytes, lim, where="assets::after")
+        ok, details = _verify_assets(_snapshot_assets(sf), after_sf, {pid},
+                                     {pid: expected_script}, mode)
+        verify_details.extend(details)
+        verified = ok
+    else:
+        after_bundle = parse_bundle(out_bytes, backend, lim, where="bundle::after")
+        after_assets = after_bundle.get_entry(req.entry)
+        after_sf = parse_serialized(after_assets, lim, where="bundle::after::assets")
+        ok, details = _verify_assets(_snapshot_assets(sf), after_sf, {pid},
+                                     {pid: expected_script}, mode)
+        verify_details.extend(details)
+        after_snap = _snapshot_bundle(after_bundle)
+        changed_entries = {n for n in before_snap["entries"]
+                           if before_snap["entries"].get(n) != after_snap["entries"].get(n)}
+        changed_entries.update(n for n in after_snap["entries"]
+                               if n not in before_snap["entries"])
+        if changed_entries != {req.entry}:
+            verified = False
+            verify_details.append("entry bundle đổi %s != dự kiến {%s}"
+                                  % (sorted(changed_entries), req.entry))
+        if before_snap["order"] != after_snap["order"]:
+            verified = False
+            verify_details.append("thứ tự entry bundle thay đổi")
+        verified = verified and ok
+    if not verified:
+        if req.temp_dir:
+            import os
+            os.makedirs(req.temp_dir, exist_ok=True)
+            tmp_path = os.path.join(req.temp_dir, "patch-failed.bin")
+            with open(tmp_path, "wb") as fh:
+                fh.write(out_bytes)
+            verify_details.append("bản ứng viên giữ tại %s" % tmp_path)
+        raise PB3Error("E_VERIFY_FAILED",
+                       "xác minh sau khi ghi không đạt: %s" % "; ".join(verify_details),
+                       where="path_id=%d" % pid)
+    if req.from_container and unit == "bundle":
+        pad_note.append("đơn vị là bundle trong container/IPA: sau khi thay file "
+                        "cần ký lại (re-sign) gói ngoài thì game mới nhận "
+                        "(đặc tả 11.1); PB3 không tự ký lại.")
+    report = PatchReport(
+        target="%s%s path_id=%d (%s)" % (unit, ("::" + req.entry) if req.entry else "",
+                                        pid, name),
+        write_mode=req.write_mode, write_mode_used=mode,
+        backend_mode=backend.mode,
+        backend_decisions=_dedupe(backend.decisions),
+        warnings=pad_note,
+        changed=[req.entry] if unit == "bundle" else ["path_id=%d" % pid],
+        size_before=len(data), size_after=len(out_bytes),
+        old_script_len=len(script_b), new_script_len=len(new_script_b),
+        occurrences=occurrences)
+    return PatchResult(output_bytes=out_bytes, unit=unit, write_mode_used=mode,
+                       report=report, verified=True, verify_details=verify_details)
+
+
+def aligned_string_bytes(name, script_b, endian="<"):
+    """Dựng lại bytes của một TextAsset từ tên + script bytes."""
+    w = _Writer(endian)
+    w.aligned_string(name)
+    raw = bytes(script_b)
+    w.pack("i", len(raw))
+    w.write(raw)
+    w.align(4)
+    return w.bytes()
+
+
+# ------------------------------------------------- output / backup / rollback
+def write_patch_output(output_root, rel, data, *, policy="version"):
+    """Ghi output patch: không ghi đè (version .v1/.v2...), trả đường dẫn cuối."""
+    from core import safe_io
+    return safe_io.write_output_bytes(output_root, rel, data, policy=policy)
+
+
+def backup_source_file(src_path, backup_dir=None):
+    """Sao lưu file nguồn trước khi patch (bản gốc không bao giờ bị sửa)."""
+    from core import safe_io
+    return safe_io.backup_file(src_path, backup_dir)
+
+
+def rollback_output(path):
+    """Xóa file output vừa ghi (khôi phục trạng thái trước patch)."""
+    import os
+    try:
+        os.unlink(str(path))
+        return True
+    except OSError:
+        return False

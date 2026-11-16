@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>BearTea — PB3 bản web</title>
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, "Segoe UI", Roboto, sans-serif; margin: 0;
+    padding: 12px; background: #101418; color: #e8ecf0; line-height: 1.5; }
+  h1 { font-size: 22px; margin: 4px 0 2px; }
+  h2 { font-size: 17px; margin: 18px 0 6px; }
+  h3 { font-size: 15px; margin: 14px 0 4px; }
+  p, li { font-size: 14px; }
+  .sub { color: #9aa7b4; font-size: 13px; margin: 0 0 10px; }
+  .card { background: #1a2129; border: 1px solid #2a343f; border-radius: 10px;
+    padding: 12px; margin: 10px 0; }
+  button { background: #2f81f7; color: #fff; border: 0; border-radius: 8px;
+    padding: 10px 14px; font-size: 15px; margin: 4px 4px 4px 0; cursor: pointer; }
+  button.secondary { background: #303a45; }
+  button:disabled { opacity: .5; }
+  input[type=file] { font-size: 14px; max-width: 100%; }
+  textarea, select, input[type=text] { width: 100%; background: #0d1117;
+    color: #e8ecf0; border: 1px solid #2a343f; border-radius: 8px;
+    padding: 9px; font-size: 14px; font-family: ui-monospace, monospace; }
+  textarea { min-height: 120px; }
+  .tabs { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0; }
+  .tabs button { background: #232c36; padding: 8px 10px; font-size: 14px; }
+  .tabs button.active { background: #2f81f7; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  th, td { border-bottom: 1px solid #2a343f; padding: 5px 6px; text-align: left;
+    word-break: break-all; }
+  pre { background: #0d1117; padding: 10px; border-radius: 8px; overflow-x: auto;
+    font-size: 12px; }
+  ul { padding-left: 18px; }
+  #status { color: #7ee2a8; font-size: 14px; }
+  #error { background: #5a1f1f; border: 1px solid #8c2f2f; color: #ffd7d7;
+    border-radius: 8px; padding: 10px; font-size: 14px; white-space: pre-wrap; }
+  #progress-wrap { margin: 10px 0; }
+  #progress-track { background: #232c36; border-radius: 8px; height: 18px; overflow: hidden; }
+  #progress-bar { background: #2f81f7; height: 100%; width: 0%; transition: width .15s; }
+  #progress-pct { font-weight: bold; }
+  #progress-detail { color: #9aa7b4; font-size: 13px; }
+  .note { color: #9aa7b4; font-size: 13px; }
+  .warn { color: #f0b429; font-size: 13px; }
+  label { font-size: 14px; }
+  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+</style>
+</head>
+<body>
+<h1>BearTea</h1>
+<p class="sub">PB3 bản web — xử lý file game Unity ngay trên máy bạn, không upload đi đâu.</p>
+<p id="status">Đang khởi động…</p>
+<p id="boot-problems" class="warn" hidden></p>
+
+<div id="progress-wrap" hidden>
+  <div id="progress-track"><div id="progress-bar"></div></div>
+  <div><span id="progress-pct">0%</span> · <span id="progress-detail"></span></div>
+</div>
+<div id="error" hidden></div>
+
+<div class="card">
+  <h2>1. Chọn file</h2>
+  <input type="file" id="file-input" accept=".ipa,.zip,.unity3d,.assets,.ttf,.json,.tar.xz">
+  <p id="file-info" class="sub" hidden></p>
+  <p class="note">File chỉ được đọc và xử lý trong trình duyệt của bạn. Bản web giới hạn
+  file ≤1GB (RAM tab trình duyệt); file lớn hơn hãy dùng bản iSH. Lần mở trang
+  đầu cần mạng để tải Pyodide; sau đó xử lý hoàn toàn offline (trừ khi bạn
+  bật dịch Google — bản web v1 chưa có, chỉ dịch bằng từ điển offline).</p>
+</div>
+
+<div class="tabs">
+  <button id="btn-list" class="active">Danh sách</button>
+  <button id="btn-unity">Unity</button>
+  <button id="btn-extract">Trích xuất</button>
+  <button id="btn-translate">Dịch</button>
+  <button id="btn-compress">Nén</button>
+  <button id="btn-font">Font</button>
+  <button id="btn-diagnose">Chẩn đoán</button>
+</div>
+
+<div id="tab-list" class="card">
+  <h2>Danh sách entry trong file</h2>
+  <p class="note">Liệt kê các entry của ZIP/IPA (tên, loại, kích thước).</p>
+  <button id="btn-list-run">Liệt kê</button>
+  <div id="list-result"></div>
+</div>
+
+<div id="tab-unity" class="card" hidden>
+  <h2>Inspect Unity</h2>
+  <p class="note">Đọc bundle .unity3d hoặc file .assets độc lập bằng parser thuần của PB3
+  (UnityFS v8, SerializedFile v23). Không dùng UnityPy trên web.</p>
+  <button id="btn-unity-run">Inspect</button>
+  <div id="unity-result"></div>
+</div>
+
+<div id="tab-extract" class="card" hidden>
+  <h2>Trích xuất text</h2>
+  <p class="note">Chạy pipeline trích xuất đầy đủ của PB3, xuất các bảng key-value ra file
+  JSON. Kết quả tải về dạng <b>extract.zip</b>.</p>
+  <button id="btn-extract-run">Trích xuất</button>
+  <div id="extract-result"></div>
+</div>
+
+<div id="tab-translate" class="card" hidden>
+  <h2>Dịch (từ điển offline)</h2>
+  <p class="note">Chỉ dịch VALUE, giữ nguyên KEY. Bản web v1 chỉ có từ điển offline
+  (~40 cụm từ game thông dụng); dịch Google chưa có trên web.</p>
+  <div class="row">
+    <label>Tải file JSON: <input type="file" id="translate-json-file" accept=".json"></label>
+  </div>
+  <p class="note">Hoặc dán JSON key-value vào ô dưới:</p>
+  <textarea id="translate-input" placeholder='{"play": "Play", "quit": "Quit"}'></textarea>
+  <div class="row">
+    <label>Dịch sang:
+      <select id="translate-to" style="width:auto">
+        <option value="vi" selected>Tiếng Việt</option>
+        <option value="en">Tiếng Anh</option>
+      </select>
+    </label>
+    <label><input type="checkbox" id="translate-credit" checked> Gắn credit “Việt Hoá Bởi Bear”</label>
+  </div>
+  <button id="btn-translate-run">Dịch</button>
+  <button id="btn-translate-download" class="secondary">Tải bản dịch (.json)</button>
+  <p id="translate-info" class="sub"></p>
+  <textarea id="translate-output" placeholder="Bản dịch sẽ hiện ở đây…" readonly></textarea>
+</div>
+
+<div id="tab-compress" class="card" hidden>
+  <h2>Nén / giải nén IPA</h2>
+  <p class="note">Nén solid LZMA kiểu WinRAR. File nén ra là bản lưu trữ (.tar.xz),
+  <b>không phải</b> IPA cài trực tiếp — dùng nút Giải nén để khôi phục IPA gốc.</p>
+  <div class="row">
+    <label>Preset:
+      <select id="compress-preset" style="width:auto">
+        <option value="6" selected>6 (mặc định, nhẹ RAM)</option>
+        <option value="0">0 (nhanh nhất, nén ít)</option>
+        <option value="9">9 (nén mạnh nhất, nặng RAM)</option>
+      </select>
+    </label>
+  </div>
+  <button id="btn-compress-run">Nén file đã chọn</button>
+  <button id="btn-decompress-run" class="secondary">Giải nén file .tar.xz đã chọn</button>
+  <div id="compress-result"></div>
+</div>
+
+<div id="tab-font" class="card" hidden>
+  <h2>Công cụ font</h2>
+  <p class="note">Quét font TTF xem thiếu bao nhiêu ký tự tiếng Việt (112 ký tự chuẩn),
+  gộp glyph từ font Be Vietnam Pro đi kèm, hoặc lấy luôn font đi kèm về dùng.
+  Giới hạn thật: atlas SDF của TextMeshPro không tái tạo được.</p>
+  <button id="btn-font-scan">Quét font đã chọn</button>
+  <button id="btn-font-merge">Gộp glyph tiếng Việt (tải merged.ttf về)</button>
+  <button id="btn-font-replace" class="secondary">Lấy font Be Vietnam Pro về</button>
+  <div id="font-result"></div>
+</div>
+
+<div id="tab-diagnose" class="card" hidden>
+  <h2>Chẩn đoán (chỉ đọc)</h2>
+  <p class="note">Inventory + hex dump (512 byte đầu) + quét chuỗi ASCII trong file.</p>
+  <button id="btn-diagnose-run">Chẩn đoán</button>
+  <div id="diagnose-result"></div>
+</div>
+
+<div class="card">
+  <h2>Giới hạn của bản web (đo thật, xem README)</h2>
+  <ul>
+    <li>Không dùng UnityPy (không cài được trên Pyodide — thiếu wheel etcpak). Inspect Unity dùng parser thuần của PB3.</li>
+    <li>Không chạy được tính năng cần threading (batch song song); extract chạy tuần tự.</li>
+    <li>File đầu vào tối đa 1GB trên web (bản iSH cho phép tới 2GB).</li>
+    <li>Chưa thử trên iPhone thật — tốc độ và RAM trên Safari di động chưa đo.</li>
+  </ul>
+  <p class="note">Mã nguồn PB3 (BearTea) — xem README.md trong repo.</p>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>

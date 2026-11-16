@@ -1,0 +1,71 @@
+# PB3 v3.1 - cấu hình mặc định (KHÔNG sửa file này; ghi đè trong config/local.toml)
+# Mọi giá trị phải khớp core/config.py (test_config kiểm tra không lệch).
+
+[app]
+language = "vi"
+debug = false              # true: giữ thư mục tạm, log mức DEBUG ra stderr
+
+[paths]                    # đường dẫn TƯƠNG ĐỐI so với thư mục dự án
+workspace = "workspace"    # chứa input/ temp/ output/ cache/
+logs = "logs"
+reports = "reports"
+kb = "kb"
+plugins = "plugins"            # plugin dựng sẵn (builtin)
+plugins_user = "plugins_user"  # plugin người dùng tự thêm (thắng khi trùng id). Thêm plugin = chạy code trên máy bạn
+input_extra = []           # RESERVED (dành riêng, chưa dùng bởi pipeline): thư mục local do BẠN chọn trong iSH (tuyệt đối), vd ["/root/data"]. Pipeline hiện tại KHÔNG đọc khóa này.
+
+[plugins]
+disabled = []             # id plugin bạn đã tắt (đổi bằng menu 3 hoặc `plugin disable <id>`)
+
+[registry]
+discovery_cache = true    # cache kết quả duyệt manifest tĩnh (workspace/cache/discovery_cache.json); tắt khi nghi cache cũ
+
+[output]
+versioning = "version"     # version: tạo name.v1.ext, name.v2.ext... | error: dừng nếu đã tồn tại
+
+[limits]                   # đặc tả 2.3, 5.2, 9.2, 18.4
+max_input_bytes = 8589934592              # 8 GiB: file đầu vào tối đa
+max_entry_bytes = 67108864                # 64 MiB: 1 entry/object tối đa
+plan_max_entry_bytes = 8388608          # 8 MiB: plan không đọc entry lớn hơn (chỉ ghi dòng)
+max_memory_read_bytes = 134217728         # 128 MiB: tối đa nạp 1 lần vào RAM (trần 512 MiB)
+max_total_uncompressed_bytes = 8589934592 # 8 GiB: tổng giải nén
+max_entries = 200000
+max_depth = 4                             # độ sâu container lồng nhau
+max_ratio = 200                           # tỉ lệ nén tối đa trước khi coi là zip bomb
+hook_timeout_s = 20
+hook_timeout_heavy_s = 120
+chunk_size = 1048576                      # 1 MiB mỗi lần đọc/ghi streaming
+workers = 1                               # iSH: mặc định 1 worker (18.4)
+disk_factor = 2.5                         # cần trống >= 2.5 x kích thước dự kiến
+
+[log]
+level = "INFO"             # DEBUG | INFO | WARNING | ERROR
+max_bytes = 1048576        # xoay vòng pb3.log ở 1 MiB
+backups = 3
+keep_sessions = 20         # số file log theo phiên được giữ
+max_message_chars = 500    # cắt dòng log dài để không đổ nội dung file người dùng
+
+[progress]
+interval_s = 1.0           # tối thiểu giữa 2 lần vẽ lại
+width = 0                  # 0 = tự động theo cỡ terminal (iSH hẹp, ~48 cột)
+overall = true             # thanh tiến độ TỔNG 0-100% + thời gian còn lại (chỉ hiện khi là tty)
+heartbeat_s = 1.0          # vẽ lại thanh mỗi bấy nhiêu giây (đồng hồ "còn ~" chạy cả khi lệnh treo)
+
+[ui]                       # giao diện (menu, CLI, thanh tiến trình)
+color = "auto"           # auto: màu ANSI chỉ khi stdout là terminal thật | on: bật ép (xem qua less -R) | off: không bao giờ. NO_COLOR (không rỗng) luôn tắt màu.
+
+[keepalive]                # giữ iSH chạy nền qua /dev/location (cần cấp quyền vị trí cho iSH)
+enabled = false            # true: tự bật khi khởi động (hoặc dùng cờ --keepalive / Chẩn đoán > [4])
+device = "/dev/location"
+
+[scoring]                  # Phụ lục C (dùng bởi arbitration - Claude 03)
+w_magic = 0.30
+w_ext = 0.10
+w_name = 0.12
+w_schema = 0.18
+w_locale = 0.10
+w_manifest = 0.08
+w_content = 0.07
+w_kb = 0.05
+auto_select = 0.80
+ask_min = 0.55
