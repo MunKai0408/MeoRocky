@@ -69,6 +69,7 @@
   "pb3/sdk/lz4pure.py",
   "pb3/sdk/manifest.py",
   "pb3/sdk/support_matrix.py",
+  "pb3/sdk/tmp_font.py",
   "pb3/sdk/translate.py",
   "pb3/sdk/types.py",
   "pb3/sdk/unity.py",

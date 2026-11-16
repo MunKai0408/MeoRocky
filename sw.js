@@ -21,7 +21,7 @@
 
 // ĐỔI SỐ NÀY MỖI KHI DEPLOY BẢN MỚI (bất kỳ file nào trong PRECACHE_URLS
 // đổi nội dung). Bản cũ sẽ bị xóa ở activate.
-const CACHE_VERSION = "v6-20261116";
+const CACHE_VERSION = "v7-20261116";
 const CACHE_NAME = "beartea-" + CACHE_VERSION;
 
 // Danh sách precache: shell tĩnh + Pyodide vendored + mã PB3 (khớp đúng
@@ -133,6 +133,7 @@ const PRECACHE_URLS = [
   "pb3/sdk/lz4pure.py",
   "pb3/sdk/manifest.py",
   "pb3/sdk/support_matrix.py",
+  "pb3/sdk/tmp_font.py",
   "pb3/sdk/translate.py",
   "pb3/sdk/types.py",
   "pb3/sdk/unity.py",

@@ -42,7 +42,7 @@ rec("no_http_fetch_during_load", httpFetchCount === 0, `http fetch trong lúc lo
     pyodide.FS.mkdirTree(target.slice(0, target.lastIndexOf("/")));
     pyodide.FS.writeFile(target, new Uint8Array(buf));
   }
-  rec("write_site_files", man.files.length === 87, `${man.files.length} file pb3/ ghi vào /pb3web`, performance.now() - t0); // 87 = 71 cũ + 16 mới (full-port phase 1, khớp files.json; harness cũ ghi 71 đã lỗi thời — sửa 2026-11-16 phase 3)
+  rec("write_site_files", man.files.length === 88, `${man.files.length} file pb3/ ghi vào /pb3web`, performance.now() - t0); // 88 = 87 + 1 (mục 7 thêm sdk/tmp_font.py, 2026-11-16)
 }
 
 pyodide.runPython("import sys; sys.path.insert(0, '/pb3web')\nimport bridge");
