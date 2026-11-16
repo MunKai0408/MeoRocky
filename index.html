@@ -411,8 +411,9 @@
     chuỗi qua Google (cần mạng; dịch theo batch 100 chuỗi/request nên file
     1000 chuỗi chỉ mất khoảng chục giây nếu mạng tốt; hàng đợi lưu bền nên
     tắt tab vẫn tiếp tục được). Nếu Google không dùng được (mất mạng, bị
-    giới hạn tốc độ, trình duyệt chặn CORS) thì tự động thử MyMemory rồi
-    dùng từ điển offline (~100 từ/cụm thông dụng) và báo rõ lý do.</p>
+    giới hạn tốc độ, trình duyệt chặn CORS) thì tự động thử MyMemory (và
+    LibreTranslate nếu đã cấu hình bên dưới) rồi dùng từ điển offline
+    (~100 từ/cụm thông dụng) và báo rõ lý do + bước nào đã dùng.</p>
     <div class="row">
       <label style="flex:1;min-width:220px">URL proxy dịch (Cloudflare Worker, không bắt buộc):
         <input type="text" id="translate-proxy" placeholder="vd: beartea-translate-proxy.<tên>.workers.dev">
@@ -424,6 +425,20 @@
     Google — xem hướng dẫn trong repo (<b>cloudflare/README.md</b>).
     <a href="diagnostics.html">Mở trang Kiểm tra dịch</a> để thử trực tiếp
     Google / proxy / MyMemory trên máy này trước khi dịch file lớn.</p>
+    <div class="row">
+      <label style="flex:1;min-width:220px">LibreTranslate (tùy chọn, mặc định tắt):
+        <input type="text" id="translate-lt-endpoint" placeholder="vd: libretranslate.com">
+      </label>
+      <label style="flex:1;min-width:160px">API key LibreTranslate (nếu instance yêu cầu):
+        <input type="text" id="translate-lt-key" placeholder="để trống nếu instance không cần key" autocomplete="off">
+      </label>
+    </div>
+    <p class="note">Bước dự phòng sau MyMemory: chỉ thử khi đã điền endpoint.
+    Bản public libretranslate.com hiện yêu cầu API key (lấy ở
+    portal.libretranslate.com, gói trả phí) — không key thì bước này lỗi và
+    tool rơi về từ điển offline như cũ. Tự host LibreTranslate (miễn phí,
+    mã nguồn mở) thì dán URL instance của bạn, thường không cần key.
+    Endpoint + key chỉ lưu trong trình duyệt này.</p>
     <div class="row">
       <label>Tải file JSON: <input type="file" id="translate-json-file" accept=".json"></label>
     </div>

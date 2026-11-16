@@ -19,7 +19,8 @@
 import { loadPyodide } from "./pyodide/pyodide.mjs";
 import { setTranslateProxyUrl, translateOneWithFallbacks,
          translateBatchWithFallbacks, abortGoogleTranslate,
-         resetGoogleTranslateAbort } from "./gt.js";
+         resetGoogleTranslateAbort, getFallbackTrace,
+         setLibreTranslateEndpoint, setLibreTranslateApiKey } from "./gt.js";
 
 const PYODIDE_INDEX = new URL("pyodide/", self.location.href).href;
 const PB3_ROOT = "/pb3web";
@@ -108,12 +109,16 @@ async function boot() {
   // Python async await được Promise JS nên event loop vẫn chạy, nút Hủy
   // vẫn nhận được giữa đợt dịch.
   // translateOneWithFallbacks: proxy Cloudflare (nếu app.js đã gửi URL) ->
-  // Google trực tiếp -> MyMemory -> ném lỗi để Python dùng từ điển offline.
+  // Google trực tiếp -> MyMemory -> LibreTranslate (nếu đã cấu hình) ->
+  // ném lỗi để Python dùng từ điển offline.
   // Riêng proxy báo hết hạn mức tháng (quota) thì bỏ qua Google trực tiếp.
   // translateBatchWithFallbacks: như trên nhưng cho cả batch (proxy-batch
   // hoặc gtx joined-text), trả chuỗi JSON {"translations":[...], "mode":...}.
+  // pb3_fallback_trace: dấu vết bước fallback của lần dịch gần nhất
+  // (mục C1) để bridge.py đọc sau mỗi chuỗi và báo rõ bước nào đã dùng.
   globalThis.pb3_google_translate = translateOneWithFallbacks;
   globalThis.pb3_google_translate_batch = translateBatchWithFallbacks;
+  globalThis.pb3_fallback_trace = () => JSON.stringify(getFallbackTrace());
   globalThis.pb3_google_cancelled = () => googleCancelled;
   pyodide.runPython(
     "import bridge\n" +
@@ -164,6 +169,17 @@ self.onmessage = async (ev) => {
       // worker, không cần Pyodide đã boot xong.
       setTranslateProxyUrl(typeof msg.url === "string" ? msg.url : "");
       postMessage({ id: msg.id, ok: true, result: JSON.stringify({ proxy: !!msg.url }) });
+      return;
+    }
+    if (msg.op === "set_libretranslate") {
+      // LibreTranslate (mục C1, tùy chọn): endpoint + key (nếu có) do
+      // người dùng dán ở tab Dịch, lưu localStorage. Để trống = tắt bước
+      // này (mặc định), chuỗi fallback vẫn proxy → Google → MyMemory →
+      // từ điển offline. Chỉ đặt biến JS trong worker.
+      setLibreTranslateEndpoint(typeof msg.endpoint === "string" ? msg.endpoint : "");
+      setLibreTranslateApiKey(typeof msg.apiKey === "string" ? msg.apiKey : "");
+      postMessage({ id: msg.id, ok: true,
+        result: JSON.stringify({ libretranslate: !!msg.endpoint }) });
       return;
     }
     if (msg.op === "boot") {

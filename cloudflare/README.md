@@ -66,13 +66,18 @@ wrangler deploy
 |---|---|---|
 | Dịch bình thường | `ok:true, provider:"google", month_used, month_limit` | Hiện bản dịch |
 | Trùng chuỗi đã dịch | `ok:true, cached:true, chars` (không tính ký tự) | Hiện bản dịch |
-| Vượt 500.000 ký tự/tháng | `ok:false, code:"quota_exceeded"` (HTTP 429) | Thử MyMemory, rồi từ điển offline |
-| Google 429/5xx liên tiếp 5 lần | `ok:false, code:"breaker_open"` (HTTP 429) | Thử MyMemory, rồi offline |
-| 1 IP gửi >60 request/phút | `ok:false, code:"rate_limited"` (HTTP 429) | Thử lại sau, rồi MyMemory + offline |
-| Chưa đặt GOOGLE_API_KEY / KV | `ok:false, code:"not_configured"/"kv_not_configured"` (HTTP 503) | Dịch trực tiếp Google như cũ, rồi offline |
+| Vượt 500.000 ký tự/tháng | `ok:false, code:"quota_exceeded"` (HTTP 429) | Thử MyMemory (+ LibreTranslate nếu đã cấu hình), rồi từ điển offline |
+| Google 429/5xx liên tiếp 5 lần | `ok:false, code:"breaker_open"` (HTTP 429) | Thử MyMemory (+ LibreTranslate nếu đã cấu hình), rồi offline |
+| 1 IP gửi >60 request/phút | `ok:false, code:"rate_limited"` (HTTP 429) | Thử lại sau, rồi MyMemory (+ LibreTranslate nếu đã cấu hình) + offline |
+| Chưa đặt GOOGLE_API_KEY / KV | `ok:false, code:"not_configured"/"kv_not_configured"` (HTTP 503) | Dịch trực tiếp Google như cũ, rồi MyMemory + offline |
 
 Lưu ý trung thực:
 
+- Chuỗi fallback đầy đủ (mục C1): proxy → Google trực tiếp → MyMemory →
+  LibreTranslate (chỉ khi đã cấu hình endpoint + key ở tab Dịch, mặc định
+  tắt vì bản public libretranslate.com cần API key trả phí) → từ điển
+  offline (~100 từ/cụm). Mỗi bước đều ghi dấu vết để tab Dịch báo rõ
+  bước nào đã dùng; cả chuỗi đều lỗi thì báo rõ lý do từng bước.
 - KV không có phép tăng nguyên tử nên 2 request cùng lúc có thể vượt hạn
   mức vài trăm ký tự (không đáng kể so với 500.000, và Google tính phí
   theo ký tự *thực tế đã dịch* — vượt vài trăm ký tự vẫn nằm trong phần

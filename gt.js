@@ -26,6 +26,22 @@
 //   "bad_response" — HTTP 200 nhưng JSON không đọc được / thiếu bản dịch.
 //   "cancelled" — người dùng bấm Hủy (abort fetch đang chạy).
 //   "quota"   — proxy báo hết hạn mức tháng (chỉ đường proxy).
+//   "all_failed" — cả chuỗi fallback đều lỗi (lỗi này mang tóm tắt cả
+//               chuỗi ở dòng đầu message để bridge/UI hiện rõ).
+//   "batch_failed" — batch lỗi ở cả proxy + Google (bridge còn dịch lại
+//               từng chuỗi, chưa phải hết đường).
+//
+// CHUỖI FALLBACK (mục C1, 2026-11-16) — translateOneWithFallbacks:
+//   proxy (nếu có URL) → Google trực tiếp → MyMemory → LibreTranslate
+//   (CHỈ khi đã cấu hình endpoint, mặc định TẮT) → từ điển offline.
+//   LibreTranslate public (libretranslate.com) KHÔNG còn dùng được nếu
+//   không có key: POST /translate không key trả HTTP 400 "Visit
+//   https://portal.libretranslate.com to get an API key" (kiểm chứng độc
+//   lập 2026-10-27; gói host từ $29/tháng), mirror argosopentech đã chết.
+//   Vì vậy mặc định chuỗi vẫn là 3 bước (proxy/Google/MyMemory) + offline,
+//   không thêm request thừa; ai tự host LibreTranslate hoặc có key portal
+//   thì dán endpoint + key ở tab Dịch để bật bước thứ 4. Mọi bước đều ghi
+//   vào trace (getFallbackTrace) để UI báo rõ bước nào đã dùng.
 //
 // Lưu ý trung thực: fetch() trong trình duyệt KHÔNG cho đặt User-Agent
 // (header cấm — trình duyệt tự gửi UA thật của nó). Google có trả JSON
@@ -34,6 +50,13 @@
 // fallback offline, và CORS trên Safari thật vẫn cần thử bằng tay.
 
 export const GT_ENDPOINT = "https://translate.googleapis.com/translate_a/single";
+// Ghi đè endpoint Google (chỉ harness kiểm chứng dùng để giả 429/500;
+// chạy thật luôn dùng GT_ENDPOINT ở trên).
+let googleEndpointOverride = "";
+export function setGoogleEndpoint(url) {
+  googleEndpointOverride = typeof url === "string" ? url.trim().replace(/\/+$/, "") : "";
+}
+export function getGoogleEndpoint() { return googleEndpointOverride || GT_ENDPOINT; }
 const GT_TIMEOUT_MS = 20000;
 const GT_MAX_RETRIES = 3;               // thử lại tối đa 3 lần (như bản iSH)
 const GT_BACKOFF_MS = [1000, 2000, 4000];
@@ -107,6 +130,143 @@ const MYMEMORY_MAX_CHARS = 500;
 let myMemoryEndpoint = "https://api.mymemory.translated.net/get";
 export function setMyMemoryEndpoint(url) { myMemoryEndpoint = url; }
 
+// ---- LibreTranslate (mục C1, bước dự phòng sau MyMemory) ----
+// KIỂM CHỨNG 2026-11-16 — bản public KHÔNG còn dùng được nếu không có key:
+//   * GET https://libretranslate.com/languages từ Node: HTTP 200, có
+//     ACAO:* (CORS không phải vấn đề), en→vi được hỗ trợ.
+//   * POST /translate không key: bản public trả HTTP 400 "Visit
+//     https://portal.libretranslate.com to get an API key" (kiểm chứng độc
+//     lập 2026-10-27); gói host trả phí từ $29/tháng. Mirror
+//     translate.argosopentech.com đã chết (không resolve/không nối được).
+//   * Từ sandbox này cũng KHÔNG đo trực tiếp được: egress chặn mọi
+//     POST /translate (policy_denied) — chỉ GET /languages là đi qua.
+// Vì vậy bước này MẶC ĐỊNH TẮT (endpoint rỗng): chuỗi mặc định vẫn là
+// proxy → Google → MyMemory → từ điển offline, không thêm request thừa.
+// Chỉ bật khi người dùng tự cấu hình endpoint (+ key nếu instance của họ
+// yêu cầu): instance LibreTranslate tự host (miễn phí, mã nguồn mở) hoặc
+// key portal libretranslate.com. Cấu hình lưu ở localStorage tab Dịch
+// (pb3_libretranslate_endpoint / pb3_libretranslate_key), gửi sang worker
+// như URL proxy. Harness kiểm chứng bước này bằng server giả cùng API.
+const LIBRETRANSLATE_TIMEOUT_MS = 15000;
+const LIBRETRANSLATE_MAX_CHARS = 5000;
+let libreTranslateEndpoint = "";
+let libreTranslateApiKey = "";
+export function setLibreTranslateEndpoint(url) {
+  libreTranslateEndpoint = typeof url === "string" ? url.trim().replace(/\/+$/, "") : "";
+}
+export function getLibreTranslateEndpoint() { return libreTranslateEndpoint; }
+export function setLibreTranslateApiKey(key) {
+  libreTranslateApiKey = typeof key === "string" ? key.trim() : "";
+}
+export function getLibreTranslateApiKey() { return libreTranslateApiKey; }
+
+export async function libreTranslateOne(text, src, dst) {
+  if (!libreTranslateEndpoint) {
+    throw gtError("libretranslate",
+      "LibreTranslate chưa cấu hình (bản public cần API key — xem mục LibreTranslate trong gt.js).");
+  }
+  if ([...text].length > LIBRETRANSLATE_MAX_CHARS) {
+    throw gtError("libretranslate", "Chuỗi quá dài cho LibreTranslate (>5000 ký tự).");
+  }
+  const body = { q: text, source: src, target: dst, format: "text" };
+  if (libreTranslateApiKey) body.api_key = libreTranslateApiKey;
+  let res;
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), LIBRETRANSLATE_TIMEOUT_MS);
+    try {
+      res = await fetch(libreTranslateEndpoint + "/translate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify(body),
+        signal: ctrl.signal,
+      });
+    } finally {
+      clearTimeout(timer);
+    }
+  } catch (e) {
+    if (e && e.name === "AbortError") {
+      throw gtError("libretranslate", "LibreTranslate quá thời gian chờ (15 giây).");
+    }
+    throw gtError("libretranslate", "Không gọi được LibreTranslate (mất mạng hoặc chặn CORS).");
+  }
+  let data = null;
+  try { data = await res.json(); } catch (e) { /* body không phải JSON */ }
+  if (res.status === 400) {
+    throw gtError("libretranslate",
+      "LibreTranslate từ chối (HTTP 400): " +
+      ((data && data.error) || "bản public cần API key — lấy key ở portal.libretranslate.com hoặc tự host instance riêng.") + ".");
+  }
+  if (res.status === 403) {
+    throw gtError("libretranslate",
+      "LibreTranslate từ chối (HTTP 403): " +
+      ((data && data.error) || "API key sai hoặc IP bị chặn.") + ".");
+  }
+  if (res.status === 429) {
+    const e = gtError("libretranslate", "LibreTranslate giới hạn tốc độ (HTTP 429).");
+    e.retryable = true;
+    throw e;
+  }
+  if (!res.ok) {
+    throw gtError("libretranslate", "LibreTranslate trả HTTP " + res.status + ".");
+  }
+  if (!data || typeof data.translatedText !== "string") {
+    throw gtError("libretranslate", "LibreTranslate trả về thiếu bản dịch.");
+  }
+  return data.translatedText;
+}
+
+// ---- Dấu vết chuỗi fallback (mục C1) ----
+// Mỗi lần translateOne/BatchWithFallbacks chạy đều ghi lại từng bước đã
+// thử (bước nào, thành công hay lỗi gì, có bị bỏ qua không) để UI/log báo
+// rõ cho người dùng thay vì im lặng. worker.js công bố qua
+// globalThis.pb3_fallback_trace để bridge.py đọc sau mỗi chuỗi.
+// Lỗi cuối cùng (cả chuỗi đều fail) có kind "all_failed" (trừ quota thì
+// giữ kind "quota" để bridge khóa Google) và message: dòng ĐẦU là tóm tắt
+// gọn cả chuỗi (bridge chỉ lấy dòng đầu, tối đa 200 ký tự), các dòng sau
+// là chi tiết từng bước.
+let lastFallbackTrace = [];
+export function getFallbackTrace() {
+  return lastFallbackTrace.map((e) => ({ ...e }));
+}
+const FALLBACK_STEP_LABEL = {
+  proxy: "Proxy", google: "Google", mymemory: "MyMemory",
+  libretranslate: "LibreTranslate",
+};
+function formatFallbackTrace(trace) {
+  const tried = (trace || []).filter((e) => !e.skipped);
+  const parts = tried.map((e) =>
+    FALLBACK_STEP_LABEL[e.step] + (e.ok ? " OK" : " lỗi " + (e.short || e.detail || "")));
+  let line = parts.join(" → ");
+  const ltSkipped = (trace || []).find((e) => e.skipped && e.step === "libretranslate" &&
+    /chưa cấu hình/.test(e.detail || ""));
+  if (ltSkipped) {
+    line += " · LibreTranslate chưa cấu hình (cần API key)";
+  }
+  return line;
+}
+function fallbackSummary(trace) {
+  const line = formatFallbackTrace(trace);
+  return line +
+    " — tất cả đều lỗi, dùng từ điển offline (~100 từ/cụm) nên hầu hết chuỗi sẽ giữ nguyên.";
+}
+function fallbackAllFailedError(trace, quotaHit, batch) {
+  // Batch: lỗi batch CHƯA phải là hết đường — bridge còn dịch lại từng
+  // chuỗi (đủ chuỗi fallback) nên tóm tắt phải nói rõ điều đó, không được
+  // ghi "dùng từ điển offline" như thể đã hết cách.
+  const summary = batch
+    ? formatFallbackTrace(trace) +
+      " — batch lỗi, sẽ dịch lại từng chuỗi (Google đơn → MyMemory → LibreTranslate nếu có, rồi từ điển offline)."
+    : fallbackSummary(trace);
+  const kind = quotaHit ? "quota" : (batch ? "batch_failed" : "all_failed");
+  const e = gtError(kind, summary +
+    "\n" + (trace || []).map((t) =>
+      "- " + (FALLBACK_STEP_LABEL[t.step] || t.step) + ": " +
+      (t.skipped ? "bỏ qua (" + t.detail + ")" : (t.ok ? "thành công" : t.detail))).join("\n"));
+  e.fallbackTrace = trace;
+  return e;
+}
+
 export async function myMemoryTranslateOne(text, src, dst) {
   if ([...text].length > MYMEMORY_MAX_CHARS) {
     throw gtError("mymemory", "Chuỗi quá dài cho MyMemory (>500 ký tự).");
@@ -149,7 +309,8 @@ export async function myMemoryTranslateOne(text, src, dst) {
 // Dịch 1 chuỗi qua proxy Cloudflare Worker (xem cloudflare/worker.js).
 // Proxy trả {ok:true, translated} hoặc {ok:false, code}:
 //   quota_exceeded -> kind "quota" (hết 500.000 ký tự/tháng, KHÔNG thử
-//                     Google trực tiếp nữa — rơi về MyMemory + offline).
+//                     Google trực tiếp nữa — rơi về MyMemory (+ LibreTranslate
+//                     nếu có) + offline).
 //   lỗi khác       -> kind "proxy" (gọi thử Google trực tiếp rồi MyMemory).
 export async function proxyTranslateOne(text, src, dst, url) {
   const target = url || proxyUrl;
@@ -189,7 +350,7 @@ export async function proxyTranslateOne(text, src, dst, url) {
       "Proxy dịch: đã hết 500.000 ký tự miễn phí của tháng " +
       "(đã dùng " + (data.month_used != null ? data.month_used : "?") +
       "/" + (data.month_limit != null ? data.month_limit : "?") +
-      ") — tự rơi về MyMemory + từ điển offline, không phát sinh phí.");
+      ") — tự rơi về MyMemory (+ LibreTranslate nếu đã cấu hình) + từ điển offline, không phát sinh phí.");
   }
   throw gtError("proxy",
     "Proxy dịch lỗi (" + code + "): " + ((data && data.error) || ("HTTP " + res.status)) + ".");
@@ -249,46 +410,87 @@ export async function proxyTranslateBatch(texts, src, dst, url) {
       "Proxy dịch: đã hết 500.000 ký tự miễn phí của tháng " +
       "(đã dùng " + (data.month_used != null ? data.month_used : "?") +
       "/" + (data.month_limit != null ? data.month_limit : "?") +
-      ") — tự rơi về MyMemory + từ điển offline, không phát sinh phí.");
+      ") — tự rơi về MyMemory (+ LibreTranslate nếu đã cấu hình) + từ điển offline, không phát sinh phí.");
   }
   throw gtError("proxy",
     "Proxy dịch lỗi (" + code + "): " + ((data && data.error) || ("HTTP " + res.status)) + ".");
 }
 
 // Chuỗi fallback đầy đủ mà worker.js gán cho Python (pb3_google_translate):
-//   proxy (nếu có URL) -> Google trực tiếp -> MyMemory -> ném lỗi để
+//   proxy (nếu có URL) -> Google trực tiếp -> MyMemory ->
+//   LibreTranslate (CHỈ khi đã cấu hình endpoint, mặc định tắt vì bản
+//   public cần API key — xem mục LibreTranslate ở trên) -> ném lỗi để
 //   bridge dùng từ điển offline cho chuỗi đó.
 // Riêng quota_exceeded thì BỎ QUA Google trực tiếp (đúng luật: hết hạn mức
-// tháng thì chỉ còn MyMemory + offline, không vòng lại Google bằng đường khác).
+// tháng thì chỉ còn MyMemory (+ LibreTranslate nếu có) + offline, không
+// vòng lại Google bằng đường khác).
+// Mỗi bước đều ghi vào lastFallbackTrace (xem getFallbackTrace): bước nào
+// được dùng/thành công/lỗi gì đều đọc được từ worker/bridge để hiện UI.
 export async function translateOneWithFallbacks(text, src, dst) {
-  let lastErr = null;
+  const trace = [];
+  lastFallbackTrace = trace;
   let quotaHit = false;
+  const note = (step, ok, detail, extra) => {
+    const e = { step, ok, detail };
+    if (extra) Object.assign(e, extra);
+    trace.push(e);
+  };
+  const short = (msg) => {
+    if (/API key/i.test(String(msg))) return "cần API key";
+    const m = String(msg || "").match(/HTTP \d+/);
+    if (m) return m[0];
+    if (/Sorry/i.test(String(msg))) return "trang Sorry";
+    if (/quá thời gian/i.test(String(msg))) return "quá thời gian chờ";
+    if (/mất mạng|CORS/i.test(String(msg))) return "mất mạng/CORS";
+    return String(msg || "").split("\n")[0].slice(0, 40) || "?";
+  };
   if (proxyUrl) {
     try {
-      return await proxyTranslateOne(text, src, dst, proxyUrl);
+      const out = await proxyTranslateOne(text, src, dst, proxyUrl);
+      note("proxy", true, "dịch qua proxy");
+      return out;
     } catch (e) {
       if (e && e.kind === "quota") quotaHit = true;
-      lastErr = e;
+      note("proxy", false, e.message, { short: e.kind === "quota" ? "hết hạn mức tháng" : short(e.message) });
     }
   }
   if (!quotaHit) {
     try {
-      return await googleTranslateOne(text, src, dst);
+      const out = await googleTranslateOne(text, src, dst);
+      note("google", true, "dịch qua Google");
+      return out;
     } catch (e) {
-      lastErr = e;
+      note("google", false, e.message, { short: short(e.message) });
     }
   }
   try {
-    return await myMemoryTranslateOne(text, src, dst);
+    const out = await myMemoryTranslateOne(text, src, dst);
+    note("mymemory", true, "dịch qua MyMemory");
+    return out;
   } catch (e) {
-    lastErr = e;
+    note("mymemory", false, e.message, { short: short(e.message) });
   }
-  throw lastErr || gtError("network", "Dịch lỗi không rõ.");
+  if (libreTranslateEndpoint) {
+    try {
+      const out = await libreTranslateOne(text, src, dst);
+      note("libretranslate", true, "dịch qua LibreTranslate");
+      return out;
+    } catch (e) {
+      note("libretranslate", false, e.message, { short: short(e.message) });
+    }
+  } else {
+    note("libretranslate", false,
+      "chưa cấu hình endpoint (bản public cần API key)", { skipped: true });
+  }
+  throw fallbackAllFailedError(trace, quotaHit);
 }
 
 // Dịch 1 batch (mảng chuỗi) với fallback: proxy (nếu có URL) -> Google
 // trực tiếp (gtx, joined-text) -> ném lỗi để Python dịch lại từng chuỗi
-// (proxy đơn -> Google đơn -> MyMemory -> offline).
+// (proxy đơn -> Google đơn -> MyMemory -> LibreTranslate nếu có -> offline).
+// MyMemory/LibreTranslate không có API batch nên KHÔNG thử ở tầng batch:
+// bridge rơi về từng chuỗi cho batch đó, và từng chuỗi đó đi qua đủ chuỗi
+// fallback (kể cả LibreTranslate). Trace batch ghi rõ điều này.
 // Trả về CHUỖI JSON {"translations":[...], "mode":"proxy-batch"|"gtx-joined"}
 // (không trả mảng JS trực tiếp: chuỗi JSON qua Pyodide thành str Python
 // luôn, khỏi phụ thuộc JsProxy/to_py theo phiên bản Pyodide).
@@ -297,26 +499,48 @@ export async function translateBatchWithFallbacks(texts, src, dst) {
   if (!arr || !arr.length) {
     return JSON.stringify({ translations: [], mode: "empty" });
   }
-  let lastErr = null;
+  const trace = [];
+  lastFallbackTrace = trace;
   let quotaHit = false;
+  const note = (step, ok, detail, extra) => {
+    const e = { step, ok, detail };
+    if (extra) Object.assign(e, extra);
+    trace.push(e);
+  };
+  const short = (msg) => {
+    if (/API key/i.test(String(msg))) return "cần API key";
+    const m = String(msg || "").match(/HTTP \d+/);
+    if (m) return m[0];
+    if (/Sorry/i.test(String(msg))) return "trang Sorry";
+    return String(msg || "").split("\n")[0].slice(0, 40) || "?";
+  };
   if (proxyUrl) {
     try {
       const out = await proxyTranslateBatch(arr, src, dst, proxyUrl);
+      note("proxy", true, "dịch batch qua proxy");
       return JSON.stringify({ translations: out, mode: "proxy-batch" });
     } catch (e) {
       if (e && e.kind === "quota") quotaHit = true;
-      lastErr = e;
+      note("proxy", false, e.message, { short: e.kind === "quota" ? "hết hạn mức tháng" : short(e.message) });
     }
   }
   if (!quotaHit) {
     try {
       const out = await googleTranslateBatch(arr, src, dst);
+      note("google", true, "dịch batch qua Google");
       return JSON.stringify({ translations: out, mode: "gtx-joined" });
     } catch (e) {
-      lastErr = e;
+      note("google", false, e.message, { short: short(e.message) });
     }
   }
-  throw lastErr || gtError("network", "Dịch batch lỗi không rõ.");
+  note("mymemory", false,
+    "không thử ở tầng batch — sẽ thử theo từng chuỗi ở bước sau", { skipped: true });
+  note("libretranslate", false,
+    libreTranslateEndpoint
+      ? "không thử ở tầng batch — sẽ thử theo từng chuỗi ở bước sau"
+      : "chưa cấu hình endpoint (bản public cần API key)",
+    { skipped: true });
+  throw fallbackAllFailedError(trace, quotaHit, true);
 }
 
 function sleep(ms) {
@@ -362,7 +586,7 @@ async function gtxFetchOnce(q, usePost, src, dst) {
           client: "gtx", sl: src, tl: dst, dt: "t",
         });
         body.append("q", q);
-        res = await fetch(GT_ENDPOINT, {
+        res = await fetch(getGoogleEndpoint(), {
           method: "POST",
           headers: {
             "Content-Type": "application/x-www-form-urlencoded",
@@ -372,7 +596,7 @@ async function gtxFetchOnce(q, usePost, src, dst) {
           signal: ctrl.signal,
         });
       } else {
-        const url = GT_ENDPOINT + "?" + new URLSearchParams({
+        const url = getGoogleEndpoint() + "?" + new URLSearchParams({
           client: "gtx", sl: src, tl: dst, dt: "t", q,
         }).toString();
         res = await fetch(url, {

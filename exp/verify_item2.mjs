@@ -330,7 +330,9 @@ async function callWorker(env, body, method = "POST", ip = "1.2.3.4") {
   fetchStub = null;
 }
 
-{ // 12. Google Sorry + MyMemory lỗi -> ném lỗi kind mymemory (bridge dùng offline)
+{ // 12. Google Sorry + MyMemory lỗi -> ném lỗi kind all_failed (C1: lỗi
+  // cuối tóm tắt cả chuỗi thay vì ném kind của provider cuối; bridge vẫn
+  // bắt lỗi này rồi dùng từ điển offline như trước, không đổi)
   fetchStub = async (u) => {
     if (u.includes("translate.googleapis.com")) {
       return new Response("<html><head><title>Sorry...</title></head></html>", { status: 200 });
@@ -345,9 +347,9 @@ async function callWorker(env, body, method = "POST", ip = "1.2.3.4") {
   } catch (e) {
     kind = e && e.kind;
   }
-  rec("gt_all_fail_throws_for_offline", kind === "mymemory",
+  rec("gt_all_fail_throws_for_offline", kind === "all_failed",
     "Google Sorry + MyMemory 500 -> ném kind=" + JSON.stringify(kind) +
-    " (phải = 'mymemory': bridge bắt lỗi này rồi dùng từ điển offline)");
+    " (phải = 'all_failed': lỗi cuối tóm tắt cả chuỗi; bridge bắt lỗi này rồi dùng từ điển offline)");
   setMyMemoryEndpoint("https://api.mymemory.translated.net/get");
   fetchStub = null;
 }

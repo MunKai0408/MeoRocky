@@ -438,6 +438,11 @@ def _gt_error_text(exc):
     except Exception:
         kind = None
     msg = str(exc).split("\n")[0][:200]
+    if kind == "all_failed":
+        # Lỗi cuối chuỗi fallback (mục C1): message đã là tóm tắt đầy đủ
+        # cả chuỗi ("Google lỗi 429 → MyMemory lỗi … — tất cả đều lỗi…"),
+        # trả nguyên văn, không gắn thêm tiền tố "Google Translate lỗi".
+        return msg
     if kind:
         return "Google Translate lỗi (%s): %s" % (kind, msg)
     return "Google Translate lỗi: %s" % msg
@@ -582,10 +587,12 @@ async def translate_json_google(json_text, to="vi", credit=True):
             _gt = getattr(_js, "pb3_google_translate", None)
             _gt_batch = getattr(_js, "pb3_google_translate_batch", None)
             _cancel_fn = getattr(_js, "pb3_google_cancelled", None)
+            _trace_fn = getattr(_js, "pb3_fallback_trace", None)
         except Exception:
             _gt = None
             _gt_batch = None
             _cancel_fn = None
+            _trace_fn = None
 
         def _is_cancelled():
             try:
@@ -593,7 +600,40 @@ async def translate_json_google(json_text, to="vi", credit=True):
             except Exception:
                 return False
 
+        def _gt_fallback_step():
+            """Bước fallback đã DÙNG cho chuỗi vừa dịch xong (mục C1).
+
+            Đọc trace JS (worker.js công bố pb3_fallback_trace): trả tên
+            bước thành công ("google"/"mymemory"/"libretranslate"/"proxy")
+            CHỈ khi bước đầu đã lỗi (trace có >1 mục) — tức là thật sự
+            phải dùng fallback; bước đầu thành công ngay thì trả "".
+            Không có hàm trace (mock cũ trong harness) thì trả "".
+            """
+            try:
+                if _trace_fn is None:
+                    return ""
+                raw = _trace_fn()
+                trace = json.loads(str(raw))
+                if not isinstance(trace, list) or len(trace) < 2:
+                    return ""
+                for entry in trace:
+                    if isinstance(entry, dict) and entry.get("ok"):
+                        return str(entry.get("step") or "")
+                return ""
+            except Exception:
+                return ""
+
         fallback = OfflineGlossaryProvider()
+        translated = {}
+        warnings = []
+        untranslated_keys = []
+        google_count = glossary_count = 0
+        untranslated = empty = unchanged = 0
+        network_error = None
+        cancelled = False
+        # Số chuỗi mỗi bước fallback đã cứu (mục C1): {"mymemory": 12, ...}
+        # — hiện ở UI qua fallback_note để user thấy bước nào đã dùng.
+        fallback_used = {}
         translated = {}
         warnings = []
         untranslated_keys = []
@@ -767,10 +807,20 @@ async def translate_json_google(json_text, to="vi", credit=True):
                         origin = "google"
                         single_requests += 1
                         consec_failures = 0
+                        # Mục C1: ghi nhận bước fallback đã cứu chuỗi này
+                        # (vd Google 429 → MyMemory) để báo rõ ở UI.
+                        _step = _gt_fallback_step()
+                        if _step:
+                            fallback_used[_step] = fallback_used.get(_step, 0) + 1
                     except Exception as exc:  # noqa: BLE001
-                        if network_error is None:
-                            network_error = _gt_error_text(exc)
                         kind = _gt_kind(exc)
+                        if kind in ("all_failed", "quota"):
+                            # Chẩn đoán cuối cùng, rõ hơn lỗi batch đầu
+                            # tiên (vd "batch lỗi, sẽ dịch lại từng chuỗi"):
+                            # ghi đè để UI hiện đúng lý do thật.
+                            network_error = _gt_error_text(exc)
+                        elif network_error is None:
+                            network_error = _gt_error_text(exc)
                         if kind == "cancelled":
                             cancelled = True
                             stop_here = True
@@ -854,6 +904,18 @@ async def translate_json_google(json_text, to="vi", credit=True):
             batch_mode_out = "single"
         else:
             batch_mode_out = "none"
+        # Mục C1: ghi chú bước fallback đã dùng, để app.js hiện rõ ở UI
+        # (vd "Đã dùng MyMemory cho 12 chuỗi (Google lỗi HTTP 429)").
+        # google_count vẫn đếm chung mọi chuỗi dịch trực tuyến thành công
+        # (giữ tương thích harness cũ); chi tiết từng bước ở đây.
+        _fallback_labels = {"proxy": "Proxy", "google": "Google",
+                            "mymemory": "MyMemory",
+                            "libretranslate": "LibreTranslate"}
+        fallback_note = ""
+        if fallback_used:
+            _bits = ["%s cho %d chuỗi" % (_fallback_labels.get(k, k), v)
+                     for k, v in sorted(fallback_used.items())]
+            fallback_note = "Đã dùng fallback: " + ", ".join(_bits) + "."
         return json.dumps({
             "ok": True, "translated": translated, "total": int(len(kv)),
             "untranslated": int(untranslated),
@@ -863,6 +925,8 @@ async def translate_json_google(json_text, to="vi", credit=True):
             "google_count": int(google_count),
             "glossary_count": int(glossary_count),
             "network_error": network_error, "cancelled": bool(cancelled),
+            "fallback_used": fallback_used,
+            "fallback_note": fallback_note,
             "deduped": int(deduped),
             "unique_segments": int(len(uniques)),
             "batches": int(len(batches)),

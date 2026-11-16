@@ -1,0 +1,121 @@
+{
+  "results": {
+    "node_google429_then_mymemory": {
+      "ok": true,
+      "detail": "kết quả=\"Xin chào thế giới\"; trace=[google:lỗi, mymemory:ok]; Google gọi 4 lần (retry 429), MyMemory gọi 1 lần",
+      "seconds": 7.1
+    },
+    "node_mymemory_fail_then_libretranslate": {
+      "ok": true,
+      "detail": "kết quả=\"Xin chào thế giới\"; trace=[google:lỗi, mymemory:lỗi, libretranslate:ok]; MyMemory gọi 1 lần (500), LibreTranslate gọi 1 lần",
+      "seconds": 7
+    },
+    "node_all_fail_reports_chain": {
+      "ok": true,
+      "detail": "kind=all_failed; dòng đầu=\"Google lỗi HTTP 429 → MyMemory lỗi HTTP 500 → LibreTranslate lỗi cần API key — tất cả đều lỗi, dùng từ điển offline (~100 từ/cụm) nên hầu hết chuỗi sẽ giữ nguyên.\" (dài 162 ký tự, bridge lấy tối đa 200); trace=[google:lỗi, mymemory:lỗi, libretranslate:lỗi]",
+      "seconds": 7
+    },
+    "node_libretranslate_unconfigured_skipped": {
+      "ok": true,
+      "detail": "kind=all_failed; LibreTranslate gọi 0 lần; dòng đầu=\"Google lỗi HTTP 429 → MyMemory lỗi HTTP 500 · LibreTranslate chưa cấu hình (cần API key) — tất cả đều lỗi, dùng từ điển offline (~100 từ/cụm) nên hầu hết chuỗi sẽ giữ nguyên.\"",
+      "seconds": 7
+    },
+    "node_proxy_tried_first": {
+      "ok": true,
+      "detail": "kết quả=\"VI qua proxy: Hello world\"; proxy gọi 1 lần, Google 0 lần, MyMemory 0 lần; trace=[proxy:ok]",
+      "seconds": 0
+    },
+    "node_proxy_quota_skips_google": {
+      "ok": true,
+      "detail": "kết quả=\"Xin chào thế giới\"; Google gọi 0 lần (phải = 0 khi hết hạn mức), MyMemory 1 lần; trace=[proxy:lỗi, mymemory:ok]",
+      "seconds": 0
+    },
+    "node_batch_fail_says_retry_singles": {
+      "ok": true,
+      "detail": "kind=batch_failed; dòng đầu=\"Proxy lỗi Proxy dịch lỗi (proxy_error): boom giả. → Google lỗi HTTP 429 · LibreTranslate chưa cấu hình (cần API key) — batch lỗi, sẽ dịch lại từng chuỗi (Google đơn → MyMemory → LibreTranslate nếu có, rồi từ điển offline).\"",
+      "seconds": 7
+    },
+    "node_libretranslate_unit": {
+      "ok": true,
+      "detail": "dịch đúng=\"Xin chào thế giới\" (api_key gửi kèm: \"key-giả\"); 400 không key → kind=libretranslate, msg=\"LibreTranslate từ chối (HTTP 400): Visit https://portal.libretranslate.com to ge\"; chuỗi >5000 ký tự → lỗi ngay không gọi mạng (số lần gọi không đổi: 2)",
+      "seconds": 0
+    },
+    "live_google_real": {
+      "ok": true,
+      "detail": "Google thật trả HTTP 200; body đầu: \"[[[\\\"chơi\\\",\\\"play\\\",null,null,4]],null,\\\"en\\\",null,null,null,null,[]]\" (probe chỉ ghi nhận, không ép PASS dịch được)",
+      "seconds": 0.6
+    },
+    "live_mymemory_real": {
+      "ok": true,
+      "detail": "MyMemory thật trả HTTP 200, responseStatus=200, translatedText=\"Xin chào thế giới\"",
+      "seconds": 1.4
+    },
+    "live_libretranslate_languages": {
+      "ok": true,
+      "detail": "GET libretranslate.com/languages → HTTP 200, ACAO=*, en→vi hỗ trợ: true (CORS không phải vấn đề; vấn đề là API key ở bước POST)",
+      "seconds": 1
+    },
+    "live_libretranslate_post_blocked_note": {
+      "ok": true,
+      "detail": "POST libretranslate.com/translate → HTTP 400, body đầu: \"{\\\"error\\\":\\\"Visit https://portal.libretranslate.com to get an API key\\\"}\\n\" (từ sandbox này POST /translate bị egress chặn policy_denied nên KHÔNG đo được phản hồi thật của server; bằng chứng \"cần API key (HTTP 400)\" lấy từ kiểm chứng độc lập 2026-10-27, xem fallback_chain_results.md)",
+      "seconds": 0.9
+    },
+    "bridge_google429_mymemory_note": {
+      "ok": true,
+      "detail": "hello=\"Xin chào thế giới\" (qua MyMemory), play=\"Chơi\" (từ điển); fallback_note=\"Đã dùng fallback: MyMemory cho 1 chuỗi.\"; fallback_used={\"mymemory\":1}; translated_by=mixed google_count=1",
+      "seconds": 14.4
+    },
+    "bridge_all_fail_offline_chain_error": {
+      "ok": true,
+      "detail": "translated_by=offline; hello giữ nguyên=\"Hello world\"; network_error=\"Error: Google lỗi HTTP 429 → MyMemory lỗi HTTP 500 · LibreTranslate chưa cấu hình (cần API key) — tất cả đều lỗi, dùng từ điển offline (~100 từ/cụm) nên hầu hết chuỗi sẽ giữ nguyên.\"",
+      "seconds": 14
+    },
+    "bridge_proxy_batch_ok": {
+      "ok": true,
+      "detail": "batch_mode=proxy-batch; hello=\"VI qua proxy: Hello world\"; fallback_note=\"\" (proxy thành công ngay → không dùng fallback)",
+      "seconds": 0
+    },
+    "browser_boot": {
+      "ok": true,
+      "detail": "boot tới Sẵn sàng (390px)",
+      "seconds": 6
+    },
+    "browser_google429_mymemory_ui": {
+      "ok": true,
+      "detail": "output hello=\"Xin chào thế giới\"; info: \"Đã dịch 1/1 chuỗi (Google: 1 đoạn · từ điển offline: 0 đoạn · bộ nhớ dịch: 0 chuỗi · khử trùng lặp: 0 đoạn · batch: 0 request, từng chuỗi: 1). Đã dùng fallback: MyMemory cho 1 chuỗi. Xong — bấm “Tải bản dịch (.json)” để lưu.\"; không hiện \"Lý do\" giả khi đã dịch xong qua fallback; route Google 429 đã chặn 8 request (worker fetch thật bị chặn, không phải mock trong code)",
+      "seconds": 14.7
+    },
+    "browser_all_fail_clear_error": {
+      "ok": true,
+      "detail": "info: \"Đã hủy giữa chừng — Đã dịch 0/1 chuỗi (Google: 0 đoạn · từ điển offline: 0 đoạn · bộ nhớ dịch: 0 chuỗi · khử trùng lặp: 0 đoạn · batch: 0 request, từng chuỗi: 0). Lý do: Error: Google lỗi HTTP 429 → MyMemory lỗi HTTP 500 · LibreTranslate chưa cấu hình (cần API key) — tất cả đều lỗi, dùng từ điển offline (~100 từ/cụm) nên hầu hết chuỗi sẽ giữ nguyên. Từ điển offline chỉ biết ~100 từ/cụm thông dụng \"; chuỗi chưa dịch được giữ lại trong hàng đợi để dịch tiếp (output không ghi nhận bản dịch giả): \"{}\"",
+      "seconds": 14.1
+    },
+    "browser_390_no_overflow_no_errors": {
+      "ok": true,
+      "detail": "390px: scrollWidth=390 clientWidth=390 (không tràn); pageerror: không có",
+      "seconds": 0
+    }
+  },
+  "failures": 0,
+  "live_probe": {
+    "google_real": {
+      "status": 200,
+      "sorry": false,
+      "head": "[[[\"chơi\",\"play\",null,null,4]],null,\"en\",null,null,null,null,[]]"
+    },
+    "mymemory_real": {
+      "status": 200,
+      "translated": "Xin chào thế giới",
+      "responseStatus": 200
+    },
+    "libretranslate_languages": {
+      "status": 200,
+      "en_targets_vi": true,
+      "aca": "*"
+    },
+    "libretranslate_post": {
+      "status": 400,
+      "head": "{\"error\":\"Visit https://portal.libretranslate.com to get an API key\"}\n"
+    }
+  }
+}

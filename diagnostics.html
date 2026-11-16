@@ -44,11 +44,26 @@ trình duyệt để tab Dịch ở trang chính dùng luôn.</p>
   <button id="btn-proxy-save" class="secondary">Lưu URL proxy</button>
 </p>
 
+<h2>4. LibreTranslate (tùy chọn, mặc định tắt)</h2>
+<p class="note">Bước dự phòng sau MyMemory. Bản public libretranslate.com hiện
+yêu cầu API key (lấy ở portal.libretranslate.com, gói trả phí) — không key
+thì nút dưới sẽ báo HTTP 400, đó là giới hạn của nhà cung cấp, không phải
+lỗi tool. Tự host LibreTranslate (miễn phí, mã nguồn mở) thì dán URL
+instance của bạn, thường không cần key. Nút “Lưu LibreTranslate” ghi
+endpoint + key vào trình duyệt để tab Dịch ở trang chính dùng luôn.</p>
+<input type="text" id="lt-endpoint" placeholder="vd: https://libretranslate.com">
+<input type="text" id="lt-key" placeholder="API key (để trống nếu instance không cần key)" autocomplete="off">
+<p>
+  <button id="btn-libretranslate">Kiểm tra LibreTranslate</button>
+  <button id="btn-libretranslate-save" class="secondary">Lưu LibreTranslate</button>
+</p>
+
 <h2>Kết quả</h2>
 <button id="btn-copy">Sao chép kết quả</button>
 <pre id="out">Chưa chạy. Bấm 1 nút kiểm tra ở trên.</pre>
 
 <script type="module">
+import { libreTranslateOne, setLibreTranslateEndpoint, setLibreTranslateApiKey } from "./gt.js";
 const out = document.getElementById("out");
 const report = { when: new Date().toISOString() };
 const show = () => { out.textContent = JSON.stringify(report, null, 2); };
@@ -214,6 +229,46 @@ document.getElementById("btn-proxy-save").onclick = async () => {
   show();
 };
 
+document.getElementById("btn-libretranslate").onclick = async () => {
+  const endpoint = document.getElementById("lt-endpoint").value.trim();
+  const apiKey = document.getElementById("lt-key").value.trim();
+  const r = { endpoint: endpoint || "(trống)" };
+  const t0 = performance.now();
+  if (!endpoint) {
+    r.ok = false;
+    r.error = "Chưa nhập endpoint LibreTranslate. Bản public cần API key (portal.libretranslate.com); hoặc tự host instance riêng rồi dán URL vào đây.";
+    report.libretranslate = r; show();
+    return;
+  }
+  try {
+    setLibreTranslateEndpoint(endpoint);
+    setLibreTranslateApiKey(apiKey);
+    const got = await libreTranslateOne(TEST_TEXT, "en", "vi");
+    r.ok = true; r.sample = got; r.ms = Math.round(performance.now() - t0);
+  } catch (err) {
+    r.ok = false; r.ms = Math.round(performance.now() - t0);
+    r.kind = err && err.kind;
+    r.error = String(err && err.message || err);
+  }
+  report.libretranslate = r;
+  show();
+};
+
+document.getElementById("btn-libretranslate-save").onclick = async () => {
+  const endpoint = document.getElementById("lt-endpoint").value.trim();
+  const apiKey = document.getElementById("lt-key").value.trim();
+  try {
+    localStorage.setItem("pb3_libretranslate_endpoint", endpoint);
+    localStorage.setItem("pb3_libretranslate_key", apiKey);
+    report.libretranslate_saved = endpoint || "(đã xóa)";
+    alert(endpoint ? "Đã lưu LibreTranslate — tab Dịch ở trang chính sẽ thử thêm bước này sau MyMemory." : "Đã xóa LibreTranslate — chuỗi dịch chỉ còn proxy → Google → MyMemory → từ điển offline.");
+  } catch (e) {
+    report.libretranslate_saved = "LỖI localStorage: " + e.message;
+    alert("Không lưu được vào localStorage: " + e.message);
+  }
+  show();
+};
+
 document.getElementById("btn-copy").onclick = async () => {
   try { await navigator.clipboard.writeText(out.textContent); alert("Đã sao chép"); }
   catch (_) {
@@ -228,6 +283,10 @@ document.getElementById("btn-copy").onclick = async () => {
 try {
   const saved = localStorage.getItem("pb3_translate_proxy") || "";
   if (saved) document.getElementById("proxy-url").value = saved;
+  const ltEndpoint = localStorage.getItem("pb3_libretranslate_endpoint") || "";
+  if (ltEndpoint) document.getElementById("lt-endpoint").value = ltEndpoint;
+  const ltKey = localStorage.getItem("pb3_libretranslate_key") || "";
+  if (ltKey) document.getElementById("lt-key").value = ltKey;
 } catch (e) { /* localStorage không có */ }
 </script>
 </body>

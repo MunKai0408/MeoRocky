@@ -266,9 +266,11 @@ async function waitForVm(fn, timeoutMs, label) {
     await sleep(50);
     const order = t3.posted.map((m) => m.op);
     const msg = await p;
-    // getWorker gửi set_translate_proxy ngay khi tạo worker, rồi mới boot,
-    // rồi mới chạy op run; boot đúng 1 lần.
-    okC = order[0] === "set_translate_proxy" && order[1] === "boot" &&
+    // getWorker gửi set_translate_proxy + set_libretranslate ngay khi tạo
+    // worker, rồi mới boot, rồi mới chạy op run; boot đúng 1 lần. (C1 thêm
+    // set_libretranslate vào bước gửi cấu hình lúc tạo worker.)
+    okC = order[0] === "set_translate_proxy" && order[1] === "set_libretranslate" &&
+      order[2] === "boot" &&
       order.indexOf("run") > order.indexOf("boot") &&
       order.filter((o) => o === "boot").length === 1 && msg.ok === true &&
       t3.ctx.__PB3_BOOT_STATE().booted === true;
