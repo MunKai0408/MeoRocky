@@ -15,10 +15,14 @@ Hai điều chỉnh bắt buộc trên Pyodide (đã thử thật ở giai đo�
 
 Không dùng được trên web (ghi rõ, đừng gọi): UnityPy (micropip fail vì
 thiếu wheel etcpak), mọi tính năng cần threading (batch song song),
-Google Translate qua urllib (chưa thử trong Pyodide — bản web v1 chỉ
-dịch bằng từ điển offline).
+Google Translate qua urllib (urllib không gọi mạng được trong Pyodide).
+Dịch Google trên web đi đường khác: `gt.js` dùng fetch() trong Worker,
+Python gọi hàm JS đó qua module `js` từ hàm async `translate_json_google`
+(xem dưới) — Python async await được Promise JS nên event loop vẫn chạy
+và nút Hủy vẫn nhận được giữa đợt dịch.
 """
 
+import asyncio
 import hashlib
 import io
 import json
@@ -255,6 +259,200 @@ def translate_json(json_text, to="vi", credit=True):
             "untranslated_keys": list(res.untranslated_keys or [])[:50],
             "warnings": list(res.warnings or [])[:20],
             "credit_key": res.credit_key,
+            "translated_by": "offline", "google_count": 0,
+            "glossary_count": int(res.glossary),
+            "network_error": None, "cancelled": False,
+        }, ensure_ascii=False)
+    except Exception as e:  # noqa: BLE001
+        return _err(e)
+
+
+def _gt_error_text(exc):
+    """Tin lỗi ngắn gọn từ lỗi JS (JsException bọc Error của gt.js)."""
+    kind = None
+    try:
+        kind = getattr(exc, "kind", None)
+    except Exception:
+        kind = None
+    msg = str(exc).split("\n")[0][:200]
+    if kind:
+        return "Google Translate lỗi (%s): %s" % (kind, msg)
+    return "Google Translate lỗi: %s" % msg
+
+
+async def translate_json_google(json_text, to="vi", credit=True):
+    """Dịch bảng key-value bằng Google Translate thật qua fetch() của JS.
+
+    Luồng: Python (async) gọi `js.pb3_google_translate` (gt.js) cho từng
+    đoạn text đã che placeholder — 1 chuỗi/request, cách nhau 0.4 giây
+    (luật bản iSH); gt.js tự thử lại tối đa 3 lần với backoff khi 429/5xx.
+    Đoạn nào Google lỗi (mất mạng, CORS, 429 hết retry, trang Sorry) thì
+    dùng từ điển offline cho đoạn đó rồi dịch tiếp, không crash; lỗi đầu
+    tiên ghi vào network_error. Chỉ dịch VALUE, giữ KEY; placeholder
+    ({0}, %s), thẻ, xuống dòng được che/khôi phục như bản iSH; credit
+    'Việt Hoá Bởi Bear' gắn như translate_json. Nút Hủy: Python kiểm tra
+    `js.pb3_google_cancelled()` trước mỗi chuỗi (await fetch nhường lại
+    event loop nên worker vẫn nhận được message hủy) — hủy thì trả kết
+    quả từng phần với cancelled=True.
+
+    Kết quả thêm: translated_by ("google"/"mixed"/"offline"), google_count,
+    glossary_count, network_error, cancelled. Hàm này là async — worker.js
+    await Promise trả về trước khi gửi kết quả về main thread.
+    """
+    try:
+        from sdk.translate import (OfflineGlossaryProvider, apply_credit,
+                                   check_lang, mask_line, placeholders_ok,
+                                   unmask_line)
+
+        kv = json.loads(json_text)
+        if not isinstance(kv, dict):
+            raise ValueError("File JSON phải là object key-value.")
+        kv = {str(k): (v if isinstance(v, str)
+                       else json.dumps(v, ensure_ascii=False))
+              for k, v in kv.items()}
+        check_lang(to, allow_auto=False)
+        src = "vi" if to == "en" else "en"
+
+        try:
+            import js as _js
+            _gt = getattr(_js, "pb3_google_translate", None)
+            _cancel_fn = getattr(_js, "pb3_google_cancelled", None)
+        except Exception:
+            _gt = None
+            _cancel_fn = None
+
+        def _is_cancelled():
+            try:
+                return bool(_cancel_fn()) if _cancel_fn is not None else False
+            except Exception:
+                return False
+
+        fallback = OfflineGlossaryProvider()
+        translated = {}
+        warnings = []
+        untranslated_keys = []
+        google_count = glossary_count = 0
+        untranslated = empty = unchanged = 0
+        network_error = None
+        cancelled = False
+
+        # Tách từng VALUE thành đoạn cần dịch (che placeholder trước),
+        # cùng cách sdk.translate.translate_table làm.
+        segments = []  # (key, line_no, masked, tokens, lines)
+        pending = {}
+        for key, value in kv.items():
+            if value == "":
+                translated[key] = ""
+                empty += 1
+                continue
+            lines = value.split("\n")
+            segs = []
+            for i, line in enumerate(lines):
+                masked, tokens = mask_line(line)
+                # Dòng chỉ còn token che (__PB3PHn__) thì không có chữ
+                # thật để dịch — giữ nguyên, khỏi gửi Google.
+                bare = masked
+                for j in range(len(tokens)):
+                    bare = bare.replace("__PB3PH%d__" % j, "")
+                if not any(ch.isalnum() for ch in bare):
+                    continue
+                segs.append((i, masked, tokens))
+            if not segs:
+                translated[key] = value
+                unchanged += 1
+                continue
+            pending[key] = (value, lines, segs)
+            for (i, masked, tokens) in segs:
+                segments.append((key, i, masked, tokens))
+        total = len(segments)
+
+        seg_out = {}  # (key, line_no) -> (translated_masked_or_None, origin)
+        # Ngắt mạch: Google lỗi liên tiếp 3 chuỗi (vd IP bị 429+Sorry) thì
+        # dừng gọi Google cho phần còn lại, dùng thẳng từ điển offline —
+        # khỏi bắt người dùng chờ mỗi chuỗi thử lại 3 lần vô ích.
+        consec_failures = 0
+        for idx, (key, line_no, masked, _tokens) in enumerate(segments):
+            if _is_cancelled():
+                cancelled = True
+                break
+            if idx:
+                await asyncio.sleep(0.4)
+            val = None
+            origin = ""
+            if _gt is not None:
+                try:
+                    got = await _gt(masked, src, to)
+                    val = str(got)
+                    origin = "google"
+                    consec_failures = 0
+                except Exception as exc:  # noqa: BLE001 - rơi về offline
+                    if network_error is None:
+                        network_error = _gt_error_text(exc)
+                    consec_failures += 1
+                    if consec_failures >= 3:
+                        _gt = None
+                        warnings.append(
+                            "Google lỗi liên tiếp 3 chuỗi — dừng gọi Google, "
+                            "dùng từ điển offline cho phần còn lại.")
+            if val is None:
+                fb = fallback.translate_batch([masked], src, to)
+                if fb and fb[0] is not None:
+                    val = fb[0]
+                    origin = "glossary"
+            seg_out[(key, line_no)] = (val, origin)
+            if origin == "google":
+                google_count += 1
+            elif origin == "glossary":
+                glossary_count += 1
+            _emit("translate", idx + 1, total)
+
+        for key, (value, lines, segs) in pending.items():
+            out_lines = list(lines)
+            n_missing = n_glossary = 0
+            for (i, _masked, tokens) in segs:
+                val, origin = seg_out.get((key, i), (None, ""))
+                if val is None:
+                    n_missing += 1
+                    continue
+                out_lines[i] = unmask_line(val, tokens)
+                if origin == "glossary":
+                    n_glossary += 1
+            new_value = "\n".join(out_lines)
+            if n_missing == len(segs):
+                translated[key] = value
+                untranslated += 1
+                untranslated_keys.append(key)
+            elif n_missing:
+                translated[key] = new_value
+                untranslated_keys.append(key)
+                warnings.append("key %s: %d/%d dòng chưa dịch (giữ nguyên)"
+                                % (key, n_missing, len(segs)))
+            else:
+                translated[key] = new_value
+                if n_missing == 0 and not placeholders_ok(value, new_value):
+                    warnings.append(
+                        "key %s: placeholder/thẻ/xuống dòng thay đổi sau khi "
+                        "dịch (đã giữ bản dịch, kiểm tra lại trước khi ghi "
+                        "ngược)" % key)
+        translated = {key: translated[key] for key in kv}
+        credit_key = None
+        if credit:
+            credit_key = apply_credit(translated)
+        if google_count == 0:
+            translated_by = "offline"
+        elif glossary_count == 0 and untranslated == 0:
+            translated_by = "google"
+        else:
+            translated_by = "mixed"
+        return json.dumps({
+            "ok": True, "translated": translated, "total": int(len(kv)),
+            "untranslated": int(untranslated),
+            "untranslated_keys": untranslated_keys[:50],
+            "warnings": warnings[:20], "credit_key": credit_key,
+            "translated_by": translated_by,
+            "google_count": int(google_count),
+            "glossary_count": int(glossary_count),
+            "network_error": network_error, "cancelled": bool(cancelled),
         }, ensure_ascii=False)
     except Exception as e:  # noqa: BLE001
         return _err(e)

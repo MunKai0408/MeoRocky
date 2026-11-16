@@ -240,17 +240,49 @@ $("translate-json-file").addEventListener("change", (ev) => {
 $("btn-translate-run").addEventListener("click", async () => {
   const text = $("translate-input").value.trim();
   if (!text) { showError("Hãy dán JSON key-value vào ô, hoặc tải file JSON lên."); return; }
+  const to = $("translate-to").value;
+  const credit = $("translate-credit").checked;
+  const useGoogle = $("translate-google").checked;
+  const btn = $("btn-translate-run");
+  const cancelBtn = $("btn-translate-cancel");
+  btn.disabled = true;
+  if (useGoogle) cancelBtn.hidden = false;
   try {
-    const to = $("translate-to").value;
-    const credit = $("translate-credit").checked;
-    const { parsed } = await runOp("Dịch offline", "translate_json", [text, to, credit]);
+    const fn = useGoogle ? "translate_json_google" : "translate_json";
+    const label = useGoogle ? "Dịch (Google)" : "Dịch offline";
+    const { parsed } = await runOp(label, fn, [text, to, credit]);
     if (!parsed.ok) { showError("Lỗi: " + parsed.error); return; }
     $("translate-output").value = JSON.stringify(parsed.translated, null, 2);
-    let info = "Đã dịch " + parsed.total + " chuỗi · chưa dịch được " + parsed.untranslated + " chuỗi.";
+    let info = "";
+    if (useGoogle) {
+      if (parsed.cancelled) info += "Đã hủy giữa chừng — ";
+      if (parsed.translated_by === "google") {
+        info += "Dịch bằng Google: " + parsed.google_count + " chuỗi.";
+      } else if (parsed.translated_by === "mixed") {
+        info += "Dịch bằng Google: " + parsed.google_count + " chuỗi · từ điển offline: " +
+          parsed.glossary_count + " chuỗi.";
+      } else {
+        info += "Google không dùng được — đã dịch bằng từ điển offline (" +
+          parsed.glossary_count + " chuỗi).";
+      }
+      if (parsed.network_error) info += " Lý do: " + parsed.network_error;
+    } else {
+      info += "Dịch bằng từ điển offline: " + parsed.total + " chuỗi.";
+    }
+    info += " Chưa dịch được " + parsed.untranslated + " chuỗi.";
     if (parsed.credit_key) info += " Đã gắn credit 'Việt Hoá Bởi Bear' vào key: " + parsed.credit_key + ".";
     if ((parsed.warnings || []).length) info += " Cảnh báo: " + parsed.warnings.join("; ");
     $("translate-info").textContent = info;
   } catch (e) { /* đã báo lỗi */ }
+  finally {
+    btn.disabled = false;
+    cancelBtn.hidden = true;
+  }
+});
+$("btn-translate-cancel").addEventListener("click", () => {
+  // Worker đang chạy dịch async vẫn nhận được message này giữa các chuỗi.
+  worker.postMessage({ op: "cancel_translate" });
+  $("translate-info").textContent = "Đang hủy… (dừng sau chuỗi hiện tại, giữ lại phần đã dịch)";
 });
 $("btn-translate-download").addEventListener("click", () => {
   const t = $("translate-output").value;

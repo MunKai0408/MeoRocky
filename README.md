@@ -26,8 +26,11 @@ GitHub API không bật được Pages nên bước này cần bấm tay:
    - **Unity**: inspect bundle .unity3d hoặc file .assets độc lập
      (parser thuần của PB3, UnityFS v8, SerializedFile v23).
    - **Trích xuất**: pipeline trích xuất đầy đủ của PB3, tải về `extract.zip`.
-   - **Dịch**: dịch JSON key-value bằng từ điển offline (chỉ dịch VALUE,
-     giữ KEY; có gắn credit “Việt Hoá Bởi Bear” nếu bật).
+   - **Dịch**: dịch JSON key-value bằng Google Translate thật qua
+     `fetch()` (cần mạng; 1 chuỗi/request, cách 0,4 giây) — Google lỗi
+     thì tự dùng từ điển offline và báo rõ lý do; chỉ dịch VALUE, giữ
+     KEY; có gắn credit “Việt Hoá Bởi Bear” nếu bật; nút Hủy dừng giữa
+     chừng và giữ phần đã dịch.
    - **Nén**: nén IPA solid LZMA (.tar.xz); **Giải nén** khôi phục IPA gốc.
    - **Font**: quét font TTF (độ phủ 142 mục: 134 chữ cái + 8 dấu), gộp glyph từ
      font Be Vietnam Pro đi kèm, hoặc lấy font đi kèm về dùng.
@@ -80,8 +83,16 @@ Hai điều chỉnh ở tầng khởi động (không sửa mã PB3): dựng reg
   Inspect Unity chỉ dùng parser thuần của PB3 + `lz4pure`/binding `lz4`.
 - **Không chạy được tính năng cần threading** (batch song song). Extract
   chạy tuần tự.
-- **Dịch Google chưa có trên web** (chưa thử trong Pyodide). Bản web v1
-  chỉ dịch bằng từ điển offline (~40 cụm từ game thông dụng).
+- **Dịch Google trên web** (`gt.js` + `bridge.translate_json_google`):
+  Python async gọi `fetch()` của JS (endpoint gtx miễn phí, không key),
+  1 chuỗi/request, cách 0,4 giây, thử lại tối đa 3 lần với backoff khi
+  429/5xx; lỗi nào (mất mạng, CORS, 429 hết retry, trang Sorry) cũng rơi
+  về từ điển offline và báo rõ trong kết quả (`translated_by`,
+  `network_error`); nút Hủy dừng giữa chừng. **Lưu ý trung thực:** từ IP
+  máy chủ phát triển, Google trả HTTP 429 + trang Sorry (IP datacenter bị
+  giới hạn) nên dịch Google thật chưa kiểm chứng được từ VM này
+  (`exp/translate_web_results.md` ghi rõ); IP mạng di động/dân cư thường
+  dịch được, và CORS trên Safari thật vẫn cần thử bằng tay.
 - **File đầu vào tối đa 2GB trên web** (bằng bản iSH) — giới hạn vì RAM
   tab trình duyệt. Lưu ý trung thực: file gần 2GB vẫn có thể làm Safari
   trên iPhone văng tab (tab Safari chỉ dùng được khoảng 1–1,5GB RAM);
@@ -91,8 +102,8 @@ Hai điều chỉnh ở tầng khởi động (không sửa mã PB3): dựng reg
 - Font: atlas SDF của TextMeshPro không tái tạo được; gộp glyph chỉ cho
   TrueType glyf (giới hạn gốc của PB3).
 - Lần mở trang đầu cần mạng (tải trang + Pyodide ~13MB từ chính trang này,
-  không qua CDN). Sau đó xử lý offline; riêng tính năng dịch Google (khi
-  nào có) mới cần mạng.
+  không qua CDN). Sau đó xử lý trên máy bạn; riêng tính năng dịch Google
+  mới cần mạng (và có thể bị Google giới hạn tùy IP, xem trên).
 - IPA đã là ZIP nén sẵn nên nén 5:1 thường không đạt — tool báo kích thước
   thật, không hứa quá.
 

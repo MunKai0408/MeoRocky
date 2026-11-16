@@ -17,12 +17,17 @@
 // supported"). Vì vậy file này dùng import ES module, không dùng cách nạp
 // script của worker classic.
 import { loadPyodide } from "./pyodide/pyodide.mjs";
+import { googleTranslateOne } from "./gt.js";
 
 const PYODIDE_INDEX = new URL("pyodide/", self.location.href).href;
 const PB3_ROOT = "/pb3web";
 
 let pyodide = null;
 let bridge = null;
+// Cờ hủy dịch Google: main thread gửi {op:"cancel_translate"} thì bật.
+// Python (async) kiểm tra cờ này trước mỗi chuỗi — vì await fetch nhường
+// lại event loop nên worker vẫn nhận được message hủy giữa đợt dịch.
+let googleCancelled = false;
 
 function status(text) {
   postMessage({ type: "status", text });
@@ -77,6 +82,13 @@ async function boot() {
   pyodide.globals.set("pb3_post_progress", (kind, done, total) => {
     postMessage({ type: "progress", kind, done, total });
   });
+  // Dịch Google: Python gọi hàm JS này qua module `js` (xem gt.js).
+  // QUAN TRỌNG: phải gán vào globalThis thật — `pyodide.globals.set`
+  // chỉ đặt biến toàn cục PYTHON (__main__), module `js` không thấy nó.
+  // Python async await được Promise JS nên event loop vẫn chạy, nút Hủy
+  // vẫn nhận được giữa đợt dịch.
+  globalThis.pb3_google_translate = googleTranslateOne;
+  globalThis.pb3_google_cancelled = () => googleCancelled;
   pyodide.runPython(
     "import bridge\n" +
     "bridge.set_progress_cb(pb3_post_progress)\n" +
@@ -91,6 +103,11 @@ async function boot() {
 self.onmessage = async (ev) => {
   const msg = ev.data || {};
   try {
+    if (msg.op === "cancel_translate") {
+      googleCancelled = true;
+      postMessage({ type: "cancelled" });
+      return;
+    }
     if (msg.op === "boot") {
       const r = await boot();
       postMessage({ id: msg.id, ok: true, result: JSON.stringify(r) });
@@ -98,13 +115,20 @@ self.onmessage = async (ev) => {
     }
     if (msg.op === "run") {
       if (!bridge) throw new Error("PB3 chưa khởi động xong.");
+      // Đợt dịch mới thì reset cờ hủy.
+      if (typeof msg.fn === "string" && msg.fn.indexOf("translate") === 0) {
+        googleCancelled = false;
+      }
       for (const f of (msg.files || [])) {
         pyodide.FS.mkdirTree("/tmp/input");
         pyodide.FS.writeFile("/tmp/input/" + f.name, new Uint8Array(f.data));
       }
       const fn = bridge[msg.fn];
       if (typeof fn !== "function") throw new Error("Không có hàm bridge." + msg.fn);
-      const out = fn.apply(bridge, msg.args || []);
+      let out = fn.apply(bridge, msg.args || []);
+      // Hàm bridge async (vd translate_json_google) trả về Promise —
+      // await để lấy chuỗi JSON thật thay vì "[object Promise]".
+      if (out && typeof out.then === "function") out = await out;
       const result = (typeof out === "string") ? out : String(out);
       let file = null;
       let parsed = null;

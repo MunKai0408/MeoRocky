@@ -67,8 +67,8 @@
   file ≤2GB; file lớn hơn hãy dùng bản iSH. Lưu ý: file gần 2GB vẫn có thể
   làm Safari trên iPhone văng tab vì RAM (tab Safari chỉ dùng được khoảng
   1–1,5GB) — với file lớn nên dùng bản iSH cho chắc. Lần mở trang
-  đầu cần mạng để tải Pyodide; sau đó xử lý hoàn toàn offline (trừ khi bạn
-  bật dịch Google — bản web v1 chưa có, chỉ dịch bằng từ điển offline).</p>
+  đầu cần mạng để tải Pyodide; sau đó xử lý hoàn toàn trên máy bạn,
+  trừ khi bạn bật dịch Google ở tab Dịch (cần mạng).</p>
 </div>
 
 <div class="tabs">
@@ -105,9 +105,13 @@
 </div>
 
 <div id="tab-translate" class="card" hidden>
-  <h2>Dịch (từ điển offline)</h2>
-  <p class="note">Chỉ dịch VALUE, giữ nguyên KEY. Bản web v1 chỉ có từ điển offline
-  (~40 cụm từ game thông dụng); dịch Google chưa có trên web.</p>
+  <h2>Dịch (Google + từ điển offline)</h2>
+  <p class="note">Chỉ dịch VALUE, giữ nguyên KEY. Bật Google Translate để dịch mọi
+  chuỗi qua Google (cần mạng; 1 chuỗi/request, cách 0,4 giây nên file lớn
+  sẽ chậm — file vài nghìn chuỗi có thể mất hàng giờ, dùng bản iSH cho
+  nhanh). Nếu Google không dùng được (mất mạng, bị giới hạn tốc độ,
+  trình duyệt chặn CORS) thì tự động dùng từ điển offline (~40 cụm từ
+  game thông dụng) và báo rõ lý do.</p>
   <div class="row">
     <label>Tải file JSON: <input type="file" id="translate-json-file" accept=".json"></label>
   </div>
@@ -120,9 +124,11 @@
         <option value="en">Tiếng Anh</option>
       </select>
     </label>
+    <label><input type="checkbox" id="translate-google" checked> Dùng Google Translate (cần mạng)</label>
     <label><input type="checkbox" id="translate-credit" checked> Gắn credit “Việt Hoá Bởi Bear”</label>
   </div>
   <button id="btn-translate-run">Dịch</button>
+  <button id="btn-translate-cancel" class="secondary" hidden>Hủy</button>
   <button id="btn-translate-download" class="secondary">Tải bản dịch (.json)</button>
   <p id="translate-info" class="sub"></p>
   <textarea id="translate-output" placeholder="Bản dịch sẽ hiện ở đây…" readonly></textarea>
@@ -170,6 +176,7 @@
   <ul>
     <li>Không dùng UnityPy (không cài được trên Pyodide — thiếu wheel etcpak). Inspect Unity dùng parser thuần của PB3.</li>
     <li>Không chạy được tính năng cần threading (batch song song); extract chạy tuần tự.</li>
+    <li>Dịch Google cần mạng; Google có thể giới hạn tốc độ (HTTP 429) hoặc trình duyệt chặn CORS — khi đó tự động dùng từ điển offline và báo rõ lý do. Chưa thử dịch Google trên Safari thật.</li>
     <li>File đầu vào tối đa 2GB trên web (bằng bản iSH); file gần 2GB vẫn có thể làm Safari trên iPhone văng tab vì RAM.</li>
     <li>Chưa thử trên iPhone thật — tốc độ và RAM trên Safari di động chưa đo.</li>
   </ul>
