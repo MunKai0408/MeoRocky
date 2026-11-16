@@ -1,0 +1,1 @@
+PAT write test 2026-11-16 10:28 +07 - verifies custom.github-pat can push to MeoRocky (replaces the 403 App).
