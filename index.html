@@ -531,7 +531,13 @@
     </div>
     <button id="btn-mod-dryrun">Patch thử (dry-run)</button>
     <button id="btn-mod-write" class="secondary">Patch và ghi file</button>
+    <button id="btn-mod-patch-pack" class="secondary" disabled>Xuất patch pack (.zip)</button>
     <div id="mod-result"></div>
+    <p class="note">Patch pack (mục C7): sau khi Mod thử xong, xuất 1 file .zip
+    gồm manifest JSON + script Python để mang sang iSH/máy tính áp vào file
+    gốc (script mặc định dry-run, chỉ ghi thật với --allow-write, không bao
+    giờ ghi đè file gốc). Asset nhị phân chỉ đọc trên web — pack chỉ chứa
+    thay đổi text.</p>
 
     <h3>Kế hoạch Mod (plan JSON — mục 8)</h3>
     <p class="note">Tách planner/executor: lập plan từ bản dịch (JSON key → giá
@@ -572,6 +578,7 @@
       <button id="btn-plan-apply" disabled>Áp dụng plan</button>
       <button id="btn-plan-resume" class="secondary" disabled>Tiếp tục từ checkpoint</button>
       <button id="btn-plan-undo" class="secondary" disabled>Hoàn tác</button>
+      <button id="btn-plan-patch-pack" class="secondary" disabled>Xuất patch pack (.zip)</button>
     </div>
     <div id="plan-result"></div>
   </div>

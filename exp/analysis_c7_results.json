@@ -1,0 +1,71 @@
+{
+  "total": 13,
+  "failures": [],
+  "results": {
+    "static_node_py_check": {
+      "ok": true,
+      "detail": "node --check OK: app.js, sw.js; python3 -m py_compile OK: bridge.py, sdk/patch_pack.py, tests/test_patch_pack.py",
+      "seconds": 0.3
+    },
+    "static_c7_checks": {
+      "ok": true,
+      "detail": "patch_pack.py stdlib-only + Python 3.9 + không chuỗi cấm iSH-only + script ap parse được (stdlib + core/sdk) + files.json=90 + tests.json=159 + sw.js precache sdk/patch_pack.py + CACHE_VERSION v12-20261116 + bridge patch_pack + UI đủ 2 nút xuất pack",
+      "seconds": 0.1
+    },
+    "python_unit_patch_pack_plan": {
+      "ok": true,
+      "detail": "unittest tests.test_patch_pack + tests.test_plan: Ran 33 tests, OK (exit=0)",
+      "seconds": 1.2
+    },
+    "C0_plan_build_for_pack": {
+      "ok": true,
+      "detail": "plan_build: id=3b573d93739c, entries=3",
+      "seconds": 0.4
+    },
+    "C1_patch_pack_plan_zip_schema": {
+      "ok": true,
+      "detail": "pack_id=3b573d93739c (plan id=3b573d93739c); zip 6596B, file: README.txt, apply_patch.py, patch_manifest.json; manifest: format=pb3-patch-pack, source_sha256 khớp fixture=true, entries=3 (đủ trường plan + operation=replace_text): true",
+      "seconds": 0.1
+    },
+    "C2_patch_pack_mod_after_dryrun": {
+      "ok": true,
+      "detail": "mod dry-run patched=1, verified=true; pack entries=1, asset=Payload/9Kings.app/Data/Raw/aa/iOS/localization-locales_assets_all.bundle::CAB-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa::en.json, op=REBUILD_SECTION, change Hello->Xin chào: true",
+      "seconds": 0.1
+    },
+    "C3_patch_pack_refuses_rebuild_all": {
+      "ok": true,
+      "detail": "patch_pack(plan REBUILD_ALL) -> ok=false, error=\"entry 48cb2386570f dung op REBUILD_ALL (che do ghi cua Unity) can maturity M4 (hien M2) — lap lai plan voi PATCH_INPLACE/REBUILD_SECTION de xuat pack.\"",
+      "seconds": 0
+    },
+    "browser_plan_build_3_entries": {
+      "ok": true,
+      "detail": "status: \"Sẵn sàng — 20 plugin đang chạy · font đi kèm: đủ 142/142 (134 chữ cái + 8 dấu)\"; plan-list đủ 3 asset, checkbox=3; nút Xuất pack (plan) bật=true, nút Xuất pack (Mod) tắt trước khi Mod thử=true",
+      "seconds": 6.7
+    },
+    "browser_plan_patch_pack_download": {
+      "ok": true,
+      "detail": "plan-result: \"Patch pack 3b573d93739c: 3 thay đổi · file patch-pack-3b573d93739c.zip đã sẵn sàng — bấm “Lưu / Chia sẻ” ở thanh Lưu file bên dưới để lưu về máy. Pack gom patch_manifest.json + apply_patch.py + README\"; download: patch-pack-3b573d93739c.zip (6598B); manifest entries=3, source_sha256 khớp fixture=true, file trong zip: README.txt, apply_patch.py, patch_manifest.json",
+      "seconds": 0.2
+    },
+    "browser_mod_dryrun_patch_pack_download": {
+      "ok": true,
+      "detail": "mod dry-run xong, nút Xuất pack bật=true; mod-result: \"Kết quả: dry-run (CHƯA ghi file nào) · 1 edit · file gốc không đổi (sha256 1b2c2ba10fff…)ĐíchChế độTìm thấyChuỗi (byte)Đơn vị (byte)Verifybundle::CAB-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa path_id=1001 (en.\"; download: patch-pack-9abcc97ac287.zip (6071B); entries=1, asset=Payload/9Kings.app/Data/Raw/aa/iOS/localization-locales_assets_all.bundle::CAB-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa::en.json, change Hello->Xin chào: true",
+      "seconds": 0.2
+    },
+    "browser_apply_script_real_python": {
+      "ok": true,
+      "detail": "dry-run exit=0 (DRY-RUN=true, file gốc không đổi=true, chưa có out=true); --allow-write exit=0 (DA GHI=true, en.hello=Xin chào, menu.start=Bắt đầu chơi, dialog.greeting=Chào mừng, anh hùng!; backup tồn tại: true, file gốc không đổi=true); before_sha sai -> exit=2, stderr có before_sha=true, không ghi gì=true, file gốc không đổi=true",
+      "seconds": 1
+    },
+    "browser_390_no_overflow_no_errors": {
+      "ok": true,
+      "detail": "scrollWidth=390 clientWidth=390; pageerror/console-error thật: không có",
+      "seconds": 0
+    },
+    "shell_size_after_c7": {
+      "ok": true,
+      "detail": "shell lần tải đầu sau C7: index.html raw=56715B gzip=16180B; kb-store.js raw=8192B gzip=3212B; worker-pool.js raw=14404B gzip=5058B; stream.js raw=18358B gzip=6141B; opfs.js raw=12753B gzip=4045B; app.js raw=205912B gzip=57582B; gt.js raw=34379B gzip=9599B | TỔNG raw=350713B (342.5KB), gzip=101817B (99.4KB). Ngưỡng raw 100KB vẫn chưa đạt như mục 6 đã ghi (app.js monolith) — C7 không đổi kết luận.",
+      "seconds": 0.1
+    }
+  }
+}

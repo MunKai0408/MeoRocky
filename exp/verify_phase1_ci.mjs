@@ -49,12 +49,12 @@ function sh(cmd, opts = {}) {
     performance.now() - t0);
 }
 
-// ---- 1b) số marker needs_fixture trên test (116 decorator, phủ 126 test) ----
+// ---- 1b) số marker needs_fixture trên test (122 decorator, phủ 132 test) ----
 {
   const t0 = performance.now();
   const out = sh(`grep -rn "pytest.mark.needs_fixture" ${SITE}/pb3/tests/test_*.py | wc -l`).trim();
   const n = parseInt(out, 10);
-  rec("markers_count", n === 116, `decorator needs_fixture trong test_*.py: ${n} (kỳ vọng 116, phủ 126 test: 5 class-level + 111 method-level)`, performance.now() - t0);
+  rec("markers_count", n === 122, `decorator needs_fixture trong test_*.py: ${n} (kỳ vọng 122, phủ 132 test: 5 class-level + 117 method-level)`, performance.now() - t0);
 }
 
 // ---- 2) test ngày pass sau khi touch corpus về hôm nay ----
@@ -112,7 +112,7 @@ function sh(cmd, opts = {}) {
   };
   const bad = Object.entries(checks).filter(([, v]) => !v).map(([k]) => k);
   const man = JSON.parse(fs.readFileSync(SITE + "/pb3/tests.json", "utf8"));
-  rec("test_html", bad.length === 0 && man.files.length === 158, // 158 = 157 + 1 (mục C6 thêm tests/test_tmp_fallback.py, 2026-11-16)
+  rec("test_html", bad.length === 0 && man.files.length === 159, // 159 = 158 + 1 (mục C7 thêm tests/test_patch_pack.py, 2026-11-16)
     Object.entries(checks).map(([k, v]) => `${k}=${v}`).join(" ") + ` | tests.json entries=${man.files.length}`,
     performance.now() - t0);
 }

@@ -71,7 +71,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     else detail = "schema tmp_fallback_plan/1 + C# khớp Python (134+8) + " +
       "đăng ký TMP_Settings.fallbackFontAssets + fallbackFontAssetTable + " +
       "CreateFontAsset/TryAddCharacters + KHÔNG sửa asset gốc + " +
-      "nút/handler/bridge/cache + tests.json=158, files.json=89";
+      "nút/handler/bridge/cache + tests.json=159, files.json=90";
   } catch (e) { ok = false; detail = "không đọc được JSON: " + (r.stdout || "") + (r.stderr || ""); }
   rec("static_c6_checks", ok, detail, performance.now() - t0);
 }

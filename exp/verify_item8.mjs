@@ -5,7 +5,7 @@
 // Kết quả: item8_results.json + item8_results.md (báo cáo tay).
 //
 //  A. Tĩnh: node --check; py_compile; plan.py chỉ dùng stdlib + tương thích
-//     Python 3.9 (không có cú pháp 3.10+); files.json 89, tests.json 157,
+//     Python 3.9 (không có cú pháp 3.10+); files.json 90, tests.json 159,
 //     sw.js precache có sdk/plan.py + CACHE_VERSION v9 (C3 thêm fixtures/selftest.zip).
 //  B. Unit test Python: tests.test_plan (13 test).
 //  C. Node Pyodide + bridge thật (fixture item8_fixture.zip: bundle v7 LZ4,
@@ -74,7 +74,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   try {
     const j = JSON.parse(r.stdout || "{}");
     if (j.fails && j.fails.length) { ok = false; detail = j.fails.join(" | "); }
-    else detail = "stdlib-only + Python 3.9 + files.json=89 + tests.json=157 + sw.js precache có sdk/plan.py + CACHE_VERSION=v11-20261116";
+    else detail = "stdlib-only + Python 3.9 + files.json=90 + tests.json=159 + sw.js precache có sdk/plan.py + CACHE_VERSION=v12-20261116";
   } catch (e) { ok = false; detail = "không đọc được JSON: " + (r.stdout || "") + (r.stderr || ""); }
   rec("static_item8_checks", ok, detail, performance.now() - t0);
 }

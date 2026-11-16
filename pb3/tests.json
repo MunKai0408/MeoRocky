@@ -130,6 +130,7 @@
     "pb3/tests/test_optimize.py",
     "pb3/tests/test_overall_keepalive.py",
     "pb3/tests/test_patch01.py",
+    "pb3/tests/test_patch_pack.py",
     "pb3/tests/test_paths_safe.py",
     "pb3/tests/test_plan.py",
     "pb3/tests/test_plugin_toggle.py",

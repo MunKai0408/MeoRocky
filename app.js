@@ -1153,6 +1153,8 @@ async function handleChosenFile(f) {
     state.extractListFor = null;  // file mới -> danh sách chọn file cũ hết hạn
     state.extractSelected = null;
     state.extractEntries = [];
+    state.lastMod = null;       // file mới -> kết quả Mod cũ hết hạn (mục C7)
+    { const ppb = $("btn-mod-patch-pack"); if (ppb) ppb.disabled = true; }
     $("file-info").textContent = f.name + " · " + fmtBytes(f.size);
     $("file-info").hidden = false;
     $("btn-clear-file").hidden = false;
@@ -1198,6 +1200,8 @@ function clearFile() {
   state.extractListFor = null;
   state.extractSelected = null;
   state.extractEntries = [];
+  state.lastMod = null;        // bỏ file -> kết quả Mod cũ hết hạn (mục C7)
+  { const ppb = $("btn-mod-patch-pack"); if (ppb) ppb.disabled = true; }
   const inp = $("file-input");
   if (inp) inp.value = "";
   $("file-info").hidden = true;
@@ -2103,10 +2107,32 @@ async function runMod(allowWrite) {
     const label = allowWrite ? "Mod (ghi file)" : "Mod thử (dry-run)";
     const { parsed } = await runOp(label, "mod_patch", [inputPath(), edits, allowWrite], inputFileArgs(), allowWrite);
     $("mod-result").innerHTML = modResultHtml(parsed);
+    // Mục C7: giữ lại edits + file của lần Mod vừa chạy để xuất patch pack.
+    state.lastMod = { editsJson: edits, fileKey: recentKeyOf(state.file) };
+    const ppb = $("btn-mod-patch-pack"); if (ppb) ppb.disabled = false;
   } catch (e) { /* đã báo lỗi */ }
 }
 $("btn-mod-dryrun").addEventListener("click", () => runMod(false));
 $("btn-mod-write").addEventListener("click", () => runMod(true));
+// Mục C7: xuất patch pack (.zip: manifest JSON + script Python áp patch)
+// từ lần Mod vừa chạy thử xong. Pack xây lại từ edits (không dùng kết
+// quả dry-run cũ) nên luôn khớp file hiện tại; đổi file thì phải chạy
+// Mod thử lại.
+$("btn-mod-patch-pack").addEventListener("click", async () => {
+  if (!state.file) { showError("Chưa chọn file. Hãy chọn file ở trên trước."); return; }
+  if (!state.lastMod || state.lastMod.fileKey !== recentKeyOf(state.file)) {
+    showError("Chưa có kết quả Mod thử cho file này — bấm “Patch thử (dry-run)” trước rồi mới xuất pack.");
+    return;
+  }
+  try {
+    const { parsed } = await runOp("Xuất patch pack", "patch_pack",
+      [inputPath(), "mod", state.lastMod.editsJson], inputFileArgs(), true);
+    $("mod-result").innerHTML += "<p>Patch pack <b>" + esc(parsed.pack_id) +
+      "</b>: " + parsed.entries + " thay đổi · file <b>" + esc(parsed.filename) +
+      "</b> đã sẵn sàng — bấm “Lưu / Chia sẻ” ở thanh Lưu file bên dưới để lưu về máy. " +
+      esc(parsed.note || "") + "</p>";
+  } catch (e) { /* đã báo lỗi */ }
+});
 // Thẻ "Thay Text" (thao tác Mod thật duy nhất trên web): cuộn tới ô nhập
 // chuỗi cũ. Các thẻ còn lại là nút disabled, không có handler.
 $("btn-mod-op-text").addEventListener("click", () => {
@@ -2129,6 +2155,7 @@ $("btn-mod-op-text").addEventListener("click", () => {
 const PLAN_LS_KEY = "pb3_plan_json";
 const PLAN_CKPT_LS_KEY = "pb3_plan_checkpoint";
 state.plan = null;            // plan JSON đang mở
+state.lastMod = null;         // {editsJson, fileKey} của lần Mod vừa chạy (mục C7)
 state.planSelected = null;    // Set(id entry) đã tick; null = chưa có plan
 state.planCheckpoint = null;  // checkpoint {plan_id, completed: [id]}
 function planSaveLs() {
@@ -2164,6 +2191,7 @@ function renderPlanList() {
   const box = $("plan-list");
   const has = !!(state.plan && state.plan.entries && state.plan.entries.length);
   for (const id of ["btn-plan-select-all", "btn-plan-deselect-all", "btn-plan-download",
+                    "btn-plan-patch-pack",
                     "btn-plan-dryrun", "btn-plan-apply", "btn-plan-undo"]) {
     const b = $(id); if (b) b.disabled = !has;
   }
@@ -2326,6 +2354,21 @@ $("btn-plan-download").addEventListener("click", () => {
   planSyncSelectedToPlan();
   download("plan-" + state.plan.id + ".json",
     [new TextEncoder().encode(JSON.stringify(state.plan, null, 2))]);
+});
+// Mục C7: xuất patch pack (.zip: manifest JSON + script Python áp patch)
+// từ plan đang mở (chỉ entry được tick, trừ khi REBUILD_ALL ở tầng plan).
+$("btn-plan-patch-pack").addEventListener("click", async () => {
+  if (!state.file) { showError("Chưa chọn file. Hãy chọn file ở trên trước."); return; }
+  if (!state.plan) { showError("Chưa có plan — lập kế hoạch trước."); return; }
+  planSyncSelectedToPlan();
+  try {
+    const { parsed } = await runOp("Xuất patch pack", "patch_pack",
+      [inputPath(), "plan", JSON.stringify(state.plan)], inputFileArgs(), true);
+    $("plan-result").innerHTML = "<p>Patch pack <b>" + esc(parsed.pack_id) +
+      "</b>: " + parsed.entries + " thay đổi · file <b>" + esc(parsed.filename) +
+      "</b> đã sẵn sàng — bấm “Lưu / Chia sẻ” ở thanh Lưu file bên dưới để lưu về máy. " +
+      esc(parsed.note || "") + "</p>";
+  } catch (e) { /* đã báo lỗi */ }
 });
 $("btn-plan-import").addEventListener("click", () => { $("plan-file").click(); });
 $("plan-file").addEventListener("change", async (ev) => {

@@ -1344,7 +1344,7 @@ def read_text_asset_head(data, endian="<"):
 
 # ------------------------------------------------------- MonoBehaviour text
 # Đọc text trong MonoBehaviour (class 114) — text chính của game thường nằm
-# đây (Unity Localization StringTable/SharedTableData, I2Languages, ...),
+# đây (Unity Localization StringTable/SharedTableData, bảng ngôn ngữ I2, ...),
 # không phải trong TextAsset (class 49). Hai đường:
 # - Có type tree (vd bundle Addressables của 9 Kings): đọc theo cây kiểu,
 #   biết tên field -> StringTable join key/value chính xác theo m_Id.

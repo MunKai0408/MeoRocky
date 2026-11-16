@@ -68,6 +68,7 @@
   "pb3/sdk/kb.py",
   "pb3/sdk/lz4pure.py",
   "pb3/sdk/manifest.py",
+  "pb3/sdk/patch_pack.py",
   "pb3/sdk/plan.py",
   "pb3/sdk/support_matrix.py",
   "pb3/sdk/tmp_font.py",

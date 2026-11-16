@@ -1466,6 +1466,45 @@ def plan_undo(plan_json, path):
         return _err(e)
 
 
+def patch_pack(path, kind, payload_json):
+    """Xuat patch pack nhi phan (muc C7): manifest JSON + script Python
+    ap patch + README, dong goi 1 file .zip (/tmp/patch_pack.zip).
+
+    kind "plan": payload_json la plan JSON muc 8 (chi entry duoc tick).
+    kind "mod": payload_json la edits JSON cua tab Mod (nhu mod_patch).
+    Khong ghi file goc, khong ghi don vi da patch — chi xuat pack de
+    user mang sang iSH/desktop ap (script mac dinh dry-run, chi ghi
+    that voi --allow-write).
+    """
+    try:
+        from sdk import patch_pack as pp
+
+        _check_size(path)
+        data = open(path, "rb").read()
+        manifest = pp.build_patch_pack(data, os.path.basename(path),
+                                       kind, payload_json)
+        zpath = "/tmp/patch_pack.zip"
+        if os.path.exists(zpath):
+            os.remove(zpath)
+        info = pp.make_pack_zip(manifest, zpath)
+        return json.dumps({
+            "ok": True, "pack_id": manifest["id"],
+            "kind": kind, "entries": len(manifest["entries"]),
+            "source_file": manifest["source_file"],
+            "source_sha256": manifest["source_sha256"],
+            "zip_path": zpath,
+            "filename": "patch-pack-%s.zip" % manifest["id"],
+            "zip_bytes": info["size"],
+            "manifest": manifest,
+            "note": "Pack gom patch_manifest.json + apply_patch.py + "
+                    "README.txt. Mang sang iSH/desktop, chay script "
+                    "(mac dinh dry-run, --allow-write moi ghi that); "
+                    "script khong bao gio ghi de file goc.",
+        }, ensure_ascii=False)
+    except Exception as e:  # noqa: BLE001
+        return _err(e)
+
+
 # ======================================================================
 # BATCH — menu [4] iSH (sdk/batch.py).
 # ======================================================================
