@@ -82,8 +82,10 @@ Hai điều chỉnh ở tầng khởi động (không sửa mã PB3): dựng reg
   chạy tuần tự.
 - **Dịch Google chưa có trên web** (chưa thử trong Pyodide). Bản web v1
   chỉ dịch bằng từ điển offline (~40 cụm từ game thông dụng).
-- **File đầu vào tối đa 1GB trên web** (bản iSH cho phép tới 2GB) — giới
-  hạn vì RAM tab trình duyệt.
+- **File đầu vào tối đa 2GB trên web** (bằng bản iSH) — giới hạn vì RAM
+  tab trình duyệt. Lưu ý trung thực: file gần 2GB vẫn có thể làm Safari
+  trên iPhone văng tab (tab Safari chỉ dùng được khoảng 1–1,5GB RAM);
+  với file lớn nên dùng bản iSH cho chắc.
 - **Chưa thử trên iPhone thật.** Tốc độ và RAM trên Safari di động chưa đo;
   IPA game thật (200MB, nhiều bundle) chưa thử trên web.
 - Font: atlas SDF của TextMeshPro không tái tạo được; gộp glyph chỉ cho

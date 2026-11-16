@@ -21,7 +21,7 @@ const state = {
 };
 
 const WARN_BYTES = 300 * 1024 * 1024;   // >300MB: cảnh báo RAM tab trình duyệt
-const MAX_BYTES = 1024 * 1024 * 1024;   // >1GB: từ chối (bridge cũng từ chối)
+const MAX_BYTES = 2 * 1024 * 1024 * 1024;   // >2GB: từ chối (bridge cũng từ chối)
 
 function fmtBytes(n) {
   if (n == null || isNaN(n)) return "?";
@@ -149,7 +149,7 @@ $("file-input").addEventListener("change", (ev) => {
   const f = ev.target.files && ev.target.files[0];
   if (!f) return;
   if (f.size > MAX_BYTES) {
-    showError("File " + fmtBytes(f.size) + " quá lớn cho bản web (>1GB). Dùng bản iSH cho file này.");
+    showError("File " + fmtBytes(f.size) + " quá lớn cho bản web (>2GB). Dùng bản iSH cho file này.");
     return;
   }
   if (f.size > WARN_BYTES) {

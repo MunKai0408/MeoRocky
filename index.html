@@ -64,7 +64,9 @@
   <input type="file" id="file-input" accept=".ipa,.zip,.unity3d,.assets,.ttf,.json,.tar.xz">
   <p id="file-info" class="sub" hidden></p>
   <p class="note">File chỉ được đọc và xử lý trong trình duyệt của bạn. Bản web giới hạn
-  file ≤1GB (RAM tab trình duyệt); file lớn hơn hãy dùng bản iSH. Lần mở trang
+  file ≤2GB; file lớn hơn hãy dùng bản iSH. Lưu ý: file gần 2GB vẫn có thể
+  làm Safari trên iPhone văng tab vì RAM (tab Safari chỉ dùng được khoảng
+  1–1,5GB) — với file lớn nên dùng bản iSH cho chắc. Lần mở trang
   đầu cần mạng để tải Pyodide; sau đó xử lý hoàn toàn offline (trừ khi bạn
   bật dịch Google — bản web v1 chưa có, chỉ dịch bằng từ điển offline).</p>
 </div>
@@ -167,7 +169,7 @@
   <ul>
     <li>Không dùng UnityPy (không cài được trên Pyodide — thiếu wheel etcpak). Inspect Unity dùng parser thuần của PB3.</li>
     <li>Không chạy được tính năng cần threading (batch song song); extract chạy tuần tự.</li>
-    <li>File đầu vào tối đa 1GB trên web (bản iSH cho phép tới 2GB).</li>
+    <li>File đầu vào tối đa 2GB trên web (bằng bản iSH); file gần 2GB vẫn có thể làm Safari trên iPhone văng tab vì RAM.</li>
     <li>Chưa thử trên iPhone thật — tốc độ và RAM trên Safari di động chưa đo.</li>
   </ul>
   <p class="note">Mã nguồn PB3 (BearTea) — xem README.md trong repo.</p>

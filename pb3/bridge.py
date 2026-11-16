@@ -29,8 +29,9 @@ import zipfile
 
 WEB_ROOT = "/pb3web"
 # Giới hạn riêng của bản web (RAM tab trình duyệt, không phải giới hạn PB3):
-# file đầu vào >1 GiB thì từ chối rõ thay vì để trình duyệt crash.
-MAX_WEB_INPUT = 1024 * 1024 * 1024
+# file đầu vào >2 GiB thì từ chối rõ thay vì để trình duyệt crash.
+# Lưu ý: file gần 2GB vẫn có thể làm tab Safari trên iPhone văng vì RAM.
+MAX_WEB_INPUT = 2 * 1024 * 1024 * 1024
 MAX_TEXT_HEAD = 200          # số ký tự TextAsset hiển thị mỗi object
 MAX_LIST_TEXT_ASSETS = 50    # như _COMPACT_MAX_TEXT_ASSETS của PB3
 MAX_STRINGS = 200
@@ -82,7 +83,7 @@ def _check_size(path):
     n = os.path.getsize(path)
     if n > MAX_WEB_INPUT:
         raise ValueError(
-            "File quá lớn cho bản web (>1GB). Bản web giới hạn 1GB vì RAM "
+            "File quá lớn cho bản web (>2GB). Bản web giới hạn 2GB vì RAM "
             "tab trình duyệt; file lớn hơn hãy dùng bản iSH.")
     return n
 
