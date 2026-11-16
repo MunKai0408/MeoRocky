@@ -14,7 +14,7 @@
     "browser_boot_home_390": {
       "ok": true,
       "detail": "boot Sẵn sàng; home scrollWidth=390 (không tràn); mascot + 6 thẻ + 5 nút nav; hero: Công cụ xử lý game Unity mạnh mẽ ngay trên trình d…",
-      "seconds": 6.3
+      "seconds": 5.8
     },
     "browser_dropzone_recent": {
       "ok": true,
@@ -24,7 +24,7 @@
     "browser_list_table_390": {
       "ok": true,
       "detail": "390px: tiêu đề/Loại/Kích thước đúng 1 dòng; bảng block+overflow-x:auto; không tràn ngang (sw=390)",
-      "seconds": 0.3
+      "seconds": 0.2
     },
     "browser_unity_info_card": {
       "ok": true,
@@ -34,7 +34,7 @@
     "browser_extract_download_bar": {
       "ok": true,
       "detail": "extract.zip tải về (extract.zip); thanh Lưu file hiện; kết quả nhắc đúng tên file",
-      "seconds": 0.6
+      "seconds": 0.5
     },
     "browser_other_views_390": {
       "ok": true,
@@ -44,7 +44,7 @@
     "browser_theme_light_real": {
       "ok": true,
       "detail": "toggle sáng: data-theme=light + localStorage=light + checkbox Cài đặt đồng bộ; reload vẫn sáng; toggle lại về tối",
-      "seconds": 5.9
+      "seconds": 5.3
     },
     "browser_no_pageerrors": {
       "ok": true,

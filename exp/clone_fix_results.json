@@ -47,7 +47,7 @@
   "python_mojibake_regression": {
     "ok": true,
     "detail": "status=0, 4/4 test ok trong output unittest (4 dòng \"... ok\")",
-    "seconds": 0.3
+    "seconds": 0.2
   },
   "_failures": 0
 }

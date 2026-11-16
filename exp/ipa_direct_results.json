@@ -1,21 +1,21 @@
 {
-  "when": "2026-11-16T07:47:00.462Z",
+  "when": "2026-11-16T08:00:21.774Z",
   "failures": 0,
   "results": {
     "ui_ipa_button_and_notes": {
       "ok": true,
       "detail": "nút hiện: true (\"📲 Nhập file .ipa\"); dòng trực tiếp: \"Chọn trực tiếp file .ipa, không cần đổi tên thành .zip.\\n    Tab Batch cũng nhận \"…; dòng dự phòng: \"Nếu iPhone không cho chọn file .ipa, hãy đổi tên một bản sao thành .zip rồi chọn file .zip đó.\"; accept #file-input=null, #batch-files=null (cần null = không giới hạn đuôi)",
-      "seconds": 5.4
+      "seconds": 5.1
     },
     "e2e_ipa_via_new_button": {
       "ok": true,
       "detail": "list 5 entry (cần 5, gồm bundle localization); inspect entry đã chọn: Payload/9Kings.app/Data/level1.unity3d (options: [\"Payload/9Kings.app/Data/level1.unity3d\",\"Payload/9Kings.app/Data/resources.assets\"]); inspect: \"Entry trong IPA/ZIP: Payload/9Kings.app/Data/level1.unity3dBundle Unity: 5.x.x · nén none · 1 entryCAB-bbbbbbbbbbbbbbbbb\"…; extract download=extract.zip, members=[\"Chinese.json\",\"English.json\",\"extraction_checkpoint.json\",\"extraction_report.json\",\"extraction_report.txt\"]",
-      "seconds": 6.5
+      "seconds": 6.1
     },
     "e2e_zip_same_bytes": {
       "ok": true,
       "detail": "list 5 entry; extract download=extract.zip, members=[\"Chinese.json\",\"English.json\",\"extraction_checkpoint.json\",\"extraction_report.json\",\"extraction_report.txt\"]",
-      "seconds": 6.6
+      "seconds": 5.8
     },
     "ipa_vs_zip_identical": {
       "ok": true,
@@ -25,17 +25,17 @@
     "dragdrop_ipa_accepted_exe_rejected": {
       "ok": true,
       "detail": "drop .ipa vào dropzone nhận file (file-info hiện tên .ipa): true; drop .exe -> lỗi hiện: true \"File \\\"malware.exe\\\" không phải định dạng PB3 hỗ trợ (.ipa, .zip, .unity3d, .assets, .ttf, .json, .tar\"; file đang chọn vẫn là .ipa: true (kéo-thả tổng hợp bằng DataTransfer trong Chromium — không phải kéo-thả OS từ app Files trên iOS, phần đó cần Joseph thử)",
-      "seconds": 5.8
+      "seconds": 5.4
     },
     "batch_ipa_accepted": {
       "ok": true,
       "detail": "batch-files-info: \"1 file:extract_select_fixture.ipa (1.6 KB) X\" (#batch-files không accept nên picker batch cũng nhận .ipa)",
-      "seconds": 5.5
+      "seconds": 5.2
     },
     "nested_ipa_list_matches_zip": {
       "ok": true,
       "detail": ".ipa 3 entry, .zip 3 entry, giống hệt: true — [\"Payload/Game.app/Data/config.txt|file|8 B\",\"Payload/Game.app/Data/level.unity3d|unity|7.0 KB\",\"Payload/Game.app/Info.plist|file|95 B\"]",
-      "seconds": 12.4
+      "seconds": 11.1
     },
     "browser_390_no_overflow_no_errors": {
       "ok": true,

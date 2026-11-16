@@ -49,21 +49,39 @@ const state = {
   batchRun: null,        // đợt batch đang/chạy xong gần nhất (Mục 4)
 };
 
-const WARN_BYTES = 300 * 1024 * 1024;   // >300MB: cảnh báo RAM tab trình duyệt
+const WARN_BYTES = 600 * 1024 * 1024;   // >600MB: cảnh báo rõ, vẫn cho tiếp tục (Mục 5)
+const STRONG_BYTES = 800 * 1024 * 1024; // >800MB: khuyên mạnh dùng iSH (Mục 5)
 const MAX_BYTES = 2 * 1024 * 1024 * 1024;   // >2GB: từ chối (bridge cũng từ chối)
+
+// Cảnh báo kích thước file (Mục 5 — stream.js, PB3Stream.sizeWarning).
+// Trả {level, text}; dùng chung cho chọn file đơn, file batch và trước
+// khi chạy thao tác nặng (runOp). Không có PB3Stream thì dùng ngưỡng cũ.
+function sizeWarningFor(size) {
+  if (typeof PB3Stream !== "undefined" && PB3Stream.sizeWarning) {
+    return PB3Stream.sizeWarning(size);
+  }
+  if (size > MAX_BYTES) return { level: "reject", text: "File quá lớn cho bản web (>2GB). Dùng bản iSH cho file này." };
+  if (size > WARN_BYTES) return { level: "warn", text: "Lưu ý: file khá lớn, tab trình duyệt có thể tốn nhiều RAM. Vẫn thử chạy." };
+  return { level: "none", text: null };
+}
 
 // iOS Safari làm mờ file .ipa trong khung chọn dù input có accept=".ipa"
 // (quirk UTI của picker iOS), nên 2 input chính (#file-input, #batch-files)
 // KHÔNG dùng accept mà kiểm tra đuôi bằng JS sau khi chọn (không phân biệt
 // hoa/thường). File khác đuôi thì báo lỗi thân thiện, không im lặng.
 const GAME_EXTS = [".ipa", ".zip", ".unity3d", ".assets", ".ttf", ".json", ".tar.xz"];
+// Mục 5: file .gz đơn lẻ cũng chọn được (để tải bản đã giải nén bằng
+// DecompressionStream ở tab Danh sách). Giữ riêng ngoài GAME_EXTS vì
+// harness phase1_ci kiểm tra đúng từng ký tự mảng GAME_EXTS (fix picker
+// .ipa ca3caef) — .gz không phải container game, chỉ là đường gzip nhanh.
+const GZIP_EXT = ".gz";
 function gameExtOk(name) {
   const lower = (name || "").toLowerCase();
-  return GAME_EXTS.some((ext) => lower.endsWith(ext));
+  return GAME_EXTS.some((ext) => lower.endsWith(ext)) || lower.endsWith(GZIP_EXT);
 }
 function gameExtError(name) {
   return "File \"" + name + "\" không phải định dạng PB3 hỗ trợ (" +
-    GAME_EXTS.join(", ") + "). Hãy chọn file .ipa/.zip/.unity3d/.assets/.ttf/.json/.tar.xz.";
+    GAME_EXTS.join(", ") + ", " + GZIP_EXT + "). Hãy chọn file .ipa/.zip/.unity3d/.assets/.ttf/.json/.tar.xz/.gz.";
 }
 
 function fmtBytes(n) {
@@ -232,6 +250,13 @@ function callWorker(op, payload) {
 
 async function runOp(label, fn, args, files, fileOut) {
   clearError();
+  // Mục 5: cảnh báo kích thước TRƯỚC khi chạy thao tác nặng (file đã chọn
+  // >600MB cảnh báo, >800MB khuyên dùng iSH). Cảnh báo hiện ở ô #error
+  // như khi chọn file; lỗi thật của thao tác sẽ ghi đè lên sau.
+  if (state.file) {
+    const w = sizeWarningFor(state.file.size);
+    if (w.text) showError(w.text);
+  }
   progStart(label);
   try {
     const msg = await callWorker("run", { fn, args: args || [], files: files || [] });
@@ -454,7 +479,13 @@ function fireBlobDownload(url, name) {
 }
 
 function download(name, data) {
-  const blob = data instanceof Blob ? data : new Blob([data], { type: "application/octet-stream" });
+  // Mục 5: data có thể là Blob, ArrayBuffer/Uint8Array, hoặc MẢNG NHIỀU
+  // PART (Blob part) — output lớn ghi dạng nhiều part, không concat thành
+  // một ArrayBuffer khổng lồ trước khi tải (new Blob(parts) không copy
+  // các part lại với nhau).
+  const blob = data instanceof Blob ? data
+    : Array.isArray(data) ? new Blob(data, { type: "application/octet-stream" })
+    : new Blob([data], { type: "application/octet-stream" });
   revokeLastDownloadUrl();   // chỉ giữ tối đa 1 blob URL sống
   const url = URL.createObjectURL(blob);
   lastDownloadUrl = url;
@@ -692,9 +723,9 @@ function handleChosenFile(f) {
     showError("File " + fmtBytes(f.size) + " quá lớn cho bản web (>2GB). Dùng bản iSH cho file này.");
     return;
   }
-  if (f.size > WARN_BYTES) {
-    showError("Lưu ý: file " + fmtBytes(f.size) + " khá lớn, tab trình duyệt có thể tốn nhiều RAM. Vẫn thử chạy.");
-  }
+  // Mục 5: >600MB cảnh báo rõ, >800MB khuyên mạnh dùng iSH — vẫn cho tiếp tục.
+  const warn = sizeWarningFor(f.size);
+  if (warn.text) showError(warn.text);
   f.arrayBuffer().then((buf) => {
     state.file = { name: f.name, size: f.size, lastModified: f.lastModified || 0, data: buf };
     state.fileSentFor = null;   // HOTFIX clone: file mới thì gửi lại từ đầu
@@ -705,6 +736,9 @@ function handleChosenFile(f) {
     $("file-info").hidden = false;
     $("btn-clear-file").hidden = false;
     clearError();
+    // Cảnh báo kích thước phải còn hiện sau khi file đã nạp xong (trước
+    // đây clearError() ở đây xóa luôn cảnh báo vừa hiện).
+    if (warn.text) showError(warn.text);
     addRecent(state.file);
     syncFileChips();
   });
@@ -836,16 +870,93 @@ $("menu-go-limits").addEventListener("click", () => {
   }
 });
 
+// ---- Liệt kê nhanh bằng EOCD (Mục 5, stream.js) ----
+// Chỉ đọc EOCD + central directory ở cuối file, không đưa cả file qua
+// Python. Chỉ dùng khi ZIP phẳng (không container lồng, không ZIP64,
+// không phải ZIP thì trả null để caller fallback về bridge như trước).
+// Entry trả về khớp định dạng bridge list_entries ({path, size, kind}).
+function fastListEntries() {
+  if (typeof PB3Stream === "undefined" || !PB3Stream.listZipEntries || !state.file) return null;
+  try {
+    const r = PB3Stream.listZipEntries(state.file.data);
+    if (!r.ok || r.nested || r.zip64) return null;
+    return { ok: true, kind: "zip", total: r.entries.length,
+      entries: r.entries.map((e) => ({ path: e.name, size: e.size, kind: e.kind })),
+      fast: true, rawEntries: r.entries };
+  } catch (e) { return null; }
+}
+
+// Tải 1 entry trong ZIP/IPA bằng đường nhanh (Mục 5): stored thì
+// copy-through (subarray chia sẻ buffer gốc, không copy qua heap),
+// deflate thì DecompressionStream native. Không hỗ trợ (method khác,
+// entry mã hoá, container lồng) thì báo rõ và gợi ý tab Trích xuất.
+async function downloadZipEntry(path) {
+  if (!state.file) return;
+  if (typeof PB3Stream === "undefined" || !PB3Stream.listZipEntries) {
+    showError("Trình duyệt này không hỗ trợ tải entry nhanh — hãy dùng tab Trích xuất.");
+    return;
+  }
+  const r = PB3Stream.listZipEntries(state.file.data);
+  if (!r.ok || r.nested) {
+    showError("File này có container lồng hoặc không phải ZIP phẳng — hãy dùng tab Trích xuất để lấy file ra.");
+    return;
+  }
+  const entry = r.entries.find((e) => e.name === path);
+  if (!entry) { showError("Không thấy entry " + path + " trong file."); return; }
+  try {
+    const out = await PB3Stream.extractZipEntryFromBuffer(state.file.data, entry);
+    const name = path.split("/").pop() || "entry";
+    download(name, out.blob);
+  } catch (e) {
+    showError("Tải entry lỗi: " + (e && e.message ? e.message : e) + " — hãy dùng tab Trích xuất.");
+  }
+}
+
+// Tải bản đã giải nén của 1 file .gz đơn lẻ bằng DecompressionStream
+// native (Mục 5). Không dùng cho .tar.xz (LZMA, native không thay được).
+async function downloadGzipMember() {
+  if (!state.file) return;
+  if (typeof PB3Stream === "undefined" || !PB3Stream.extractGzipMember) {
+    showError("Trình duyệt này không hỗ trợ giải nén gzip nhanh.");
+    return;
+  }
+  try {
+    const blob = await PB3Stream.extractGzipMember(state.file.data);
+    const name = state.file.name.replace(/\.gz$/i, "") || "file";
+    download(name, blob);
+  } catch (e) {
+    showError("Giải nén gzip lỗi: " + (e && e.message ? e.message : e));
+  }
+}
+// Nút "Tải" từng entry + nút tải bản gzip trong kết quả tab Danh sách.
+$("list-result").addEventListener("click", (ev) => {
+  const t = ev && ev.target;
+  if (!t || typeof t.getAttribute !== "function") return;
+  const entry = t.getAttribute("data-entry");
+  if (entry) { downloadZipEntry(entry); return; }
+  if (t.getAttribute("data-act") === "gzip-dl") downloadGzipMember();
+});
+
 // ---- Danh sách entry ----
 $("btn-list-run").addEventListener("click", async () => {
   try {
-    const { parsed } = await runOp("Liệt kê entry", "list_entries", [inputPath()], inputFileArgs());
-    let html = "<p>Loại: <b>" + esc(parsed.kind) + "</b> · " + parsed.total + " entry</p><table><tr><th>Đường dẫn</th><th>Loại</th><th>Kích thước</th></tr>";
+    const fast = fastListEntries();
+    const parsed = fast || (await runOp("Liệt kê entry", "list_entries", [inputPath()], inputFileArgs())).parsed;
+    let html = "<p>Loại: <b>" + esc(parsed.kind) + "</b> · " + parsed.total + " entry" +
+      (parsed.fast ? " · liệt kê nhanh bằng EOCD (không cần giải nén toàn bộ file)" : "") +
+      "</p><table><tr><th>Đường dẫn</th><th>Loại</th><th>Kích thước</th>" +
+      (parsed.fast ? "<th></th>" : "") + "</tr>";
     for (const e of parsed.entries.slice(0, 200)) {
-      html += "<tr><td>" + esc(e.path) + "</td><td>" + esc(e.kind) + "</td><td>" + fmtBytes(e.size) + "</td></tr>";
+      html += "<tr><td>" + esc(e.path) + "</td><td>" + esc(e.kind) + "</td><td>" + fmtBytes(e.size) + "</td>" +
+        (parsed.fast && !e.path.endsWith("/")
+          ? "<td><button class=\"secondary\" data-entry=\"" + esc(e.path) + "\">Tải</button></td>" : "") +
+        "</tr>";
     }
     html += "</table>";
     if (parsed.entries.length > 200) html += "<p>…chỉ hiện 200 entry đầu.</p>";
+    if (/\.gz$/i.test(state.file.name) && typeof PB3Stream !== "undefined" && PB3Stream.extractGzipMember) {
+      html += "<p><button class=\"secondary\" data-act=\"gzip-dl\">Tải bản đã giải nén (gzip, DecompressionStream)</button></p>";
+    }
     $("list-result").innerHTML = html;
     showIpaZipHint($("list-ipa-hint"), parsed.entries);
   } catch (e) { /* đã báo lỗi */ }
@@ -961,8 +1072,15 @@ async function maybeRefreshExtractFileList() {
     return;
   }
   try {
-    const { parsed } = await runOp("Liệt kê file trích xuất", "list_entries", [inputPath()], inputFileArgs());
-    state.extractEntries = (parsed.entries || []).filter(extractEntrySelectable);
+    // Mục 5: ZIP phẳng thì liệt kê nhanh bằng EOCD (không qua worker);
+    // lồng/không phải ZIP thì fallback về bridge như trước.
+    const fast = fastListEntries();
+    if (fast) {
+      state.extractEntries = fast.entries.filter(extractEntrySelectable);
+    } else {
+      const { parsed } = await runOp("Liệt kê file trích xuất", "list_entries", [inputPath()], inputFileArgs());
+      state.extractEntries = (parsed.entries || []).filter(extractEntrySelectable);
+    }
     state.extractListFor = extractListKey();
     // Chế độ chọn tay mặc định tick tất cả.
     state.extractSelected = new Set(state.extractEntries.map((e) => e.path));
@@ -1432,7 +1550,10 @@ $("btn-translate-cancel").addEventListener("click", () => {
 $("btn-translate-download").addEventListener("click", () => {
   const t = $("translate-output").value;
   if (!t) { showError("Chưa có bản dịch để tải."); return; }
-  download("translated.vi.json", new TextEncoder().encode(t).buffer);
+  // Mục 5: tải dạng nhiều Blob part 64KB, không concat một ArrayBuffer lớn.
+  const parts = (typeof PB3Stream !== "undefined" && PB3Stream.textToBlobParts)
+    ? PB3Stream.textToBlobParts(t) : [new TextEncoder().encode(t)];
+  download("translated.vi.json", parts);
 });
 
 // ---- Mod ----
@@ -1793,9 +1914,12 @@ $("batch-files-info").addEventListener("click", (ev) => {
 async function handleBatchFiles(list) {
   state.batchFiles = [];
   let rejected = 0;
+  let batchWarn = null;   // Mục 5: cảnh báo file lớn nhất trong lô
   for (const f of list) {
     if (!gameExtOk(f.name)) { showError(gameExtError(f.name)); rejected++; continue; }
     if (f.size > MAX_BYTES) { showError("File " + f.name + " quá lớn cho bản web (>2GB)."); continue; }
+    const w = sizeWarningFor(f.size);
+    if (w.text && (!batchWarn || w.level === "strong")) batchWarn = { name: f.name, w };
     state.batchFiles.push({ name: f.name, size: f.size, lastModified: f.lastModified || 0, data: await f.arrayBuffer() });
   }
   state.batchSentFor = null;   // HOTFIX clone: lô mới thì gửi lại từ đầu
@@ -1803,6 +1927,7 @@ async function handleBatchFiles(list) {
   syncBatchRunLabel();
   if (state.batchFiles.length) {
     if (!rejected) clearError();
+    if (batchWarn) showError(batchWarn.w.text);
     for (const f of state.batchFiles) addRecent(f);
   }
 }
@@ -1842,7 +1967,10 @@ $("btn-batch-load-ckpt").addEventListener("click", async () => {
 });
 $("btn-batch-dl-ckpt").addEventListener("click", () => {
   if (!state.lastCheckpoint) { showError("Chưa có checkpoint (chạy batch 1 lần trước đã)."); return; }
-  download("checkpoint.json", new TextEncoder().encode(state.lastCheckpoint).buffer);
+  // Mục 5: tải dạng nhiều Blob part 64KB.
+  const parts = (typeof PB3Stream !== "undefined" && PB3Stream.textToBlobParts)
+    ? PB3Stream.textToBlobParts(state.lastCheckpoint) : [new TextEncoder().encode(state.lastCheckpoint)];
+  download("checkpoint.json", parts);
 });
 
 // "Dừng an toàn": báo worker dừng sau game hiện tại + hủy job đang chờ.

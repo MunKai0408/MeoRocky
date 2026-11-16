@@ -1,5 +1,5 @@
 {
-  "when": "2026-11-16T07:29:01.100Z",
+  "when": "2026-11-16T07:57:32.865Z",
   "failures": 0,
   "results": {
     "kbstore_load_empty": {
@@ -14,7 +14,7 @@
     },
     "kbstore_markdirty_flush": {
       "ok": true,
-      "detail": "markDirty() + flush() -> IndexedDB có bytes mới (dài 19), lastSavedAt=1794814124035",
+      "detail": "markDirty() + flush() -> IndexedDB có bytes mới (dài 19), lastSavedAt=1794815835389",
       "seconds": 0
     },
     "kbstore_flush_error_redirty": {
@@ -79,7 +79,7 @@
     },
     "static_index_wiring": {
       "ok": true,
-      "detail": "thiếu/sai: không có | kb-store.js ở vị trí 43344, app.js ở 43419 (kb-store phải trước)",
+      "detail": "thiếu/sai: không có | kb-store.js ở vị trí 43832, app.js ở 43941 (kb-store phải trước)",
       "seconds": 0
     },
     "static_app_wiring": {
@@ -105,11 +105,11 @@
     "browser_boot_and_kb_status": {
       "ok": true,
       "detail": "status=Sẵn sàng; #kb-status sau boot: \"KB: 0 game · 88.5 KB · tự lưu vào IndexedDB sau mỗi thay đổi (lần lưu gần nhất: chưa lưu lần nào).\"",
-      "seconds": 5.2
+      "seconds": 5.4
     },
     "browser_kb_add_autosave": {
       "ok": true,
-      "detail": "#kb-result: Đã thêm game vào KB; #kb-status sau autosave: \"KB: 1 game · 56.0 KB · tự lưu vào IndexedDB sau mỗi thay đổi (lần lưu gần nhất: 07:28:54 16/11/2026).\"",
+      "detail": "#kb-result: Đã thêm game vào KB; #kb-status sau autosave: \"KB: 1 game · 56.0 KB · tự lưu vào IndexedDB sau mỗi thay đổi (lần lưu gần nhất: 07:57:26 16/11/2026).\"",
       "seconds": 0.3
     },
     "browser_export_reminder_and_persist": {
@@ -119,12 +119,12 @@
     },
     "browser_kb_survives_reload": {
       "ok": true,
-      "detail": "sau reload + boot lại: #kb-status 1 game; #kb-result sau Liệt kê: \"1 game trong KB · dung lượng 56.0 KB · tự lưu vào IndexedDB.IDBundleVersionEngineLần thấy cuối1??unknown2026-11-16T07:28\"",
-      "seconds": 5.7
+      "detail": "sau reload + boot lại: #kb-status 1 game; #kb-result sau Liệt kê: \"1 game trong KB · dung lượng 56.0 KB · tự lưu vào IndexedDB.IDBundleVersionEngineLần thấy cuối1??unknown2026-11-16T07:57\"",
+      "seconds": 5.8
     },
     "browser_kb_export_download_and_reminder_off": {
       "ok": true,
-      "detail": "download suggestedFilename=pb3_kb.sqlite; localStorage pb3_kb_last_export=1794814140711; nhắc export đã ẩn: true",
+      "detail": "download suggestedFilename=pb3_kb.sqlite; localStorage pb3_kb_last_export=1794815852461; nhắc export đã ẩn: true",
       "seconds": 0.1
     },
     "browser_pwa_install_prompt": {

@@ -39,12 +39,12 @@
     "pyodide_boot_bridge": {
       "ok": true,
       "detail": "87 file pb3/ + font ghi vào /pb3web, bridge import OK",
-      "seconds": 0.3
+      "seconds": 0.4
     },
     "bridge_boot": {
       "ok": true,
       "detail": "boot ok=true plugins=20",
-      "seconds": 1.1
+      "seconds": 1
     },
     "unity_inspect_zip_lists_bundles": {
       "ok": true,
@@ -79,7 +79,7 @@
     "table_old_css_broken_control": {
       "ok": true,
       "detail": "CSS cũ: chữ trong ô tiêu đề/Loại tối đa 2 dòng (vỡ chữ nếu >1) — th=[{\"text\":\"Đường dẫn\",\"lines\":1},{\"text\":\"Loại\",\"lines\":2},{\"text\":\"Kích thước\",\"lines\":2}]",
-      "seconds": 0.4
+      "seconds": 0.5
     },
     "table_390px_new_css": {
       "ok": true,

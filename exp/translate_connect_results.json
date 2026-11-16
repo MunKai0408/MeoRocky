@@ -1,5 +1,5 @@
 {
-  "when": "2026-11-16T07:27:42.484Z",
+  "when": "2026-11-16T07:56:17.616Z",
   "failures": 0,
   "results": {
     "node_google_mock_success_progress": {
@@ -25,12 +25,12 @@
     "node_live_google_real_result": {
       "ok": true,
       "detail": "Google trả HTTP 200, JSON dịch được: [[[\"chơi\",\"play\",null,null,4]],null,\"en\",null,null,null,null,[]] — Google dịch được từ IP máy chủ",
-      "seconds": 0.8
+      "seconds": 0.7
     },
     "browser_boot_proxy_set": {
       "ok": true,
-      "detail": "boot tới Sẵn sàng; proxy dịch giả đặt qua localStorage + ô nhập: http://127.0.0.1:36407/translate-proxy",
-      "seconds": 5.8
+      "detail": "boot tới Sẵn sàng; proxy dịch giả đặt qua localStorage + ô nhập: http://127.0.0.1:44199/translate-proxy",
+      "seconds": 5.6
     },
     "browser_extract_connects_translate": {
       "ok": true,
@@ -54,7 +54,7 @@
     },
     "browser_google_1000_estimate_and_cancel": {
       "ok": true,
-      "detail": "dialog ước tính: \"File có 1000 chuỗi. Dịch Google theo batch 100 chuỗi/request — ước tính khoảng 15 giây (có thể lâu hơn nếu mạng chậm; nếu Google không nhận batch thì tool tự rơi về từng chuỗi, sẽ chậm hơn nhiều). Bấm OK để dịch tiếp, hoặc Hủy để dịch offline / chia nhỏ file.\" (cần \"1000 chuỗi\" + \"ước tính khoảng\" + \"batch\" + \"15 giây\"); tốc độ thật: 100 chuỗi/0.3s ≈ 306.80 chuỗi/giây -> 1000 chuỗi ≈ 3.3 giây; sau Hủy: 100/1000 chuỗi đã dịch (giữ lại phần đã dịch, không mất); tải phần đã dịch: translated.vi.json với 100 chuỗi VI:",
+      "detail": "dialog ước tính: \"File có 1000 chuỗi. Dịch Google theo batch 100 chuỗi/request — ước tính khoảng 15 giây (có thể lâu hơn nếu mạng chậm; nếu Google không nhận batch thì tool tự rơi về từng chuỗi, sẽ chậm hơn nhiều). Bấm OK để dịch tiếp, hoặc Hủy để dịch offline / chia nhỏ file.\" (cần \"1000 chuỗi\" + \"ước tính khoảng\" + \"batch\" + \"15 giây\"); tốc độ thật: 100 chuỗi/0.3s ≈ 306.09 chuỗi/giây -> 1000 chuỗi ≈ 3.3 giây; sau Hủy: 100/1000 chuỗi đã dịch (giữ lại phần đã dịch, không mất); tải phần đã dịch: translated.vi.json với 100 chuỗi VI:",
       "seconds": 0.6
     },
     "browser_390_no_overflow_no_errors": {
@@ -64,6 +64,6 @@
     }
   },
   "offline1000Ms": 22,
-  "googleRate": 306.801853544625,
-  "googleEta1000": 3.2594327200000044
+  "googleRate": 306.08561626065944,
+  "googleEta1000": 3.2670597599999933
 }

@@ -1,0 +1,131 @@
+{
+  "total": 25,
+  "failures": [],
+  "results": {
+    "node_size_warning_thresholds": {
+      "ok": true,
+      "detail": "ngưỡng: 599.9999990463257MB->ok, 600MB->ok, 600.0000009536743MB->ok, 800MB->ok, 800.0000009536743MB->ok, 2048MB->ok, 2048.0000009536743MB->ok; >600MB: \"Lưu ý: file 650 MB khá lớn (>600MB), tab trình duyệt có thể tốn nhiều RAM. Vẫn thử chạy.\"; >800MB: \"File 900 MB rất lớn (>800MB). Tab trình duyệt trên iPhone có thể hết RAM và bị tắt giữa chừng — nên dùng bản iSH cho file này. Vẫn có thể thử tiếp trên web, nhưng hãy đóng các tab khác trước.\"; >2GB: \"File 3.0 GB quá lớn cho bản web (>2GB). Dùng bản iSH cho file này.\"",
+      "seconds": 0
+    },
+    "node_eocd_ambig_matches": {
+      "ok": true,
+      "detail": "JS: a/en.json 40B m8 file | b/en.json 40B m8 file; kỳ vọng (python zipfile): a/en.json 40B m8 | b/en.json 40B m8",
+      "seconds": 0.1
+    },
+    "node_eocd_nested_fallback": {
+      "ok": true,
+      "detail": "game1.zip: nested=true, inner.zip kind=container, tổng entry JS=10 (bridge sẽ liệt kê đệ quy dạng inner.zip::... nên JS KHÔNG dùng danh sách này)",
+      "seconds": 0
+    },
+    "node_eocd_flat_kinds": {
+      "ok": true,
+      "detail": "kinds JS: data/big-stored.txt=file, data/en.json=file, data/sharedassets0.assets=unity, data/font.ttf=excluded, logs/debug.log=excluded, test/x.txt=excluded, data/bz2.bin=file; kỳ vọng: data/big-stored.txt=file, data/en.json=file, data/sharedassets0.assets=unity, data/font.ttf=excluded, logs/debug.log=excluded, test/x.txt=excluded, data/bz2.bin=file; methods stored/deflate/bzip2: big-stored.txt=m0, en.json=m8, bz2.bin=m12",
+      "seconds": 0
+    },
+    "node_copythrough_stored": {
+      "ok": true,
+      "detail": "stored 3800 byte, byte-identical với Python zipfile: true; copiedThrough=true; heap delta Node khi trích: -568 KB (Blob Node vẫn giữ dữ liệu trong bộ nhớ riêng — con số này chỉ là heap JS, không phải RAM tab Safari)",
+      "seconds": 0
+    },
+    "node_decompress_deflate": {
+      "ok": true,
+      "detail": "deflate en.json 34 byte, khớp Python zipfile và khớp zlib.inflateRawSync: true",
+      "seconds": 0
+    },
+    "node_unsupported_method_fallback": {
+      "ok": true,
+      "detail": "bzip2 (method 12) ném code=E_UNSUPPORTED_METHOD (app.js bắt và gợi ý dùng tab Trích xuất/bridge)",
+      "seconds": 0
+    },
+    "node_decompress_gzip": {
+      "ok": true,
+      "detail": "gzip 120 byte nén -> 12900 byte, khớp Python gzip và Python gzip.open đọc lại: true",
+      "seconds": 0
+    },
+    "node_gzip_multimember_limit": {
+      "ok": true,
+      "detail": "gzip 2 member nối nhau, tiến trình con: REJECTED ERR_TRAILING_JUNK_AFTER_STREAM_END (giới hạn đã biết của đường nhanh; file .gz nhiều member vẫn xem được qua bridge list/diagnose, chỉ nút tải nhanh không dùng được)",
+      "seconds": 0.1
+    },
+    "node_output_multipart_blob": {
+      "ok": true,
+      "detail": "JSON 200030 ký tự -> 4 part (mỗi part ≤64KB), Blob 200031 byte, round-trip giống hệt; blobPartsByteLength khớp tổng byte",
+      "seconds": 0
+    },
+    "node_eocd_edge_cases": {
+      "ok": true,
+      "detail": "bytes lạ -> {\"ok\":false,\"reason\":\"not-zip\"}; ZIP cắt cụt 100 byte -> ok=false reason=not-zip; EOCD báo ZIP64 -> zip64=true (fallback bridge)",
+      "seconds": 0
+    },
+    "node_eocd_bigtest_measure": {
+      "ok": true,
+      "detail": "bigtest.zip 558899 byte, 4000 entry deflate: EOCD liệt kê trong 15ms, heap delta 1624 KB (file đã nằm trong RAM từ trước — chỉ đo phần liệt kê, không đo phần đọc file; mức RAM tiết kiệm so với đường bridge trên Safari thật: CHƯA ĐO — cần Joseph đo trên iPhone)",
+      "seconds": 0
+    },
+    "bridge_parity_ambig": {
+      "ok": true,
+      "detail": "bridge kind=zip total=2; JS total=2, nested=false; khớp path/size/kind từng entry: true",
+      "seconds": 0
+    },
+    "bridge_parity_bigtest_4000": {
+      "ok": true,
+      "detail": "bridge total=4000; JS total=4000; khớp từng entry: true",
+      "seconds": 0.3
+    },
+    "bridge_parity_flat_kinds": {
+      "ok": true,
+      "detail": "bridge total=7; JS total=7; khớp từng entry (path/size/kind): true",
+      "seconds": 0
+    },
+    "bridge_parity_nested_fallback": {
+      "ok": true,
+      "detail": "bridge total=11 (có entry lồng dạng :: : true, vd inner.zip::en.json); JS nested=true -> app.js fallback về bridge, không dùng danh sách JS",
+      "seconds": 0
+    },
+    "static_checks": {
+      "ok": true,
+      "detail": "✓ node --check stream.js + app.js\n✓ stream.js không có new SharedArrayBuffer/Atomics/pthreads\n✓ stream.js không bật COOP/COEP\n✓ index.html nạp stream.js trước app.js\n✓ app.js dùng PB3Stream.sizeWarning + fastListEntries + download(parts)\n✓ bridge.py không thêm op mới (không có def liên quan stream)\n✓ worker.js không đổi protocol (vẫn send-once/files + dest/zip_path)",
+      "seconds": 0.2
+    },
+    "browser_boot_390": {
+      "ok": true,
+      "detail": "status: \"Sẵn sàng — 20 plugin đang chạy · font đi kèm: đủ 142/142 (134 chữ cái + 8 dấu)\"; pageerror: không có; scrollWidth=390 clientWidth=390 (không tràn ngang)",
+      "seconds": 5.5
+    },
+    "browser_fast_list_and_entry_download": {
+      "ok": true,
+      "detail": "ghi chú EOCD: true; tải a/en.json: 40 byte, byte-identical với Python zipfile: true (deflate qua DecompressionStream, nút Tải trong tab Danh sách)",
+      "seconds": 0.4
+    },
+    "browser_entry_stored_and_deflate": {
+      "ok": true,
+      "detail": "ghi chú EOCD: true; stored big-stored.txt: 3800 byte, khớp: true (copy-through Blob.slice); deflate en.json: 34 byte, khớp: true",
+      "seconds": 0.2
+    },
+    "browser_gzip_member_download": {
+      "ok": true,
+      "detail": "nút gzip hiện: true; bản giải nén: 12900 byte, byte-identical với Python gzip: true",
+      "seconds": 1
+    },
+    "browser_warn_600mb": {
+      "ok": true,
+      "detail": "file sparse 610MB: #error hiện=true, text: \"Lưu ý: file 610 MB khá lớn (>600MB), tab trình duyệt có thể tốn nhiều RAM. Vẫn thử chạy.\"; file-info: \"item5_610m.zip · 610 MB\" (cảnh báo còn hiện sau khi file đã nạp — trước đây bị clearError xóa)",
+      "seconds": 1
+    },
+    "browser_warn_800mb_ish": {
+      "ok": true,
+      "detail": "file sparse 810MB: #error hiện=true, text: \"File 810 MB rất lớn (>800MB). Tab trình duyệt trên iPhone có thể hết RAM và bị tắt giữa chừng — nên dùng bản iSH cho file này. Vẫn có thể thử tiếp trên web, nhưng hãy đóng các tab khác trước.\"",
+      "seconds": 2.8
+    },
+    "browser_reject_2gb": {
+      "ok": true,
+      "detail": "file sparse 2,1GB: #error hiện=true, text: \"File 2.1 GB quá lớn cho bản web (>2GB). Dùng bản iSH cho file này.\" (từ chối trước khi đọc — không tốn RAM)",
+      "seconds": 0.6
+    },
+    "browser_390_no_overflow_final": {
+      "ok": true,
+      "detail": "scrollWidth=390 clientWidth=390; pageerror cả phiên: không có",
+      "seconds": 0
+    }
+  }
+}

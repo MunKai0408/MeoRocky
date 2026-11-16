@@ -17,7 +17,7 @@
   "extract_xml_trigger_no_crash": {
     "ok": true,
     "detail": "decision=done total_entries=3 files=[res/values/strings.xml@xml_strings, data/en.json@json_text] errors=[]",
-    "seconds": 0.4
+    "seconds": 0.5
   },
   "xml_routed_to_xml_strings": {
     "ok": true,

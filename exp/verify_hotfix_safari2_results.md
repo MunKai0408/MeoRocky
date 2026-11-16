@@ -1,6 +1,6 @@
 # Hotfix Safari đợt 2 — kết quả harness
 
-Chạy: 2026-11-16T07:47:47.165Z · FAIL: 0 / 17
+Chạy: 2026-11-16T07:57:15.270Z · FAIL: 0 / 17
 
 ## PASS — download_blob_no_share (0s)
 blob bấm ngay; revoke 5s/60s/599s = 0, 600s = 1; hint: Đang tải về out.tar.xz (4 B) — trình duyệt sẽ hỏi thì bấm Tả…
@@ -23,10 +23,10 @@ no_5s_revoke=true · revoke_10min=true · pagehide_revoke=true · share_primary=
 ## PASS — no_http_fetch_during_load (0s)
 http fetch trong lúc loadPyodide: 0
 
-## PASS — pyodide_boot_bridge (0.3s)
+## PASS — pyodide_boot_bridge (0.4s)
 87 file pb3/ + font ghi vào /pb3web, bridge import OK
 
-## PASS — bridge_boot (1.1s)
+## PASS — bridge_boot (1s)
 boot ok=true plugins=20
 
 ## PASS — unity_inspect_zip_lists_bundles (0s)
@@ -47,7 +47,7 @@ filename=sample.ipa (không còn restored.bin), byte_identical=true
 ## PASS — decompress_zip_clean_error (0s)
 ok=false, error=E_BAD_ARCHIVE: Archive hỏng (CRC sai hoặc cấu trúc lỗi).
 
-## PASS — table_old_css_broken_control (0.4s)
+## PASS — table_old_css_broken_control (0.5s)
 CSS cũ: chữ trong ô tiêu đề/Loại tối đa 2 dòng (vỡ chữ nếu >1) — th=[{"text":"Đường dẫn","lines":1},{"text":"Loại","lines":2},{"text":"Kích thước","lines":2}]
 
 ## PASS — table_390px_new_css (0.2s)

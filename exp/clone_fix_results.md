@@ -39,7 +39,7 @@ transfer list thật — đúng chuỗi đã lỗi trên Safari (list → inspec
 | ipa_hint_negative_cases | PASS | 0.2 | zip_1_ipa_thang_hint_an=true; zip_thuong_khong_ipa_hint_an=true |
 | static_hotfix_markers | PASS | 0 | fileSentFor/batchSentFor=true slice(0)=true khong_con_transfer_goc=true hint_fn=true hint_els_html=true worker_ghi_chu=true |
 | pyodide_bridge_mojibake | PASS | 3.4 | entries=["‎ 9 Kings_v1.0.5-AppAssassin.ipa","__MACOSX/._‎ 9 Kings_v1.0.5-AppAssassin.ipa"] http_fetch=0 (bridge thật trong Pyodide, file site/pb3 đã sửa) |
-| python_mojibake_regression | PASS | 0.3 | status=0, 4/4 test ok trong output unittest (4 dòng "... ok") |
+| python_mojibake_regression | PASS | 0.2 | status=0, 4/4 test ok trong output unittest (4 dòng "... ok") |
 
 Thất bại: 0
 

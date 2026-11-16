@@ -1,5 +1,5 @@
 {
-  "when": "2026-11-16T07:27:23.063Z",
+  "when": "2026-11-16T07:55:58.670Z",
   "failures": 0,
   "results": {
     "old_evidence_log_empty_bundle_missing": {
@@ -10,7 +10,7 @@
     "fixture_parses_with_web_parser": {
       "ok": true,
       "detail": "bundle v7 lz4 TextAsset=[\"en.json\",\"fr.json\",\"zh.json\"]; level1 v8=[\"de.json\"]; resources.assets=[\"en\"]",
-      "seconds": 0.4
+      "seconds": 0.3
     },
     "A1_auto_extract_enjson_present": {
       "ok": true,
