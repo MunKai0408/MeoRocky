@@ -65,6 +65,10 @@ LOCALE_BUILTIN: List[Dict[str, Any]] = [
      "display": "Indonesian", "script": "Latn"},
     {"code": "ms", "aliases": ["ms-my", "malay", "bahasa melayu"],
      "display": "Malay", "script": "Latn"},
+    {"code": "tl", "aliases": ["tl-ph", "tagalog", "filipino", "wikang tagalog"],
+     "display": "Tagalog", "script": "Latn"},
+    {"code": "hu", "aliases": ["hu-hu", "hungarian", "magyar"],
+     "display": "Hungarian", "script": "Latn"},
     {"code": "it", "aliases": ["it-it", "italian", "italiano"],
      "display": "Italian", "script": "Latn"},
     {"code": "nl", "aliases": ["nl-nl", "dutch", "nederlands"],
@@ -81,6 +85,26 @@ LOCALE_BUILTIN: List[Dict[str, Any]] = [
      "display": "Ukrainian", "script": "Cyrl"},
     {"code": "sv", "aliases": ["sv-se", "swedish", "svenska"],
      "display": "Swedish", "script": "Latn"},
+    # Mục A (2026-11-16): các mã langdetect có thể tách ra từ MonoBehaviour
+    # (da/fi/ro/cs/sk/no/el/he) — trước đây thiếu nên file tách ngôn ngữ
+    # mang mã này không nhận diện được locale: vừa bị lọc mềm giữ lại nhầm
+    # (lọt vào đợt en/zh), vừa mất locale ở kết quả (locale None).
+    {"code": "da", "aliases": ["da-dk", "danish", "dansk"],
+     "display": "Danish", "script": "Latn"},
+    {"code": "fi", "aliases": ["fi-fi", "finnish", "suomi"],
+     "display": "Finnish", "script": "Latn"},
+    {"code": "ro", "aliases": ["ro-ro", "romanian", "română"],
+     "display": "Romanian", "script": "Latn"},
+    {"code": "cs", "aliases": ["cs-cz", "czech", "čeština"],
+     "display": "Czech", "script": "Latn"},
+    {"code": "sk", "aliases": ["sk-sk", "slovak", "slovenčina"],
+     "display": "Slovak", "script": "Latn"},
+    {"code": "no", "aliases": ["nb-no", "nn-no", "norwegian", "norsk"],
+     "display": "Norwegian", "script": "Latn"},
+    {"code": "el", "aliases": ["el-gr", "greek", "ελληνικά"],
+     "display": "Greek", "script": "Grek"},
+    {"code": "he", "aliases": ["he-il", "hebrew", "עברית"],
+     "display": "Hebrew", "script": "Hebr"},
 ]
 
 # Preset ngôn ngữ bắt buộc (đặc tả 2, 7.4): English + Chinese.

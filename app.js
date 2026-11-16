@@ -50,6 +50,9 @@ const state = {
   translateCancel: false, // user đã bấm Hủy (dừng sau chunk hiện tại)
   translateChunk: null,  // {idx, total} chunk đang dịch (hiện "đợt X/Y")
   translateResumeJob: null, // job dở dang để nút "Tiếp tục dịch" dùng
+  lastTranslated: null, // bản dịch xong giữ trong phiên (mục A): {name, from, to, translated, keys, at, provenance} — nút "Ép lại vào file gốc" (E) lấy thẳng từ đây, khỏi tải lên lại
+  translateProvenance: null, // nguồn gốc của nội dung đang nằm trong ô dịch (mục A, cho (E) ép nhiều file): {origin, gameFile, extractName, source, locale} — đặt khi nạp file trích xuất, "upload" khi tải file JSON lên, null khi dán tay không rõ nguồn
+  translateCheck: null, // tự kiểm tra lần dịch gần nhất: {complete, missing, wrongChanged, skippedCount, total, done} — nút tải CHẶN khi thiếu/sai
   extractEntries: [],    // entry trích xuất được trong file đang chọn (từ list_entries)
   extractListFor: null,  // "tên|cỡ|lastModified" của file mà extractEntries thuộc về
   extractSelected: null, // Set(vpath) đã tick ở chế độ chọn tay; null = chưa tải danh sách (coi như tự động)
@@ -1716,7 +1719,16 @@ $("translate-lt-key").addEventListener("change", saveLibreTranslateConfig);
 $("translate-json-file").addEventListener("change", (ev) => {
   const f = ev.target.files && ev.target.files[0];
   if (!f) return;
-  f.text().then((t) => { $("translate-input").value = t; syncTranslateEmptyBanner(); });
+  f.text().then((t) => {
+    $("translate-input").value = t; syncTranslateEmptyBanner();
+    // File JSON tải lên: chỉ biết tên file, không rõ trích từ đâu — ghi
+    // rõ origin "upload" để (E) biết mà hỏi lại nguồn gốc khi ép.
+    state.translateProvenance = {
+      origin: "upload", gameFile: state.file ? state.file.name : null,
+      extractName: f.name, source: null, locale: null,
+      from: null, to: null, keys: null, at: new Date().toISOString(),
+    };
+  });
 });
 // ---- Nối tab Dịch với Trích xuất ----
 // Dropdown chọn file vừa trích xuất (mặc định en.json nếu có); đổi lựa
@@ -1764,8 +1776,16 @@ async function loadExtractedToTranslate(name) {
     }
     $("translate-input").value = parsed.text || "";
     syncTranslateEmptyBanner();
+    // Giữ provenance của file vừa nạp (mục A, cho (E)): bản dịch xong sẽ
+    // mang theo nguồn gốc này — trích từ bundle/assets nào trong file
+    // game nào — để (E) ép đúng vị trí.
+    state.translateProvenance = translateProvenanceFor(
+      name, ($("translate-from") && $("translate-from").value) || "en", null, null);
     $("translate-info").textContent = "Đã nạp " + name + " (" + fmtBytes(parsed.bytes || 0) +
-      ") — bấm Dịch để dịch sang tiếng Việt.";
+      ") — bấm Dịch để dịch sang tiếng Việt." +
+      (state.translateProvenance.source
+        ? " Nguồn: " + state.translateProvenance.source + "."
+        : "");
   } catch (e) {
     $("translate-info").textContent = "Không nạp được " + name + " (" + e.message +
       ") — hãy dán JSON vào ô để dịch tay.";
@@ -1786,13 +1806,17 @@ $("translate-input").addEventListener("input", syncTranslateEmptyBanner);
 // nên không dùng làm TM (đã kiểm tra sdk/kb.py — KB chỉ lưu hồ sơ game).
 // TM tra theo VALUE GỐC chính xác (không chuẩn hoá khoảng trắng — khớp
 // chính xác mới dùng, tránh dịch sai ngữ cảnh).
-async function buildTranslateTM(to) {
+// Mục A (an toàn ngôn ngữ nguồn): TM chỉ dùng job có cùng `from`
+// (ngôn ngữ nguồn). Job cũ KHÔNG có trường `from` bị cách ly hoàn toàn
+// (không dùng làm TM) — vì TM đó có thể chứa cặp Đức/Nga đã bị dịch sai
+// khi bridge còn hard-code nguồn "en" (Joseph 21:24).
+async function buildTranslateTM(to, from) {
   const tm = new Map();
   if (!translateJobStore) return tm;
   try {
     const jobs = await translateJobStore.getAll();
     const done = jobs.filter((j) => j && j.status === "done" && j.to === to &&
-      Array.isArray(j.tm));
+      j.from === from && Array.isArray(j.tm));
     done.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
     let pairs = 0;
     for (const j of done.slice(0, 5)) {
@@ -1827,7 +1851,52 @@ function currentTranslateSourceName() {
   if (sel && sel.value) return sel.value;
   return "dán tay";
 }
-async function startTranslateJob(text, to) {
+// Provenance của bản dịch (mục A, cho (E) ép NHIỀU file trở lại cùng file
+// gốc — Joseph 22:34): mỗi file dịch phải ghi rõ trích từ đâu để (E)
+// ép từng file vào đúng vị trí theo provenance + key, báo xung đột khi
+// 2 file trùng key. Nguồn gốc đã có sẵn từ lúc trích xuất
+// (bridge.extract trả mỗi file kèm "source": đơn vị Unity chứa chuỗi,
+// vd ".../resources.assets" hoặc "game.zip::Data/x.assets") + tên file
+// game đang nạp (state.file.name) — tab Dịch chỉ GIỮ LẠI, không bịa thêm.
+// - origin "extract": nạp từ file vừa trích xuất trong phiên này.
+// - origin "upload": người dùng tải file JSON lên (chỉ biết tên file).
+// - origin "manual": dán tay / không rõ nguồn — (E) sẽ phải hỏi lại user.
+// Trả object provenance ĐẦY ĐỦ (kèm from/to/keys/at khi dịch xong); bản
+// dịch trong phiên (state.lastTranslated.provenance) + file sidecar tải
+// về (.provenance.json) dùng chung object này.
+function translateProvenanceFor(name, from, to, keyCount) {
+  const at = new Date().toISOString();
+  // Ưu tiên provenance đã ghi lúc nạp nội dung (loadExtractedToTranslate
+  // / tải file JSON lên): danh sách extract có thể đã đổi từ lúc nạp.
+  const rec = state.translateProvenance;
+  if (rec && (rec.extractName === name || rec.origin === "upload")) {
+    return Object.assign({}, rec, {
+      from: from || rec.from || null, to: to || rec.to || null,
+      keys: typeof keyCount === "number" ? keyCount : rec.keys,
+      at,
+    });
+  }
+  const entry = (state.lastExtractFiles || []).find(
+    (f) => (f.exported || f.path) === name);
+  const base = {
+    gameFile: state.file ? state.file.name : null,
+    from: from || null, to: to || null,
+    keys: typeof keyCount === "number" ? keyCount : null,
+    at,
+  };
+  if (!entry) {
+    return Object.assign({ origin: "manual", extractName: null, source: null, locale: from || null }, base);
+  }
+  return Object.assign({
+    origin: "extract",
+    extractName: entry.exported || entry.path || null,
+    // source: đơn vị Unity chứa chuỗi (đường dẫn ảo tới .assets/.unity3d/
+    // .bundle) — (E) ép file dịch về đúng đơn vị này trong file game gốc.
+    source: entry.source || entry.path || null,
+    locale: entry.locale || from || null,
+  }, base);
+}
+async function startTranslateJob(text, to, from) {
   let obj;
   try { obj = JSON.parse(text); } catch (e) { showError("JSON dịch lỗi: " + e.message); return null; }
   if (!obj || typeof obj !== "object" || Array.isArray(obj)) {
@@ -1836,13 +1905,18 @@ async function startTranslateJob(text, to) {
   }
   const entries = Object.entries(obj).map(([k, v]) =>
     [String(k), typeof v === "string" ? v : JSON.stringify(v)]);
+  // Job mới bắt đầu: cổng tải của job cũ không còn hiệu lực.
+  state.translateCheck = null;
   const job = {
     id: "tr-" + Date.now().toString(36) + "-" + Math.floor(Math.random() * 1e6).toString(36),
     name: currentTranslateSourceName(),
-    to, status: "running",
+    to, from, status: "running",
     items: entries, results: {}, tm: [],
     order: entries.map(([k]) => k),
     total: entries.length, tmCount: 0,
+    // Số liệu bỏ qua cộng dồn qua các chunk (bridge báo theo từng chunk):
+    skippedCount: 0, skippedByReason: {}, skippedByLang: {},
+    skippedKeysSample: [],
     createdAt: Date.now(), updatedAt: Date.now(),
   };
   if (translateJobStore) {
@@ -1881,8 +1955,13 @@ async function runTranslateGoogleJob(job, to, credit) {
   let fallbackNote = null;
   let warnings = [];
   let creditKey = null;
+  // Ngôn ngữ nguồn của job (mặc định "en" cho job cũ chưa có `from`).
+  const from = job.from || "en";
+  let sourceSegments = 0;
+  let selfCheckMissing = [];
+  let selfCheckWrong = [];
   try {
-    const tm = await buildTranslateTM(to);
+    const tm = await buildTranslateTM(to, from);
     // TM của chính job này (chunk trước dịch xong) cũng dùng cho chunk sau
     // — khỏi gửi lại value trùng ở chunk khác (dedupe của bridge chỉ
     // trong 1 lần gọi).
@@ -1900,21 +1979,43 @@ async function runTranslateGoogleJob(job, to, credit) {
       chunkIdx++;
       state.translateChunk = { idx: chunkIdx, total: chunksTotal };
       const { parsed } = await runOp("Dịch (Google)", "translate_json_google",
-        [JSON.stringify(chunkObj), to, false]);
+        [JSON.stringify(chunkObj), to, false, from]);
       // Key chưa dịch xong (hủy giữa chunk / Google lỗi) KHÔNG ghi vào
       // results — đưa về đầu hàng đợi để dịch lại khi resume, thay vì
       // ghi nhận là "đã xong" rồi bỏ qua vĩnh viễn.
       const incomplete = new Set(parsed.incomplete_keys || []);
+      const chunkSkipped = new Set(parsed.skipped_keys || []);
       let completedInChunk = 0;
       for (const pair of chunk) {
         if (incomplete.has(pair[0])) continue;
         completedInChunk++;
         job.results[pair[0]] = parsed.translated[pair[0]];
+        // Chỉ ghi TM cho key THẬT SỰ đã dịch: giá trị đổi VÀ không nằm
+        // trong skipped_keys của chunk (chuỗi không thuộc nguồn giữ
+        // nguyên từng byte — không được ghi thành "bản dịch").
         if (typeof pair[1] === "string" && pair[1] &&
-            typeof parsed.translated[pair[0]] === "string") {
+            typeof parsed.translated[pair[0]] === "string" &&
+            parsed.translated[pair[0]] !== pair[1] &&
+            !chunkSkipped.has(pair[0])) {
           job.tm.push([pair[1], parsed.translated[pair[0]]]);
           if (!tm.has(pair[1])) tm.set(pair[1], parsed.translated[pair[0]]);
         }
+      }
+      // Số liệu bỏ qua + tự kiểm tra của chunk (bridge báo theo chunk).
+      job.skippedCount += parsed.skipped_count || 0;
+      for (const [r, n] of Object.entries(parsed.skipped_by_reason || {})) {
+        job.skippedByReason[r] = (job.skippedByReason[r] || 0) + n;
+      }
+      for (const [l, n] of Object.entries(parsed.skipped_by_lang || {})) {
+        job.skippedByLang[l] = (job.skippedByLang[l] || 0) + n;
+      }
+      for (const k of (parsed.skipped_keys || [])) {
+        if (job.skippedKeysSample.length < 10) job.skippedKeysSample.push(k);
+      }
+      sourceSegments += parsed.source_segments || 0;
+      if (parsed.self_check) {
+        selfCheckMissing = selfCheckMissing.concat(parsed.self_check.missing_keys || []);
+        selfCheckWrong = selfCheckWrong.concat(parsed.self_check.wrong_lang_changed || []);
       }
       const back = chunk.filter((pair) => incomplete.has(pair[0]));
       job.items = back.concat(job.items.slice(chunk.length));
@@ -1951,12 +2052,50 @@ async function runTranslateGoogleJob(job, to, credit) {
     }
     renderTranslateOutput(job);
     const doneCount = Object.keys(job.results).length;
+    // Giữ bản dịch trong phiên (mục A): nút "Ép lại vào file gốc" (E)
+    // lấy thẳng từ đây, khỏi tải lên lại. Lưu cả vào job IndexedDB để
+    // tải lại trang vẫn còn.
+    state.lastTranslated = {
+      name: job.name, from, to,
+      translated: Object.assign({}, job.results),
+      keys: (job.order || Object.keys(job.results)).slice(),
+      at: Date.now(),
+      // Provenance (mục A, cho (E) ép nhiều file): giữ nguồn gốc của
+      // file nguồn (trích từ bundle/assets nào trong file game nào).
+      provenance: translateProvenanceFor(
+        job.name, from, to, (job.order || Object.keys(job.results)).length),
+    };
+    job.lastTranslatedAt = state.lastTranslated.at;
+    job.provenance = state.lastTranslated.provenance;
+    await saveTranslateJob(job);
+    // Cổng tải: chỉ cho tải khi job xong HẾT và tự kiểm tra sạch.
+    const missingCount = selfCheckMissing.length;
+    const wrongCount = selfCheckWrong.length;
+    const complete = job.status === "done" && job.items.length === 0 &&
+      missingCount === 0 && wrongCount === 0;
+    state.translateCheck = {
+      complete, missing: selfCheckMissing.slice(0, 10),
+      wrongChanged: selfCheckWrong.slice(0, 10),
+      skippedCount: job.skippedCount, total: job.total, done: doneCount,
+    };
     let info = "";
     if (cancelled) info += "Đã hủy giữa chừng — ";
-    info += "Đã dịch " + doneCount + "/" + job.total + " chuỗi" +
+    // Báo cáo trung thực (mục A, Joseph 21:28): tổng dòng nguồn / đã
+    // dịch / bỏ qua kèm lý do / mất / ngôn ngữ khác bị đổi. Không bao
+    // giờ báo "xong" khi còn dòng chưa dịch không lý do.
+    const srcLabel = from === "zh" ? "tiếng Trung" : "tiếng Anh";
+    info += "Nguồn " + srcLabel + ": " + sourceSegments + " đoạn · Đã dịch " +
+      doneCount + "/" + job.total + " key" +
       " (Google: " + googleCount + " đoạn · từ điển offline: " + glossaryCount +
       " đoạn · bộ nhớ dịch: " + job.tmCount + " chuỗi · khử trùng lặp: " + deduped +
       " đoạn · batch: " + batchRequests + " request, từng chuỗi: " + singleRequests + ").";
+    const skipBits = Object.entries(job.skippedByReason || {})
+      .map(([r, n]) => r + " ×" + n).join(", ");
+    info += " Bỏ qua " + job.skippedCount + " đoạn không thuộc " + srcLabel +
+      (skipBits ? " (" + skipBits + ")" : "") + ".";
+    info += " Mất: " + missingCount + " key · Ngôn ngữ khác bị đổi: " + wrongCount + " key.";
+    if (missingCount) info += " Thiếu: " + selfCheckMissing.slice(0, 5).join(", ") + ".";
+    if (wrongCount) info += " Bị đổi sai: " + selfCheckWrong.slice(0, 5).join(", ") + ".";
     if (networkError && doneCount < job.total) {
       // Chỉ hiện "Lý do" khi dịch CHƯA xong hết: batch lỗi rồi rơi về
       // từng chuỗi mà vẫn dịch được (vd Google 429 → MyMemory) thì không
@@ -1965,7 +2104,8 @@ async function runTranslateGoogleJob(job, to, credit) {
         " Từ điển offline chỉ biết ~100 từ/cụm thông dụng nên hầu hết chuỗi sẽ giữ nguyên.";
     }
     if (fallbackNote) info += " " + fallbackNote;
-    if (job.status === "done") info += " Xong — bấm “Tải bản dịch (.json)” để lưu.";
+    if (complete) info += " Xong — bấm “Tải bản dịch (.json)” để lưu. Bản dịch đã lưu trong phiên, sẵn sàng ép lại vào file gốc.";
+    else if (job.status === "done") info += " CHƯA xong — tự kiểm tra thấy thiếu/sai (xem trên), không cho tải file thiếu. Bấm “Tiếp tục dịch” để dịch tiếp.";
     else info += " Bản dịch dở dang đã lưu — tải lại trang rồi bấm “Tiếp tục dịch” để dịch tiếp.";
     if (creditKey) info += " Đã gắn credit 'Việt Hoá Bởi Bear' vào key: " + creditKey + ".";
     if (warnings.length) info += " Cảnh báo: " + warnings.slice(0, 5).join("; ");
@@ -1995,8 +2135,9 @@ async function refreshTranslateResumeBar() {
   state.translateResumeJob = job || null;
   if (!job) { bar.hidden = true; return; }
   const done = Object.keys(job.results || {}).length;
+  const langPair = (job.from || "en") + " → " + (job.to || "vi");
   $("translate-resume-text").textContent =
-    (job.name || "bản dịch") + " — đã dịch " + done + "/" + (job.total || done) + " chuỗi" +
+    (job.name || "bản dịch") + " (" + langPair + ") — đã dịch " + done + "/" + (job.total || done) + " chuỗi" +
     (job.status === "cancelled" ? " (đã hủy/dở dang)" : " (đang dở)");
   bar.hidden = false;
 }
@@ -2030,17 +2171,44 @@ $("btn-translate-run").addEventListener("click", async () => {
   const to = $("translate-to").value;
   const credit = $("translate-credit").checked;
   const useGoogle = $("translate-google").checked;
+  const from = ($("translate-from") && $("translate-from").value) || "en";
   if (!useGoogle) {
     // Offline: 1 lần gọi như trước (nhanh, không cần hàng đợi).
     const btn = $("btn-translate-run");
     btn.disabled = true;
     try {
-      const { parsed } = await runOp("Dịch offline", "translate_json", [text, to, credit]);
+      const { parsed } = await runOp("Dịch offline", "translate_json", [text, to, credit, from]);
       $("translate-output").value = JSON.stringify(parsed.translated, null, 2);
-      let info = "Dịch bằng từ điển offline: " + parsed.total + " chuỗi.";
-      info += " Chưa dịch được " + parsed.untranslated + " chuỗi.";
+      const srcLabel = from === "zh" ? "tiếng Trung" : "tiếng Anh";
+      const missing = (parsed.self_check && parsed.self_check.missing_keys) || [];
+      const wrong = (parsed.self_check && parsed.self_check.wrong_lang_changed) || [];
+      state.lastTranslated = {
+        name: currentTranslateSourceName(), from, to,
+        translated: Object.assign({}, parsed.translated),
+        keys: Object.keys(parsed.translated),
+        at: Date.now(),
+        // Provenance (mục A, cho (E) ép nhiều file) — như đường Google.
+        provenance: translateProvenanceFor(
+          currentTranslateSourceName(), from, to,
+          Object.keys(parsed.translated).length),
+      };
+      const doneKeys = Object.keys(parsed.translated).length;
+      state.translateCheck = {
+        complete: missing.length === 0 && wrong.length === 0,
+        missing: missing.slice(0, 10), wrongChanged: wrong.slice(0, 10),
+        skippedCount: parsed.skipped_count || 0,
+        total: parsed.total || doneKeys, done: doneKeys,
+      };
+      let info = "Dịch bằng từ điển offline (" + srcLabel + " → " +
+        (to === "vi" ? "tiếng Việt" : "tiếng Anh") + "): " + parsed.total + " key.";
+      info += " Chưa dịch được " + parsed.untranslated + " chuỗi (từ điển không biết — giữ nguyên, không tính là xong).";
+      info += " Bỏ qua " + (parsed.skipped_count || 0) + " chuỗi không thuộc " + srcLabel + ".";
+      info += " Mất: " + missing.length + " key · Ngôn ngữ khác bị đổi: " + wrong.length + " key.";
+      if (missing.length) info += " Thiếu: " + missing.slice(0, 5).join(", ") + ".";
+      if (wrong.length) info += " Bị đổi sai: " + wrong.slice(0, 5).join(", ") + ".";
       if (parsed.credit_key) info += " Đã gắn credit 'Việt Hoá Bởi Bear' vào key: " + parsed.credit_key + ".";
       if ((parsed.warnings || []).length) info += " Cảnh báo: " + parsed.warnings.join("; ");
+      if (state.translateCheck.complete) info += " Bản dịch đã lưu trong phiên, sẵn sàng ép lại vào file gốc.";
       $("translate-info").textContent = info;
     } catch (e) { /* đã báo lỗi */ }
     finally { btn.disabled = false; }
@@ -2055,7 +2223,7 @@ $("btn-translate-run").addEventListener("click", async () => {
     const estSec = batches * 1.5;
     if (!confirm("File có " + nKeys + " chuỗi. Dịch Google theo batch " + TRANSLATE_BATCH_STRINGS + " chuỗi/request — ước tính khoảng " + fmtTime(estSec) + " (có thể lâu hơn nếu mạng chậm; nếu Google không nhận batch thì tool tự rơi về từng chuỗi, sẽ chậm hơn nhiều). Bấm OK để dịch tiếp, hoặc Hủy để dịch offline / chia nhỏ file.")) return;
   }
-  const job = await startTranslateJob(text, to);
+  const job = await startTranslateJob(text, to, from);
   if (!job) return;
   await runTranslateGoogleJob(job, to, credit);
 });
@@ -2066,13 +2234,53 @@ $("btn-translate-cancel").addEventListener("click", () => {
   if (worker) worker.postMessage({ op: "cancel_translate" });
   $("translate-info").textContent = "Đang hủy… (dừng sau batch hiện tại, giữ lại phần đã dịch)";
 });
+// Cổng tải (mục A, Joseph 21:28): tự kiểm tra lần dịch gần nhất mà
+// thấy thiếu key hoặc ngôn ngữ khác bị đổi thì CHẶN tải file thiếu,
+// hiện rõ số dòng + ví dụ + hướng "Tiếp tục dịch" — thay vì im lặng
+// cho tải file dở dang như trước. Dùng chung cho cả bản dịch (.json)
+// và file provenance sidecar (.provenance.json) — sidecar mô tả đúng
+// bản dịch đó nên không cho tải lẻ khi bản dịch chưa xong.
+function translateGateError() {
+  const chk = state.translateCheck;
+  if (!chk || chk.complete) return null;
+  const bits = [];
+  if ((chk.missing || []).length) bits.push("thiếu " + chk.missing.length + " key (vd " + chk.missing.slice(0, 3).join(", ") + ")");
+  if ((chk.wrongChanged || []).length) bits.push("ngôn ngữ khác bị đổi " + chk.wrongChanged.length + " key (vd " + chk.wrongChanged.slice(0, 3).join(", ") + ")");
+  if (chk.done < chk.total) bits.push("mới dịch " + chk.done + "/" + chk.total + " key");
+  return "Chưa cho tải: bản dịch chưa đầy đủ — " + (bits.join("; ") || "tự kiểm tra chưa đạt") + ". Bấm “Tiếp tục dịch” để dịch tiếp, hoặc kiểm tra lại file nguồn.";
+}
 $("btn-translate-download").addEventListener("click", () => {
   const t = $("translate-output").value;
   if (!t) { showError("Chưa có bản dịch để tải."); return; }
+  const gateErr = translateGateError();
+  if (gateErr) { showError(gateErr); return; }
   // Mục 5: tải dạng nhiều Blob part 64KB, không concat một ArrayBuffer lớn.
   const parts = (typeof PB3Stream !== "undefined" && PB3Stream.textToBlobParts)
     ? PB3Stream.textToBlobParts(t) : [new TextEncoder().encode(t)];
   download("translated.vi.json", parts);
+});
+// Tải file provenance sidecar (mục A, cho (E) ép NHIỀU file): JSON nhỏ
+// ghi rõ bản dịch này trích từ đâu (file game gốc, đơn vị .assets/
+// .bundle chứa chuỗi, tên file trích xuất, cặp ngôn ngữ, số key) để
+// (E) ép từng file vào đúng vị trí theo provenance + key và báo xung
+// đột khi 2 file trùng key. File dịch chính vẫn giữ dạng phẳng sạch
+// giống en.json của Joseph (không nhét provenance vào làm bẩn key).
+// Cùng cổng tải với bản dịch: bản dịch chưa xong thì sidecar cũng chặn.
+$("btn-translate-download-provenance").addEventListener("click", () => {
+  const lt = state.lastTranslated;
+  if (!lt || !lt.provenance) { showError("Chưa có bản dịch xong trong phiên để tải provenance — hãy dịch xong một file trước."); return; }
+  const gateErr = translateGateError();
+  if (gateErr) { showError(gateErr); return; }
+  const sidecar = {
+    format: "beartea-translation-provenance/1",
+    translationFile: "translated.vi.json",
+    provenance: lt.provenance,
+    note: "File này mô tả nguồn gốc của translated.vi.json đi kèm. (E) ép nhiều file: nhóm các file dịch theo (gameFile, source), ép từng file vào đúng đơn vị đó, báo xung đột khi 2 file trùng key.",
+  };
+  const text = JSON.stringify(sidecar, null, 2);
+  const parts = (typeof PB3Stream !== "undefined" && PB3Stream.textToBlobParts)
+    ? PB3Stream.textToBlobParts(text) : [new TextEncoder().encode(text)];
+  download("translated.vi.provenance.json", parts);
 });
 
 // ---- Mod ----

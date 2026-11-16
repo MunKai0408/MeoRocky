@@ -473,6 +473,12 @@
     <p id="translate-empty-banner" class="warn">Chưa có nội dung để dịch — hãy chọn file vừa trích xuất hoặc dán JSON vào ô.</p>
     <textarea id="translate-input" placeholder='{"play": "Play", "quit": "Quit"}'></textarea>
     <div class="row">
+      <label>Dịch từ:
+        <select id="translate-from" style="width:auto">
+          <option value="en" selected>Tiếng Anh</option>
+          <option value="zh">Tiếng Trung</option>
+        </select>
+      </label>
       <label>Dịch sang:
         <select id="translate-to" style="width:auto">
           <option value="vi" selected>Tiếng Việt</option>
@@ -482,10 +488,13 @@
       <label><input type="checkbox" id="translate-google" checked> Dùng Google Translate (cần mạng)</label>
       <label><input type="checkbox" id="translate-credit" checked> Gắn credit “Việt Hoá Bởi Bear”</label>
     </div>
+    <p class="note">Chỉ dịch chuỗi thuộc ngôn ngữ nguồn đã chọn — chuỗi ngôn ngữ khác giữ nguyên từng byte, không dịch nhầm. Cuối mỗi lần dịch, tool báo rõ tổng dòng nguồn / đã dịch / bỏ qua kèm lý do / mất / ngôn ngữ khác bị đổi, và tự kiểm tra trước khi cho tải file về.</p>
     <p class="note">Giữ nguyên placeholder ({0}, %s), thẻ và xuống dòng — luôn bật, không cần tick.</p>
     <button id="btn-translate-run">Dịch</button>
     <button id="btn-translate-cancel" class="secondary" hidden>Hủy</button>
     <button id="btn-translate-download" class="secondary">Tải bản dịch (.json)</button>
+    <button id="btn-translate-download-provenance" class="secondary">Tải provenance (.json)</button>
+    <p class="note">Nút “Tải provenance” tải file sidecar ghi rõ bản dịch này trích từ file game nào, bundle/assets nào — để bước “Ép lại vào file gốc” sau này ép đúng vị trí (kể cả khi ép nhiều file cùng lúc). Bản dịch chính vẫn giữ dạng phẳng sạch như file en.json mẫu.</p>
     <p id="translate-info" class="sub"></p>
     <textarea id="translate-output" placeholder="Bản dịch sẽ hiện ở đây…" readonly></textarea>
   </div>

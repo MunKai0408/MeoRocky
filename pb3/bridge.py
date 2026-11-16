@@ -404,14 +404,87 @@ def _fmt_bytes(n):
     return "%d B" % n
 
 
-def translate_json(json_text, to="vi", credit=True):
+# Dấu Latin không có trong từ tiếng Anh bản xứ (ä/ö/ü/é/è/à/ç/á...):
+# chuỗi Latin trơn mà chứa dấu này thì CHẮC CHẮN không phải tiếng Anh
+# (vd "Unerhört!", "Extraordinário!") — dùng làm lưới an toàn ở mức
+# lọc dịch: detect_language trả weak-en cho các chuỗi ngắn không có từ
+# chức năng, nhưng dấu này đủ để loại chúng khỏi hàng đợi tiếng Anh.
+# Từ mượn có dấu trong tiếng Anh ("café", "Pokémon") cũng bị loại theo
+# — chấp nhận được: đó thường là tên riêng, giữ nguyên là đúng.
+_NON_EN_DIACRITICS = set(
+    "àáâãäåçèéêëìíîïñòóôõöøùúûüýÿß")
+
+
+def _source_match(text, src):
+    """Chuỗi này có thuộc ngôn ngữ nguồn `src` không?
+
+    Dùng sdk.langdetect.detect_language (rule-based, không mạng):
+    - phát hiện mạnh == src -> (True, "", code)
+    - phát hiện mạnh != src -> (False, "other_lang:<code>", code)
+    - không có chữ cái -> (False, "no_letters", None)
+    - phát hiện yếu: chỉ src == "en" mới nhận (Latin trơn không dấu/từ
+      chức năng mặc định là tiếng Anh — xem langdetect); mọi src khác
+      (vd "zh") thì Latin yếu KHÔNG tính là nguồn ->
+      (False, "weak_latin_not_<src>", "en").
+    Ngoại lệ lưới an toàn: chuỗi yếu mà chứa dấu Latin không phải tiếng
+    Anh (vd "Unerhört!") thì KHÔNG tính là tiếng Anh dù src == "en" ->
+    (False, "non_en_diacritics", None).
+    Trả (is_source, reason, detected_code).
+    Không nạp được langdetect thì RAISE (fail-closed): im lặng nhận hết
+    sẽ dịch nhầm ngôn ngữ khác như trước — thà báo lỗi còn hơn.
+    """
+    from sdk.langdetect import detect_language
+    code, conf = detect_language(text or "")
+    if code is None:
+        return False, "no_letters", None
+    if conf == "strong":
+        if code == src:
+            return True, "", code
+        return False, "other_lang:%s" % code, code
+    # weak: chỉ Latin trơn, mặc định là tiếng Anh.
+    if src == "en":
+        if any(ch in _NON_EN_DIACRITICS for ch in (text or "")):
+            return False, "non_en_diacritics", None
+        return True, "", "en"
+    return False, "weak_latin_not_%s" % src, code
+
+
+def _self_check(kv, translated, skipped_keys, credit_key):
+    """Tự kiểm tra output trước khi trả về (mục A, Joseph 21:28).
+
+    - missing_keys: key trong input mà output thiếu — phải rỗng (bridge
+      dựng lại dict theo đúng thứ tự key input nên luôn rỗng nếu không
+      có lỗi lập trình).
+    - wrong_lang_changed: key bị bỏ qua vì không thuộc ngôn ngữ nguồn
+      (skipped_keys) mà giá trị lại đổi — phải rỗng; ngoại lệ duy nhất
+      là credit_key (gắn 'Việt Hoá Bởi Bear' có chủ đích, đã báo riêng).
+    Trả {"input_keys", "output_keys", "missing_keys",
+    "wrong_lang_changed", "ok"}.
+    """
+    missing = [k for k in kv if k not in translated]
+    wrong = [k for k in skipped_keys
+             if k in translated and translated[k] != kv[k]
+             and k != credit_key]
+    return {"input_keys": len(kv), "output_keys": len(translated),
+            "missing_keys": missing,
+            "wrong_lang_changed": wrong,
+            "ok": not missing and not wrong}
+
+
+def translate_json(json_text, to="vi", credit=True, src="en"):
     """Dịch bảng key-value bằng từ điển offline (không cần mạng).
 
     Chỉ dịch VALUE, giữ nguyên KEY (luật của PB3). credit=True thì gắn
     'Việt Hoá Bởi Bear' vào 1 entry tiêu đề/version nếu tìm được.
+    src: ngôn ngữ nguồn phải dịch (mặc định "en"); chuỗi phát hiện mạnh
+    thuộc ngôn ngữ khác bị BỎ QUA (giữ nguyên từng byte, ghi lý do vào
+    skipped) — không dịch nhầm như trước (bridge từng hard-code "en").
+    Lọc ở mức VALUE (cả giá trị): giá trị nào phát hiện mạnh không phải
+    src thì giữ nguyên toàn bộ.
     """
     try:
-        from sdk.translate import OfflineGlossaryProvider, translate_table
+        from sdk.translate import (OfflineGlossaryProvider, apply_credit,
+                                   check_lang, mask_line, translate_table)
 
         kv = json.loads(json_text)
         if not isinstance(kv, dict):
@@ -419,20 +492,64 @@ def translate_json(json_text, to="vi", credit=True):
         kv = {str(k): (v if isinstance(v, str)
                        else json.dumps(v, ensure_ascii=False))
               for k, v in kv.items()}
+        check_lang(to, allow_auto=False)
+        check_lang(src, allow_auto=False)
+        if src == to:
+            raise ValueError(
+                "ngôn ngữ nguồn và đích trùng nhau: %s" % src)
+        # Lọc theo ngôn ngữ nguồn ở mức value (xem _source_match).
+        kv_src = {}
+        skipped = {}  # key -> {"reason", "detected"}
+        skipped_by_reason = {}
+        skipped_by_lang = {}
+        for key, value in kv.items():
+            if value == "":
+                kv_src[key] = value
+                continue
+            # Phát hiện trên giá trị ĐÃ CHE thẻ/placeholder (như đường
+            # Google): chữ trong thẻ (<size>, </b>) không phải ngôn ngữ
+            # của chuỗi — giá trị rich-text CJK chỉ còn thẻ sẽ không bị
+            # coi là tiếng Anh yếu.
+            masked_value = "\n".join(
+                mask_line(ln)[0] for ln in value.split("\n"))
+            is_src, reason, det = _source_match(masked_value, src)
+            if is_src:
+                kv_src[key] = value
+            else:
+                skipped[key] = {"reason": reason, "detected": det}
+                skipped_by_reason[reason] = \
+                    skipped_by_reason.get(reason, 0) + 1
+                if det:
+                    skipped_by_lang[det] = skipped_by_lang.get(det, 0) + 1
         res = translate_table(
-            kv, source_lang="en", target_lang=to,
+            kv_src, source_lang=src, target_lang=to,
             provider=OfflineGlossaryProvider(),
             progress_fn=lambda d, t: _emit("translate", d, t),
-            credit=bool(credit))
+            credit=False)
+        # Trải lại đủ mọi key theo đúng thứ tự input: key bị bỏ qua giữ
+        # nguyên giá trị gốc (dedupe/lọc không bao giờ làm mất key).
+        translated = {key: (res.translated[key] if key in res.translated
+                            else kv[key]) for key in kv}
+        credit_key = None
+        if credit:
+            credit_key = apply_credit(translated)
+        self_check = _self_check(kv, translated, set(skipped), credit_key)
         return json.dumps({
-            "ok": True, "translated": res.translated, "total": int(res.total),
+            "ok": True, "translated": translated, "total": int(len(kv)),
+            "source_total": int(len(kv_src)),
             "untranslated": int(res.untranslated),
             "untranslated_keys": list(res.untranslated_keys or [])[:50],
             "warnings": list(res.warnings or [])[:20],
-            "credit_key": res.credit_key,
+            "credit_key": credit_key,
             "translated_by": "offline", "google_count": 0,
             "glossary_count": int(res.glossary),
             "network_error": None, "cancelled": False,
+            "source_lang": src,
+            "skipped_count": len(skipped),
+            "skipped_by_reason": skipped_by_reason,
+            "skipped_by_lang": skipped_by_lang,
+            "skipped_keys": sorted(skipped)[:50],
+            "self_check": self_check,
         }, ensure_ascii=False)
     except Exception as e:  # noqa: BLE001
         return _err(e)
@@ -546,7 +663,7 @@ def _coerce_batch_result(got):
     return items, mode
 
 
-async def translate_json_google(json_text, to="vi", credit=True):
+async def translate_json_google(json_text, to="vi", credit=True, src="en"):
     """Dịch bảng key-value bằng Google Translate thật qua fetch() của JS.
 
     Luồng (batch, mục A): Python (async) gọi `js.pb3_google_translate_batch`
@@ -575,6 +692,13 @@ async def translate_json_google(json_text, to="vi", credit=True):
     batch_mode ("gtx-joined"/"proxy-batch"/"single"/"none"). Hàm này là
     async — worker.js await Promise trả về trước khi gửi kết quả về main
     thread.
+
+    src (mục A): ngôn ngữ nguồn phải dịch (mặc định "en"). Đoạn phát
+    hiện mạnh thuộc ngôn ngữ khác bị bỏ qua (giữ nguyên từng byte, đếm
+    vào skipped_count + skipped_by_reason/by_lang) — không gửi Google
+    như tiếng Anh nữa. Kết quả kèm self_check (input_keys/output_keys/
+    missing_keys/wrong_lang_changed) — bridge tự đối chiếu output với
+    input trước khi trả về; missing và wrong_lang_changed phải rỗng.
     """
     try:
         from sdk.translate import (OfflineGlossaryProvider, apply_credit,
@@ -588,7 +712,16 @@ async def translate_json_google(json_text, to="vi", credit=True):
                        else json.dumps(v, ensure_ascii=False))
               for k, v in kv.items()}
         check_lang(to, allow_auto=False)
-        src = "vi" if to == "en" else "en"
+        check_lang(src, allow_auto=False)
+        if src == to:
+            raise ValueError(
+                "ngôn ngữ nguồn và đích trùng nhau: %s" % src)
+        # src do người dùng chọn (mặc định "en"); trước đây hard-code
+        # "en" nên chọn dịch zh vẫn gửi chuỗi đi như tiếng Anh (Joseph
+        # 21:24: câu Nga/Đức bị "dịch" hỏng). Lọc từng ĐOẠN theo ngôn
+        # ngữ phát hiện (xem _source_match): đoạn không thuộc nguồn thì
+        # giữ nguyên, ghi lý do vào skipped — KHÔNG tính là incomplete
+        # (app.js khỏi đưa lại vào hàng đợi vô hạn).
 
         try:
             import js as _js
@@ -654,6 +787,10 @@ async def translate_json_google(json_text, to="vi", credit=True):
         # cùng cách sdk.translate.translate_table làm.
         segments = []  # (key, line_no, masked, tokens, lines)
         pending = {}
+        # Đoạn bị bỏ qua vì không thuộc ngôn ngữ nguồn (giữ nguyên từng
+        # byte, không gửi Google): {"key","line","reason","detected"}.
+        skipped_segments = []
+        skipped_key_set = set()
         for key, value in kv.items():
             if value == "":
                 translated[key] = ""
@@ -669,6 +806,17 @@ async def translate_json_google(json_text, to="vi", credit=True):
                 for j in range(len(tokens)):
                     bare = bare.replace("__PB3PH%d__" % j, "")
                 if not any(ch.isalnum() for ch in bare):
+                    continue
+                # Lọc theo ngôn ngữ nguồn ở mức đoạn (mục A): đoạn phát
+                # hiện mạnh thuộc ngôn ngữ khác thì KHÔNG dịch. Phát hiện
+                # trên dòng ĐÃ CHE (masked) chứ không phải dòng thô: chữ
+                # trong thẻ (<size>, </b>) không phải ngôn ngữ của chuỗi.
+                is_src, reason, det = _source_match(masked, src)
+                if not is_src:
+                    skipped_segments.append(
+                        {"key": key, "line": i, "reason": reason,
+                         "detected": det})
+                    skipped_key_set.add(key)
                     continue
                 segs.append((i, masked, tokens))
             if not segs:
@@ -900,6 +1048,20 @@ async def translate_json_google(json_text, to="vi", credit=True):
         credit_key = None
         if credit:
             credit_key = apply_credit(translated)
+        # Key bị bỏ qua TOÀN BỘ (không có đoạn nào thuộc nguồn): giá trị
+        # phải giữ nguyên từng byte — tự kiểm tra trước khi trả về.
+        fully_skipped_keys = sorted(
+            k for k in skipped_key_set if k not in pending)
+        skipped_by_reason = {}
+        skipped_by_lang = {}
+        for s in skipped_segments:
+            skipped_by_reason[s["reason"]] = \
+                skipped_by_reason.get(s["reason"], 0) + 1
+            if s["detected"]:
+                skipped_by_lang[s["detected"]] = \
+                    skipped_by_lang.get(s["detected"], 0) + 1
+        self_check = _self_check(kv, translated, set(fully_skipped_keys),
+                                 credit_key)
         if google_count == 0:
             translated_by = "offline"
         elif glossary_count == 0 and untranslated == 0:
@@ -926,6 +1088,14 @@ async def translate_json_google(json_text, to="vi", credit=True):
             fallback_note = "Đã dùng fallback: " + ", ".join(_bits) + "."
         return json.dumps({
             "ok": True, "translated": translated, "total": int(len(kv)),
+            "source_lang": src,
+            "source_keys": int(len(pending)),
+            "source_segments": int(total),
+            "skipped_count": len(skipped_segments),
+            "skipped_by_reason": skipped_by_reason,
+            "skipped_by_lang": skipped_by_lang,
+            "skipped_keys": fully_skipped_keys[:50],
+            "self_check": self_check,
             "untranslated": int(untranslated),
             "untranslated_keys": untranslated_keys[:50],
             "warnings": warnings[:20], "credit_key": credit_key,

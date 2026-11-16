@@ -424,22 +424,131 @@ _MB_NOISE_EXTS = (".png", ".jpg", ".jpeg", ".mat", ".prefab", ".ttf", ".otf",
                   ".wav", ".mp3", ".ogg", ".dll", ".cs")
 
 
-def _mb_generic_kv(items):
-    """Danh sách item MonoBehaviour generic -> (dict key-value, đã_giữ, đã_lọc).
+_TERM_LIKE_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_/.\-]*$")
+
+
+def _is_term_like(s: str) -> bool:
+    """Chuỗi có phải key term (định danh) không — vd 'Achievement_HisWinningness',
+    'Buttons/Play'. Dùng làm ranh giới nhóm term trong object bảng ngôn ngữ
+    (1 term + N bản dịch lặp lại theo thứ tự ngôn ngữ cố định)."""
+    return (isinstance(s, str) and len(s) >= 3
+            and ("_" in s or "/" in s) and _TERM_LIKE_RE.match(s) is not None)
+
+
+def _split_term_chunks(pairs):
+    """Chia list (suffix, value) đã giữ của 1 object thành nhóm term.
+
+    Nhóm = [term, bản dịch 1..N]; term là chuỗi term-like đầu nhóm. Nhóm
+    đầu không có term (object bắt đầu giữa chừng) thì has_term=False.
+    Trả [(has_term, [(suffix, value), ...]), ...]."""
+    chunks = []
+    cur = None
+    cur_has_term = False
+    for pair in pairs:
+        v = pair[1]
+        if _is_term_like(v):
+            if cur:
+                chunks.append((cur_has_term, cur))
+            cur = [pair]
+            cur_has_term = True
+        else:
+            if cur is None:
+                cur = [pair]
+                cur_has_term = False
+            else:
+                cur.append(pair)
+    if cur:
+        chunks.append((cur_has_term, cur))
+    return chunks
+
+
+def _resplit_long_chunks(chunks, modal_len):
+    """Tách lại chunk dài hơn modal_len (term bị bỏ lọt do không giống
+    định danh, vd 'Tutorial1', 'PressToContinue' — CamelCase không có
+    '_' hay '/').
+
+    Chỉ tách tại vị trí là bội số của modal_len mà chuỗi ở đó là định
+    danh một token (^[A-Za-z_][A-Za-z0-9_.\\-/]*$, dài >= 3) VÀ có dấu
+    hiệu định danh (chứa '_' hay '/' hay chữ số, hoặc >= 2 chữ hoa —
+    vd 'Tutorial1', 'PressToContinue', 'AvailableOn9Kings'); tên riêng
+    một từ viết hoa đầu ('Escudeiro', 'English', 'Danish', 'Purchase')
+    KHÔNG tách — đó thường là bản dịch (tên ngôn ngữ, tên gọi) chứ
+    không phải term. Vị trí bội số mà chuỗi là câu (có khoảng trắng)
+    thì KHÔNG tách (không tin được ranh giới đó).
+    Chunk vẫn dài sau khi tách (vd 59 chuỗi, ranh giới là câu tiếng Anh)
+    thì giữ nguyên — các chuỗi trong đó mất vị trí học, rơi về phát hiện
+    từng chuỗi (ghi rõ trong báo cáo, không đoán mò).
+    Trả list chunk mới [(has_term, [(suffix, value), ...]), ...].
+    """
+    if modal_len < 2:
+        return chunks
+    loose = re.compile(r"^[A-Za-z_][A-Za-z0-9_.\-/]*$")
+    def _looks_like_term(v):
+        if len(v) < 3 or not loose.match(v):
+            return False
+        if "_" in v or "/" in v or any(ch.isdigit() for ch in v):
+            return True
+        return sum(1 for ch in v if ch.isupper()) >= 2
+    out = []
+    for has_term, c in chunks:
+        if not has_term or len(c) <= modal_len:
+            out.append((has_term, c))
+            continue
+        # Vị trí tách: bội số modal_len, chuỗi tại đó giống định danh.
+        cuts = [0]
+        for i in range(modal_len, len(c), modal_len):
+            if _looks_like_term(c[i][1]):
+                cuts.append(i)
+        cuts.append(len(c))
+        for a, b in zip(cuts, cuts[1:]):
+            out.append((True, c[a:b]))
+    return out
+
+
+def _mb_generic_kv(items, split_languages=False):
+    """Danh sách item MonoBehaviour generic -> dict kết quả.
 
     Key = "<tên object đã sanitize>.s<n>" (n là thứ tự chuỗi trong object;
-    object có type tree thì key là tên field). Trùng key thì thêm hậu tố
-    "#2", "#3"... (giữ bản ghi đầu như make_entries)."""
-    kv: Dict[str, str] = {}
-    used = set()
-    kept = 0
+    object có type tree thì key là tên field). Thứ tự key GIỮ NGUYÊN thứ tự
+    trong game (không sắp xếp lại — ý 7).
+
+    split_languages=False (mặc định, tương thích ngược): trả {"kv": dict gộp,
+    "by_lang": None, ...} như cũ — key trùng thêm hậu tố "#2", "#3"...
+    split_languages=True (trích xuất có lọc ngôn ngữ): tách theo từng chuỗi
+    -> {"kv": {}, "by_lang": {lang: {key: value}}, ...}:
+      - Mỗi chuỗi được gán đúng 1 ngôn ngữ: phát hiện mạnh theo chuỗi
+        (script/dấu/từ chức năng, sdk.langdetect) thắng; chuỗi yếu thì dùng
+        vị trí đã học trong nhóm lặp (term + N bản dịch, hoặc 1 key lặp ở
+        N object mỗi object một ngôn ngữ — thứ tự ngôn ngữ cố định của
+        game, học từ phiếu mạnh, không đoán mò); còn lại mặc định "en"
+        (Latin trơn — heuristic có ghi rõ độ tin cậy).
+      - Key sạch không hậu tố #N: dedup theo từng ngôn ngữ (cùng key ở 2
+        ngôn ngữ khác nhau không còn đụng nhau); key trùng THẬT trong cùng
+        ngôn ngữ (2 object khác tên giống nhau) thì thêm hậu tố ổn định
+        ".p<path_id>" — chỉ đúng object nguồn, để (E) ép lại được, thay vì
+        "#N" phụ thuộc thứ tự duyệt.
+      - Object có cấu trúc [term + N bản dịch] hệ thống (vd bảng ngôn ngữ của game):
+        bản dịch lấy TERM làm key (vd 'Achievement_HisWinningness' ->
+        'His Winningness'), giống file en.json của Joseph; term ở slot 0
+        được tiêu thụ làm key, không xuất thành giá trị.
+    Trả {"kv", "by_lang", "kept", "dropped", "stats"}; stats ghi số chuỗi
+    theo từng cơ chế (strong/vị trí/mặc định) + số key hậu tố ổn định.
+    Lưu ý: kept đếm cả term (được giữ lại dưới dạng key); tổng per_lang =
+    kept - số term đã dùng làm key.
+    """
+    from collections import Counter
+    from sdk import langdetect as _ld
+
+    kept_pairs = []  # (base_key, value, path_id, item_index)
     dropped = 0
-    for item in items:
+    for item_idx, item in enumerate(items):
         base = _sanitize_segment(item.get("name") or "") or ("mb_%d" % item.get("path_id", 0))
         pairs = []
         fields = item.get("fields")
         if isinstance(fields, dict):
-            for fp, v in sorted(fields.items()):
+            # Thứ tự chèn của dict = thứ tự trong type tree = thứ tự gốc
+            # của game — KHÔNG sorted() lại (ý 7).
+            for fp, v in fields.items():
                 pairs.append((re.sub(r"[^A-Za-z0-9_]+", "_", str(fp)).strip("_") or "f", v))
         else:
             for j, v in enumerate(item.get("strings") or []):
@@ -448,7 +557,18 @@ def _mb_generic_kv(items):
             if not isinstance(v, str) or _mb_string_is_noise(v):
                 dropped += 1
                 continue
-            key = "%s.%s" % (base, suffix)
+            kept_pairs.append(("%s.%s" % (base, suffix), v,
+                               item.get("path_id", 0), item_idx))
+
+    kept = len(kept_pairs)
+    stats: Dict[str, Any] = {"by_mechanism": {"strong": 0, "position": 0,
+                                              "default": 0},
+                             "per_lang": {}, "stable_suffix_keys": 0,
+                             "x_suffix_keys": 0}
+    if not split_languages:
+        kv: Dict[str, str] = {}
+        used = set()
+        for key, v, _pid, _idx in kept_pairs:
             if key in used:
                 n = 2
                 while "%s#%d" % (key, n) in used:
@@ -456,8 +576,181 @@ def _mb_generic_kv(items):
                 key = "%s#%d" % (key, n)
             used.add(key)
             kv[key] = v
-            kept += 1
-    return kv, kept, dropped
+        return {"kv": kv, "by_lang": None, "kept": kept, "dropped": dropped,
+                "stats": stats}
+
+    # -- Tách theo ngôn ngữ: phát hiện từng chuỗi + học vị trí. ----------
+    # Phát hiện mạnh/yếu cho mọi chuỗi trước (vị trí chỉ lấp chỗ yếu).
+    detected = [_ld.detect_language(v) for _k, v, _p, _i in kept_pairs]
+
+    # (a) Vị trí trong nhóm term của từng object (chuỗi): nhóm = [term, N bản
+    # dịch]; chỉ học từ nhóm có độ dài modal L (ít nhất 5 nhóm, >= 50% số
+    # nhóm có term) — nhóm lệch độ dài (thiếu bản dịch) thì không học.
+    # Học CHỈ trên các bản dịch (bỏ term ở slot 0 — term là định danh,
+    # không phải ngôn ngữ; học nó sẽ gán nhầm 'en' cho khe term).
+    chunk_pos: Dict[int, Optional[str]] = {}  # chỉ số kept_pairs -> lang vị trí
+    term_key: Dict[int, str] = {}  # chỉ số kept_pairs -> term của nhóm
+    term_pos: set = set()  # chỉ số kept_pairs là term của nhóm >= 2 chuỗi
+    per_item_pairs: Dict[int, List[int]] = {}
+    for pi, (_k, _v, _p, item_idx) in enumerate(kept_pairs):
+        per_item_pairs.setdefault(item_idx, []).append(pi)
+    for item_idx, pis in per_item_pairs.items():
+        item_pairs = [(kept_pairs[pi][0], kept_pairs[pi][1]) for pi in pis]
+        chunks = _split_term_chunks(item_pairs)
+        term_chunks = [c for has_term, c in chunks if has_term and len(c) >= 4]
+        if len(term_chunks) < 5:
+            continue
+        lens = Counter(len(c) for c in term_chunks)
+        modal_len, modal_n = lens.most_common(1)[0]
+        if modal_n < 5 or modal_n * 2 < len(term_chunks):
+            continue
+        # Tách lại chunk dài (term CamelCase không '_'/'/' bị bỏ lọt,
+        # vd 'Tutorial1') tại bội số modal_len, rồi tính lại modal.
+        chunks = _resplit_long_chunks(chunks, modal_len)
+        term_chunks = [c for has_term, c in chunks if has_term and len(c) >= 4]
+        lens = Counter(len(c) for c in term_chunks)
+        modal_len, modal_n = lens.most_common(1)[0]
+        if modal_n < 5 or modal_n * 2 < len(term_chunks):
+            continue
+        modal_groups = [[v for _s, v in c[1:]] for c in term_chunks
+                        if len(c) == modal_len]
+        pos_langs = _ld.infer_positions(modal_groups)
+        if not any(pos_langs):
+            continue
+        # Object này có cấu trúc [term + N bản dịch] hệ thống -> dùng term
+        # làm key cho các bản dịch (giống file en.json của Joseph: key là
+        # tên term, vd 'Achievement_HisWinningness'); term được "tiêu thụ"
+        # làm key, không xuất thành giá trị. Chỉ áp khi học vị trí thành
+        # công (chứng tỏ đúng cấu trúc bảng term), object khác giữ key đường dẫn.
+        # Chunk DÀI hơn modal_len là chunk gộp nhiều term (tách lại không
+        # được — ranh giới là câu/bản dịch): term của nó KHÔNG đáng tin
+        # cho cả chunk nên KHÔNG dùng term làm key (giữ key đường dẫn
+        # '<object>.s<n>' cho mọi chuỗi trong chunk, kể cả term đầu).
+        offset = 0
+        for has_term, c in chunks:
+            if has_term and 2 <= len(c) <= modal_len:
+                term_pos.add(pis[offset])
+                stats["term_keyed"] = stats.get("term_keyed", 0) + 1
+                for j in range(1, len(c)):
+                    term_key[pis[offset + j]] = c[0][1]
+            offset += len(c)
+        # Ghi vị trí đã học cho từng chuỗi trong nhóm modal: duyệt chunks
+        # theo thứ tự, đếm offset tuyệt đối trong danh sách cặp của object.
+        # pos_langs[j] ứng với bản dịch thứ j (term ở slot 0 đã bỏ) nên
+        # chỉ số kept_pairs là offset + 1 + j. Nhóm ngắn hơn modal
+        # (thiếu 1-3 bản dịch) thì CĂN vào thứ tự modal bằng anchor mạnh
+        # (align_to_modal) thay vì gán thẳng theo chỉ số (chỉ số sau chỗ
+        # thiếu đã lệch đi).
+        offset = 0
+        for has_term, c in chunks:
+            if has_term and len(c) == modal_len:
+                for j in range(len(c) - 1):
+                    if j < len(pos_langs) and pos_langs[j]:
+                        chunk_pos[pis[offset + 1 + j]] = pos_langs[j]
+            elif has_term and 4 <= len(c) < modal_len:
+                strong_codes = [
+                    detected[pis[offset + 1 + j]][0]
+                    if detected[pis[offset + 1 + j]][1] == "strong" else None
+                    for j in range(len(c) - 1)]
+                aligned = _ld.align_to_modal(strong_codes, pos_langs)
+                if aligned:
+                    stats["aligned_chunks"] = stats.get("aligned_chunks", 0) + 1
+                    for j, lang in enumerate(aligned):
+                        if lang:
+                            chunk_pos[pis[offset + 1 + j]] = lang
+            offset += len(c)
+
+    # (b) Vị trí lần xuất hiện của cùng key ở nhiều object (vd 1 object hội
+    # thoại lặp lại ở N ngôn ngữ): học từ các key có đúng M lần xuất hiện
+    # (M = số lần phổ biến nhất trong 2..40, ít nhất 20 key như vậy).
+    dup_pos: Dict[int, Optional[str]] = {}
+    by_base: Dict[str, List[int]] = {}
+    for pi, (k, _v, _p, _i) in enumerate(kept_pairs):
+        by_base.setdefault(k, []).append(pi)
+    multi = {k: v for k, v in by_base.items() if 2 <= len(v) <= 40}
+    if len(multi) >= 20:
+        sizes = Counter(len(v) for v in multi.values())
+        modal_m, modal_cnt = sizes.most_common(1)[0]
+        if modal_cnt >= 20:
+            modal_groups = [[kept_pairs[pi][1] for pi in multi[k]]
+                            for k in sorted(multi)
+                            if len(multi[k]) == modal_m]
+            pos_langs = _ld.infer_positions(modal_groups)
+            if any(pos_langs):
+                for k in sorted(multi):
+                    if len(multi[k]) != modal_m:
+                        continue
+                    for j, pi in enumerate(multi[k]):
+                        if j < len(pos_langs) and pos_langs[j]:
+                            dup_pos[pi] = pos_langs[j]
+                # Nhóm ngắn hơn modal (thiếu 1-3 ngôn ngữ): căn vào thứ tự
+                # modal bằng anchor mạnh, như nhóm term ở trên.
+                for k in sorted(multi):
+                    pis_k = multi[k]
+                    if len(pis_k) >= modal_m or len(pis_k) < 2:
+                        continue
+                    strong_codes = [
+                        detected[pi][0] if detected[pi][1] == "strong" else None
+                        for pi in pis_k]
+                    aligned = _ld.align_to_modal(strong_codes, pos_langs)
+                    if aligned:
+                        stats["aligned_groups"] = stats.get("aligned_groups", 0) + 1
+                        for j, lang in enumerate(aligned):
+                            if lang:
+                                dup_pos[pis_k[j]] = lang
+
+    # Gán ngôn ngữ cuối: strong thắng -> vị trí (chunk rồi duplicate) -> mặc định.
+    # Key xuất: bản dịch trong nhóm term hệ thống lấy TERM làm key (giống
+    # file en.json của Joseph); term ở slot 0 được tiêu thụ làm key nên bỏ
+    # qua (không xuất thành giá trị); còn lại key đường dẫn "<object>.s<n>".
+    by_lang: Dict[str, Dict[str, str]] = {}
+    used_lang: Dict[str, set] = {}
+    mech = stats["by_mechanism"]
+    for pi, (key, v, pid, _idx) in enumerate(kept_pairs):
+        if pi in term_pos:
+            continue
+        code, conf = detected[pi]
+        if conf == "strong" and code:
+            lang = code
+            mech["strong"] += 1
+        elif pi in chunk_pos and chunk_pos[pi]:
+            lang = chunk_pos[pi]
+            mech["position"] += 1
+        elif pi in dup_pos and dup_pos[pi]:
+            lang = dup_pos[pi]
+            mech["position"] += 1
+        else:
+            lang = code or "en"
+            mech["default"] += 1
+        bucket = by_lang.setdefault(lang, {})
+        used = used_lang.setdefault(lang, set())
+        out_key = term_key.get(pi, key)
+        if out_key in used:
+            # Cùng key + cùng giá trị (vd tên riêng 'Odyssey' giống nhau
+            # ở nhiều ngôn ngữ, đều rơi về en yếu): giữ 1 bản, đếm số
+            # bản trùng đã gộp — KHÔNG mất chuỗi (giá trị giống hệt nhau
+            # từng byte), chỉ khỏi phình file bằng hậu tố .p vô ích.
+            if bucket.get(out_key) == v:
+                stats["identical_dropped"] = stats.get("identical_dropped", 0) + 1
+                continue
+            out_key = "%s.p%d" % (out_key, pid)
+            stats["stable_suffix_keys"] += 1
+            n = 2
+            while out_key in used:
+                if bucket.get(out_key) == v:
+                    stats["identical_dropped"] = stats.get("identical_dropped", 0) + 1
+                    out_key = None
+                    break
+                out_key = "%s.p%d.x%d" % (term_key.get(pi, key), pid, n)
+                stats["x_suffix_keys"] += 1
+                n += 1
+            if out_key is None:
+                continue
+        used.add(out_key)
+        bucket[out_key] = v
+    stats["per_lang"] = {lang: len(kv) for lang, kv in sorted(by_lang.items())}
+    return {"kv": {}, "by_lang": by_lang, "kept": kept, "dropped": dropped,
+            "stats": stats}
 
 
 def _join_string_tables(tables, shared):
@@ -508,9 +801,16 @@ def _join_string_tables(tables, shared):
 
 def _build_layers(root_vfs, inv: List[disc.InventoryEntry], limits, backend, log,
                   progress_fn: Optional[Callable[[str, int, Optional[int]], None]] = None,
-                  skipped: Optional[List[Dict[str, Any]]] = None
+                  skipped: Optional[List[Dict[str, Any]]] = None,
+                  split_mono_languages: bool = False
                   ) -> List[_Layer]:
     """Các lớp VFS: gốc + container lồng + TextAsset Unity ảo (MemoryVFS).
+
+    split_mono_languages=True (trích xuất có lọc ngôn ngữ, mục A): file
+    MonoBehaviour generic tách thành 1 file ảo MỖI NGÔN NGỮ
+    ("<đơn vị>.monobehaviour.<lang>.json", key sạch, 1 ngôn ngữ/file) thay
+    vì 1 file gộp trộn mọi ngôn ngữ; file gộp cũ chỉ còn khi không lọc
+    (tương thích ngược).
 
     progress_fn("layers", đã_xong, tổng): báo sau mỗi entry đã xử lý xong
     (lag 1 entry: báo số entry trước đó để % luôn là việc ĐÃ xong).
@@ -629,21 +929,58 @@ def _build_layers(root_vfs, inv: List[disc.InventoryEntry], limits, backend, log
     #   "<bundle>::<locale>.json" (vd "...bundle::en.json" -> xuất English.json),
     #   key đã join qua SharedTableData; nguồn bundle hiện ở FileOutcome.source.
     # - Generic: 1 file "<đơn vị>.monobehaviour.json" cho mỗi .assets / CAB
-    #   (vd "...resources.assets::resources.monobehaviour.json").
+    #   (vd "...resources.assets::resources.monobehaviour.json"); khi tách
+    #   ngôn ngữ thì 1 file mỗi ngôn ngữ ("...monobehaviour.<lang>.json").
+    # Thứ tự key GIỮ NGUYÊN thứ tự gốc trong game (ý 7): dict Python giữ
+    # thứ tự chèn, KHÔNG sort_keys ở đây (cũng không sorted() key ở các
+    # bước sau — xem _mb_generic_kv, export_key_value_json). Chỉ sorted()
+    # ở vòng duyệt FILE/bundle dưới đây là thứ tự duyệt file, không ảnh
+    # hưởng thứ tự key trong file.
     if mb_tables:
         merged, join_notes = _join_string_tables(mb_tables, mb_shared)
         for (bundle_path, loc), kv in sorted(merged.items()):
             if not kv:
                 continue
             vpath = "%s::%s.json" % (bundle_path, loc)
-            virtual[vpath] = json.dumps(kv, ensure_ascii=False, indent=1,
-                                        sort_keys=True).encode("utf-8")
+            virtual[vpath] = json.dumps(kv, ensure_ascii=False, indent=1).encode("utf-8")
             log("Unity: %s -> StringTable %s: %d chuỗi (xuất %s)"
                 % (bundle_path, loc, len(kv), vpath))
         for n in join_notes:
             log("Unity: StringTable: %s" % n)
     for (unit_path, assets_name), items in sorted(mb_generic_units.items()):
-        kv, kept, dropped = _mb_generic_kv(items)
+        res = _mb_generic_kv(items, split_languages=split_mono_languages)
+        kept, dropped = res["kept"], res["dropped"]
+        unit_label = unit_path + ("::" + assets_name if assets_name else "")
+        if split_mono_languages:
+            by_lang = res["by_lang"] or {}
+            stats = res["stats"]
+            for lang, lkv in sorted(by_lang.items()):
+                if not lkv:
+                    continue
+                if assets_name:
+                    stem = _sanitize_segment(os.path.splitext(os.path.basename(assets_name))[0]
+                                             or "assets")
+                    vpath = "%s::%s::%s.monobehaviour.%s.json" % (unit_path, assets_name, stem, lang)
+                else:
+                    stem = _sanitize_segment(os.path.splitext(os.path.basename(unit_path))[0]
+                                             or "assets")
+                    vpath = "%s::%s.monobehaviour.%s.json" % (unit_path, stem, lang)
+                virtual[vpath] = json.dumps(lkv, ensure_ascii=False, indent=1).encode("utf-8")
+                log("Unity: %s -> MonoBehaviour [%s]: %d chuỗi (xuất %s)"
+                    % (unit_label, lang, len(lkv), vpath))
+            log("Unity: %s -> MonoBehaviour tách ngôn ngữ: %d chuỗi "
+                "(lọc %d chuỗi rác; theo ngôn ngữ %s; key hậu tố ổn định .p<path_id>: %d; "
+                "gán theo: mạnh %d, vị trí %d, mặc định %d; nhóm căn chỉnh: %d; "
+                "term dùng làm key: %d)"
+                % (unit_label, kept, dropped,
+                   ", ".join("%s:%d" % kv for kv in sorted(stats["per_lang"].items())),
+                   stats["stable_suffix_keys"],
+                   stats["by_mechanism"]["strong"], stats["by_mechanism"]["position"],
+                   stats["by_mechanism"]["default"],
+                   stats.get("aligned_chunks", 0) + stats.get("aligned_groups", 0),
+                   stats.get("term_keyed", 0)))
+            continue
+        kv = res["kv"]
         if not kv:
             continue
         if assets_name:
@@ -654,11 +991,9 @@ def _build_layers(root_vfs, inv: List[disc.InventoryEntry], limits, backend, log
             stem = _sanitize_segment(os.path.splitext(os.path.basename(unit_path))[0]
                                      or "assets")
             vpath = "%s::%s.monobehaviour.json" % (unit_path, stem)
-        virtual[vpath] = json.dumps(kv, ensure_ascii=False, indent=1,
-                                    sort_keys=True).encode("utf-8")
+        virtual[vpath] = json.dumps(kv, ensure_ascii=False, indent=1).encode("utf-8")
         log("Unity: %s -> MonoBehaviour: %d chuỗi (lọc %d chuỗi rác, xuất %s)"
-            % (unit_path + ("::" + assets_name if assets_name else ""),
-               kept, dropped, vpath))
+            % (unit_label, kept, dropped, vpath))
     if virtual:
         layers.append(_Layer("", MemoryVFS(virtual, limits=limits), "virtual"))
     return layers
@@ -810,8 +1145,13 @@ def run_extraction(req: ExtractionRequest) -> ExtractionResult:
 
     # -- bước 3: candidate generation ---------------------------------------
     backend = unity_sdk.UnityBackend("AUTO", limits)
+    # Tách MonoBehaviour theo từng chuỗi (mục A) khi có lọc ngôn ngữ (mềm
+    # locales hoặc cứng req.locale): file ảo tách theo ngôn ngữ, không còn
+    # file gộp trộn mọi ngôn ngữ. Không lọc -> file gộp cũ (tương thích ngược).
+    split_mono = bool(locales) or (req.locale not in (None, "all"))
     layers = _build_layers(root_vfs, inv, limits, backend, log,
-                           progress_fn=_progress, skipped=result.skipped)
+                           progress_fn=_progress, skipped=result.skipped,
+                           split_mono_languages=split_mono)
     records = [r for r in req.registry.active()
                if r.manifest is not None and r.manifest.kind in ("format", "extractor")]
     log("plugin định dạng: %d (%s)"
@@ -1075,7 +1415,17 @@ def run_extraction(req: ExtractionRequest) -> ExtractionResult:
     groups: Dict[Any, List[Dict[str, Any]]] = {}
     for item in probed:
         code, _conf, _ev = disc.detect_locale(item["full"], locale_table)
-        key: Any = code if code else ("__file__", item["full"])
+        if ".monobehaviour." in item["full"]:
+            # File MonoBehaviour đã tách theo ngôn ngữ (mục A): mỗi file là
+            # một nhóm riêng, KHÔNG tranh cử theo locale với TextAsset hay
+            # StringTable cùng locale — vd TextAsset "en-gb" của Passpartout
+            # từng làm cả nhóm en rơi vào ASK (0.71 hòa) rồi mất trắng trên
+            # web (không có ask_fn). Ngôn ngữ đã tách giữ ở _mono_locale
+            # để _arbitrate_groups gắn vào group_locale.
+            key = ("__mono__", item["full"])
+            item["_mono_locale"] = code
+        else:
+            key = code if code else ("__file__", item["full"])
         groups.setdefault(key, []).append(item)
     chosen: List[Dict[str, Any]] = []
     ask_groups: List[Dict[str, Any]] = []
@@ -1338,10 +1688,13 @@ def _arbitrate_groups(groups: Dict[Any, List[Dict[str, Any]]], referenced: set,
             cont = _contender(item, referenced, locale_table)
             s = arb.score(cont.signals, arb.Weights())
             if s >= arb.DEFAULT_ASK_MIN - arb.EPS:
-                item["group_locale"] = code
+                # Nhóm "__mono__": locale lấy từ ngôn ngữ đã tách (mục A),
+                # không phải từ key nhóm (key là tuple nên code None).
+                item["group_locale"] = code if code is not None else item.get("_mono_locale")
                 chosen.append(item)
                 log("chọn %s cho locale %s (%s, %.2f; chỉ có một ứng viên)"
-                    % (item["full"], code or "?", item["plugin"].plugin_id, s))
+                    % (item["full"], item["group_locale"] or "?",
+                       item["plugin"].plugin_id, s))
             else:
                 rejected.append({"path": item["full"],
                                  "reason": "điểm %.2f dưới ngưỡng %.2f"
@@ -1529,6 +1882,18 @@ def _export(req: ExtractionRequest, result: ExtractionResult, source_hash: str,
             fname = disc.export_filename(outcome.locale)
         else:
             fname = _sanitize_segment(_source_stem(outcome.path)) + ".json"
+        # (A) File MonoBehaviour đã tách theo ngôn ngữ: tên xuất riêng theo
+        # đơn vị + ngôn ngữ (vd resources.monobehaviour.en.json) thay vì
+        # English.json — tên đó đã dùng cho file StringTable cùng locale
+        # (English.json) và là 2 nguồn khác nhau, không được ghi đè lẫn
+        # nhau. Chỉ áp cho file ảo tách ngôn ngữ (đuôi
+        # ".monobehaviour.<lang>.json", lang khớp outcome.locale); file gộp
+        # cũ (locale None) giữ nguyên tên như trước.
+        if outcome.locale and ".monobehaviour." in outcome.path:
+            m = re.search(r"\.monobehaviour\.([a-z]{2,3}(?:-[A-Za-z]+)?)\.json$",
+                          outcome.path)
+            if m and m.group(1) == outcome.locale:
+                fname = _sanitize_segment(_source_stem(outcome.path)) + ".json"
         # Hai nguồn cùng locale -> tên file trùng: thêm stem nguồn vào tên
         # (English.json + English.strings.json), không ghi đè im lặng.
         fname = _unique_filename(fname, _sanitize_segment(

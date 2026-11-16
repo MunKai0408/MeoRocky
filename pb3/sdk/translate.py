@@ -70,7 +70,12 @@ _LANG_RE = re.compile(r"^[a-z]{2,3}(-[A-Za-z]{2,4})?$")
 
 # Placeholder giữ nguyên khi dịch (cùng bộ với sdk.exporters).
 _PLACEHOLDER_RE = re.compile(
-    r"\{\d+\}|\{[A-Za-z_][A-Za-z0-9_]*\}|%(\d+\$)?[sdif]|<[A-Za-z][^>]*>|\\[nrt\\'\"]")
+    r"\{\d+\}|\{[A-Za-z_][A-Za-z0-9_]*\}|%(\d+\$)?[sdif]|</?[A-Za-z][^>]*>|\\[nrt\\'\"]")
+# Thẻ đóng (</b>, </size>) cũng phải che: trước đây chỉ che thẻ mở nên
+# dòng chỉ còn thẻ đóng vẫn có chữ Latin ('size', 'b') và bị coi là
+# tiếng Anh yếu rồi gửi đi dịch (fixture Passpartout: dòng rich-text
+# CJK/Korean bị đổi). Che cả hai thì dòng chỉ còn thẻ -> không còn chữ
+# thật -> bỏ qua.
 _TOKEN_FMT = "__PB3PH%d__"
 # Google Translate đôi khi chèn khoảng trắng/chữ thường vào token:
 # khớp khoan dung (kể cả "__ PB3PH0 __" hay "__pb3ph0__").
