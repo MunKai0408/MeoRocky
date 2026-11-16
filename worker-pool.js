@@ -1,4 +1,5 @@
-/* worker-pool.js — Pool 2 Web Worker cho Batch (Mục 4).
+/* worker-pool.js — Pool Web Worker cho Batch (Mục 4; C9: số worker cấu
+ * hình được 1–2, mặc định 2, tự động 1 khi RAM thiết bị ≤ 4 GB).
  *
  * Điều chỉnh từ worker-pool.js trong gói nâng cấp web-upgrade của Joseph:
  *  - Script classic (KHÔNG phải ES module) để app.js (classic) dùng trực
@@ -11,8 +12,9 @@
  *    boot thất bại, rồi tạo lại slot mới cho các job còn lại.
  *  - Worker phải là module worker (Pyodide yêu cầu), mỗi worker 1 instance
  *    Pyodide + PB3 riêng — KHÔNG dùng pthreads, KHÔNG SharedArrayBuffer,
- *    KHÔNG COOP/COEP. Giá phải trả: ~2x RAM so với 1 worker (mỗi Pyodide +
- *    PB3), trên iPhone RAM thấp có thể nặng — chưa đo trên iPhone thật.
+ *    KHÔNG COOP/COEP. Giá phải trả: mỗi worker thêm tốn ~1x RAM (mỗi
+ *    Pyodide + PB3) — pool 2 worker tốn ~2x RAM so với 1 worker; trên
+ *    iPhone RAM thấp có thể nặng — chưa đo trên iPhone thật.
  *    Pool lỗi thì app.js rơi về 1 worker (executor đơn, xem app.js).
  *  - Giao thức worker (worker.js đã tuân theo):
  *      worker -> {type:'ready'} KHÔNG dùng; pool coi reply của op "boot"
@@ -220,6 +222,9 @@
   WorkerPool.prototype._enqueue = function (payload, opts, slotIdx) {
     var self = this;
     if (this.closed) return Promise.reject(new Error("pool-closed"));
+    // Ghim vào slot không tồn tại (vd pool 1 worker mà job cũ ghim slot 1
+    // sau khi đổi N — Mục C9): rơi về hàng đợi chung thay vì treo mãi.
+    if (typeof slotIdx === "number" && (slotIdx < 0 || slotIdx >= this.size)) slotIdx = null;
     return new Promise(function (resolve, reject) {
       var job = { id: self.nextId++, payload: payload, transfer: opts.transfer || [],
                   label: opts.label || "", onProgress: opts.onProgress || null,

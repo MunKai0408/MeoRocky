@@ -287,7 +287,7 @@
     <button id="btn-card-extract" class="feature-card"><span class="fc-icon">📦</span><span class="fc-title">Trích xuất File</span><span class="fc-desc">Lấy text game ra file JSON</span></button>
     <button id="btn-card-translate" class="feature-card"><span class="fc-icon">🌐</span><span class="fc-title">Dịch Game</span><span class="fc-desc">Google + từ điển offline</span></button>
     <button id="btn-card-mod" class="feature-card"><span class="fc-icon">✏️</span><span class="fc-title">Mod Game</span><span class="fc-desc">Patch TextAsset (chỉ text)</span></button>
-    <button id="btn-card-batch" class="feature-card"><span class="fc-icon">📁</span><span class="fc-title">Batch Xử lý</span><span class="fc-desc">Pool 2 worker · checkpoint từng game</span></button>
+    <button id="btn-card-batch" class="feature-card"><span class="fc-icon">📁</span><span class="fc-title">Batch Xử lý</span><span class="fc-desc">Pool worker song song · checkpoint từng game</span></button>
     <button id="btn-card-kb" class="feature-card"><span class="fc-icon">📚</span><span class="fc-title">Kho KB</span><span class="fc-desc">Profile game đã lưu</span></button>
   </div>
 
@@ -314,7 +314,7 @@
     <h2>Giới hạn của bản web (đo thật, xem README)</h2>
     <ul>
       <li>Không dùng UnityPy (không cài được trên Pyodide — thiếu wheel etcpak). Inspect Unity dùng parser thuần của PB3.</li>
-      <li><b>Batch chạy song song trên pool 2 worker</b> (2 thread hệ điều hành thật, mỗi worker chạy một game; bên trong một worker, Python chạy tuần tự vì Pyodide không có pthreads). Trích xuất từng game vẫn chạy tuần tự trong worker của nó.</li>
+      <li><b>Batch chạy song song thật trên pool worker</b> (mặc định 2 worker — 2 thread hệ điều hành thật, mỗi worker chạy một game; chỉ bên trong một worker thì Python chạy tuần tự vì Pyodide không có pthreads). Trích xuất từng game vẫn chạy tuần tự trong worker của nó. Số worker chọn được 1–2 ở tab Batch (tự động 1 khi RAM thiết bị ≤ 4 GB).</li>
       <li><b>KB tự lưu vào IndexedDB</b> sau mỗi thay đổi và khôi phục khi mở lại trang; Safari vẫn có thể xóa dữ liệu web sau ~7 ngày không mở trang nếu chưa cài vào Màn hình chính — xuất file .sqlite sao lưu định kỳ (tab KB nhắc khi quá 7 ngày hoặc chưa từng xuất).</li>
       <li><b>Mod</b> chỉ xuất đơn vị nhỏ nhất đã patch (bundle/.assets), không đóng gói lại IPA; mặc định dry-run, chỉ ghi khi bạn bấm nút ghi rõ ràng.</li>
       <li>Ma trận hỗ trợ: cột “ngày test” hiện “chưa có” vì bản web không kèm file bằng chứng tests/corpus/*.json.</li>
@@ -585,9 +585,11 @@
 
   <div id="tab-batch" class="card" hidden>
     <h2>Batch — chạy hàng loạt (menu [4] bản iSH)</h2>
-    <p class="note"><b>Pool 2 worker song song</b> — mỗi worker 1 Pyodide + PB3
-    riêng (không dùng threading/SharedArrayBuffer), chia nhau từng game;
-    trong 1 worker mỗi game vẫn chạy tuần tự. Mỗi game cô lập: lỗi một game
+    <p class="note"><b>Pool worker song song thật</b> — mỗi worker là 1 thread hệ điều hành thật,
+    chạy 1 Pyodide + PB3 riêng (không dùng threading/SharedArrayBuffer), chia nhau từng game;
+    chỉ bên trong một worker thì mỗi game vẫn chạy tuần tự vì Pyodide không có pthreads.
+    Số worker chọn được ở dưới (mặc định 2; tự động 1 khi RAM thiết bị ≤ 4 GB).
+    Mỗi game cô lập: lỗi một game
     không dừng cả lô. Mặc định <b>chạy thử trước (dry-run)</b>: bỏ dấu chọn
     mới ghi thật. Manifest JSON hoặc CSV (cột: path, mode, locale, old, new,
     file, object). Chọn tất cả file game ở dưới (đường dẫn trong manifest
@@ -596,9 +598,10 @@
     vẫn bấm “Tiếp tục” để chạy tiếp phần chưa xong, không làm lại từ đầu.
     <b>Watchdog 25 giây</b>: quá 25 giây thì worker tự dừng an toàn sau game
     hiện tại (không kill ngang, không mất checkpoint) — bấm “Tiếp tục” để
-    chạy tiếp. Lưu ý: 2 worker tốn ~2x RAM so với 1 worker (mỗi Pyodide +
-    PB3); trên iPhone RAM thấp có thể nặng. Pool lỗi thì tự rơi về 1 worker.</p>
-    <p id="batch-pool-info" class="sub">Pool chưa khởi động (bấm “Chạy batch” để khởi động pool 2 worker).</p>
+    chạy tiếp. Lưu ý: càng nhiều worker càng tốn RAM (mỗi Pyodide + PB3 —
+    pool 2 worker tốn ~2x RAM so với 1 worker); trên iPhone RAM thấp có thể
+    nặng. Pool lỗi thì tự rơi về 1 worker.</p>
+    <p id="batch-pool-info" class="sub">Pool chưa khởi động (bấm “Chạy batch” để khởi động pool worker).</p>
     <div id="batch-dropzone" class="dropzone" role="button" tabindex="0">
       <p><b>Chọn nhiều file game hoặc kéo thả vào đây</b></p>
       <p class="note">Bấm để chọn nhiều file cùng lúc.</p>
@@ -609,8 +612,17 @@
     <div class="row">
       <label><input type="checkbox" id="batch-dryrun" checked> Chạy thử trước (dry-run, chưa ghi)</label>
       <label><input type="checkbox" id="batch-resume"> Tiếp tục từ checkpoint (bỏ qua game đã xong)</label>
-      <label><input type="checkbox" id="batch-use-pool" checked> Dùng pool 2 worker (bỏ chọn để chạy 1 worker như trước — nhẹ RAM hơn)</label>
+      <label><input type="checkbox" id="batch-use-pool" checked> Dùng pool worker (bỏ chọn để chạy 1 worker như trước — nhẹ RAM hơn)</label>
     </div>
+    <div class="row">
+      <label>Số worker trong pool:
+        <select id="batch-pool-size" style="width:auto">
+          <option value="1">1 worker (nhẹ RAM)</option>
+          <option value="2" selected>2 worker (song song thật)</option>
+        </select>
+      </label>
+    </div>
+    <p id="batch-pool-size-note" class="sub"></p>
     <div class="row">
       <label><input type="checkbox" checked disabled> Áp dụng cho tất cả các file (manifest batch — luôn bật trên web)</label>
       <label><input type="checkbox" checked disabled> Tự động xuất kết quả (batch.zip + checkpoint — luôn bật trên web)</label>
@@ -860,7 +872,7 @@
     </ul>
     <p class="note">Bản iSH đầy đủ hơn (UnityPy, giải mã texture/âm
     thanh, ghi IPA đóng gói lại) — bản web là bản rút gọn chạy được trên Safari.
-    Batch trên web nay cũng chạy song song bằng pool 2 worker (không dùng threading).</p>
+    Batch trên web nay cũng chạy song song thật bằng pool worker (mỗi worker là 1 thread hệ điều hành thật; chỉ bên trong một worker thì Python chạy tuần tự vì Pyodide không có pthreads).</p>
   </div>
 </section>
 </main>

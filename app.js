@@ -65,7 +65,7 @@ const state = {
   pending: new Map(),    // id -> {resolve, reject, op, t0, lastPct}
   nextId: 1,
   currentOp: null,
-  executor: null,        // executor batch hiện tại (pool 2 worker hoặc 1 worker)
+  executor: null,        // executor batch hiện tại (pool worker hoặc 1 worker)
   executorNote: "",      // ghi chú executor (hiện ở kết quả batch)
   batchRun: null,        // đợt batch đang/chạy xong gần nhất (Mục 4)
 };
@@ -2397,18 +2397,22 @@ $("plan-file").addEventListener("change", async (ev) => {
 planLoadLs();
 renderPlanList();
 
-// ---- Batch: pool 2 worker + checkpoint từng game vào IndexedDB + watchdog hợp tác (Mục 4) ----
+// ---- Batch: pool worker + checkpoint từng game vào IndexedDB + watchdog hợp tác (Mục 4) ----
 // Kiến trúc:
 //  - app.js tách manifest bằng bridge.batch_split (1 lần, worker đơn) rồi
-//    giao TỪNG GAME cho executor: pool 2 worker (mặc định) hoặc 1 worker
-//    (khi pool tắt/lỗi — fallback tự động, không cần user làm gì).
-//  - Mỗi worker là 1 Pyodide + PB3 riêng (KHÔNG pthreads, KHÔNG
-//    SharedArrayBuffer, KHÔNG COI). Thao tác đơn (list/inspect/extract/...)
-//    vẫn đi qua worker đơn cũ như trước — pool chỉ phục vụ batch (chọn
-//    cách đơn giản, ít rủi ro nhất: không xáo trộn đường thao tác đơn đã
-//    kiểm chứng). Giá phải trả: lúc batch chạy có 3 Pyodide cùng sống
-//    (1 worker đơn + 2 worker pool) — ~2x RAM so với batch 1 worker trước
-//    đây; trên iPhone RAM thấp có thể nặng, CHƯA ĐO trên iPhone thật.
+//    giao TỪNG GAME cho executor: pool N worker (mặc định 2, chọn được 1–2,
+//    Mục C9) hoặc 1 worker (khi pool tắt/lỗi — fallback tự động, không cần
+//    user làm gì).
+//  - Mỗi worker là 1 thread hệ điều hành thật, chạy 1 Pyodide + PB3 riêng
+//    (KHÔNG pthreads, KHÔNG SharedArrayBuffer, KHÔNG COI) — pool N worker
+//    chạy SONG SONG THẬT (batch 2 game xong 24,6s trên file thật); chỉ BÊN
+//    TRONG một worker thì Python chạy tuần tự vì Pyodide không có pthreads.
+//    Thao tác đơn (list/inspect/extract/...) vẫn đi qua worker đơn cũ như
+//    trước — pool chỉ phục vụ batch (chọn cách đơn giản, ít rủi ro nhất:
+//    không xáo trộn đường thao tác đơn đã kiểm chứng). Giá phải trả: lúc
+//    batch chạy có 3 Pyodide cùng sống (1 worker đơn + 2 worker pool) —
+//    ~2x RAM so với batch 1 worker trước đây; trên iPhone RAM thấp có thể
+//    nặng, CHƯA ĐO trên iPhone thật.
 //  - Sau MỖI game xong, main thread ghi checkpoint gộp vào IndexedDB ngay
 //    (ckptStore — tái dùng lớp KBStore của Mục 3, khóa khác
 //    "batch-checkpoint.json", cùng DB "pb3-kb-store"; KHÔNG viết store thứ
@@ -2420,15 +2424,67 @@ renderPlanList();
 //    worker.js); quá hạn hoặc user bấm "Dừng an toàn" thì worker từ chối
 //    game mới (E_WATCHDOG_STOP / E_BATCH_STOPPED), game đang chạy vẫn xong,
 //    checkpoint đã lưu. Nút "Tiếp tục" chạy tiếp phần còn lại.
-//  - KB: batch ở chế độ pool KHÔNG ghi vào KB (record_kb=false — KB của 2
-//    worker khác nhau, file SQLite không gộp được; chỉ worker đơn mới ghi
-//    KB rồi persistKbNow). Game vẫn thêm vào KB được bằng tab Kho KB.
+//  - KB: batch ở chế độ pool KHÔNG ghi vào KB (record_kb=false — KB của các
+//    worker trong pool khác nhau, file SQLite không gộp được; chỉ worker đơn
+//    mới ghi KB rồi persistKbNow). Game vẫn thêm vào KB được bằng tab Kho KB.
 //  - Output cuối đợt: worker 1 zip thư mục của nó -> gửi sang worker 0
 //    (batch_merge_zip) -> worker 0 viết summary + checkpoint GỘP rồi zip
 //    thành batch.zip duy nhất (batch_finalize). Nếu chỉ 1 worker có game
 //    thì bỏ bước gộp.
 
-const POOL_SIZE = 2;                 // pool batch luôn 2 worker (Mục 4)
+// ---- Số worker pool batch cấu hình được (Mục C9) ----
+// Mặc định 2 worker; TỰ ĐỘNG 1 worker khi RAM thiết bị thấp
+// (navigator.deviceMemory ≤ 4 GB — mỗi worker 1 Pyodide + PB3 riêng nên
+// pool 2 worker tốn ~2x RAM so với 1 worker). Trình duyệt không báo RAM
+// (vd Safari: deviceMemory là undefined) thì giữ mặc định 2.
+// Người dùng đổi được 1–2 ở tab Batch, lưu bằng localStorage để giữ qua
+// lần tải lại; lựa chọn đã lưu thắng mặc định tự động.
+// Hook window.__PB3_DEVICE_MEMORY CHỈ cho harness kiểm chứng (giống
+// window.__PB3_WATCHDOG_SECONDS): đặt số GB giả để thử đường tự động về 1;
+// production không đặt thì dùng navigator.deviceMemory thật.
+const POOL_SIZE_MIN = 1;
+const POOL_SIZE_MAX = 2;
+const POOL_SIZE_DEFAULT = 2;
+const POOL_SIZE_LS_KEY = "pb3_pool_size";
+const POOL_SIZE_LOW_MEMORY_GB = 4;
+function deviceMemoryGB() {
+  if (typeof window !== "undefined" && typeof window.__PB3_DEVICE_MEMORY === "number")
+    return window.__PB3_DEVICE_MEMORY;
+  if (typeof navigator !== "undefined" && typeof navigator.deviceMemory === "number")
+    return navigator.deviceMemory;
+  return null;   // trình duyệt không báo RAM: không ép về 1
+}
+function defaultPoolSize() {
+  const mem = deviceMemoryGB();
+  return (mem !== null && mem <= POOL_SIZE_LOW_MEMORY_GB) ? POOL_SIZE_MIN : POOL_SIZE_DEFAULT;
+}
+function clampPoolSize(n) {
+  n = Math.floor(Number(n));
+  if (!isFinite(n)) return defaultPoolSize();
+  return Math.min(POOL_SIZE_MAX, Math.max(POOL_SIZE_MIN, n));
+}
+function loadPoolSize() {
+  try {
+    const raw = localStorage.getItem(POOL_SIZE_LS_KEY);
+    if (raw !== null) return clampPoolSize(raw);
+  } catch (e) { /* localStorage không có: dùng mặc định */ }
+  return defaultPoolSize();
+}
+function savePoolSize(n) {
+  n = clampPoolSize(n);
+  try { localStorage.setItem(POOL_SIZE_LS_KEY, String(n)); } catch (e) { /* bỏ qua */ }
+  return n;
+}
+function getPoolSize() {
+  return clampPoolSize((state && typeof state.poolSize === "number")
+    ? state.poolSize : loadPoolSize());
+}
+// Nhãn hiển thị cho pool N worker ("pool 1 worker" / "pool 2 worker").
+function poolLabel(n) { return "pool " + n + " worker"; }
+// Số worker lúc tải trang: lựa chọn đã lưu, nếu chưa có thì mặc định
+// (tự động 1 khi RAM thiết bị ≤ 4 GB).
+state.poolSize = loadPoolSize();
+
 const BATCH_WATCHDOG_SECONDS = 25;   // GIỮ ĐỒNG BỘ với WATCHDOG_SECONDS trong worker.js
 
 // Checkpoint batch: cùng lớp KBStore của Mục 3, khóa riêng trong cùng DB.
@@ -2487,7 +2543,7 @@ function batchWatchdogSeconds() {
   return BATCH_WATCHDOG_SECONDS;
 }
 
-// ---- Executor: cùng giao diện tối thiểu cho pool 2 worker và worker đơn ----
+// ---- Executor: cùng giao diện tối thiểu cho pool worker và worker đơn ----
 // run(payload, opts) / runOn(slot, payload, opts) -> Promise<{parsed, file, slot}>
 // beginBatch(budgetSeconds) / requestStop() / cancelQueued() / status() / destroy()
 function unwrapPoolReply(r) {
@@ -2498,13 +2554,17 @@ function unwrapPoolReply(r) {
   return { parsed, file: msg.file || null, slot: r.slot };
 }
 function makePoolExecutor() {
+  const n = getPoolSize();
   const pool = new WorkerPool("worker.js", {
-    size: POOL_SIZE,
+    size: n,
     onSlotChange: () => syncPoolUI(),
     onStatus: (t) => setStatus(t),
   });
+  // Hook cho harness kiểm chứng (giống __PB3_LAST_PROBE): số worker của
+  // pool vừa tạo — đọc được từ ngoài mà không cần chạm state nội bộ.
+  try { window.__PB3_POOL_SIZE = n; } catch (e) { /* bỏ qua */ }
   return {
-    kind: "pool", pool,
+    kind: "pool", pool, poolSize: n,
     status: () => pool.status(),
     beginBatch: (b) => pool.beginBatch(b),
     requestStop: () => pool.requestStop(),
@@ -2583,12 +2643,15 @@ function makeSingleExecutor() {
   };
   return ex;
 }
-// Lấy executor cho đợt batch: pool 2 worker nếu bật + boot được, ngược lại
+// Lấy executor cho đợt batch: pool N worker nếu bật + boot được, ngược lại
 // rơi về 1 worker (ghi rõ lý do vào state.executorNote để hiện ở kết quả).
+// Đổi số worker (Mục C9) thì pool cũ bị hủy để đợt sau tạo pool mới đúng N.
 async function ensureBatchExecutor() {
   const usePool = $("batch-use-pool") ? $("batch-use-pool").checked : true;
   if (state.executor) {
-    if (usePool && state.executor.kind === "pool") return state.executor;
+    const sizeChanged = usePool && state.executor.kind === "pool" &&
+      state.executor.poolSize !== getPoolSize();
+    if (usePool && state.executor.kind === "pool" && !sizeChanged) return state.executor;
     if (!usePool && state.executor.kind === "single") return state.executor;
     try { if (state.executor.destroy) state.executor.destroy(); } catch (e) { /* bỏ qua */ }
     state.executor = null;
@@ -2597,12 +2660,13 @@ async function ensureBatchExecutor() {
   if (usePool && typeof WorkerPool !== "undefined") {
     try {
       const ex = makePoolExecutor();
-      setStatus("Đang khởi động pool 2 worker (mỗi worker 1 Pyodide + PB3 riêng, lần đầu hơi lâu)…");
+      setStatus("Đang khởi động " + poolLabel(ex.poolSize) +
+        " (mỗi worker 1 Pyodide + PB3 riêng, lần đầu hơi lâu)…");
       syncPoolUI();
       const ok = await ex.pool.ready();
       if (ok) {
         state.executor = ex;
-        state.executorNote = "pool 2 worker";
+        state.executorNote = poolLabel(ex.poolSize);
         return ex;
       }
       ex.destroy();
@@ -2624,12 +2688,14 @@ function syncPoolUI() {
   if (!el) return;
   const ex = state.executor;
   if (!ex) {
-    el.textContent = "Pool chưa khởi động (bấm “Chạy batch” để khởi động pool 2 worker).";
+    el.textContent = "Pool chưa khởi động (bấm “Chạy batch” để khởi động " +
+      poolLabel(getPoolSize()) + ").";
     return;
   }
   const slots = ex.status();
   let lines = ex.kind === "pool"
-    ? "Pool 2 worker (mỗi worker 1 Pyodide + PB3 riêng, ~2x RAM so với 1 worker):"
+    ? poolLabel(ex.poolSize) + " (mỗi worker 1 Pyodide + PB3 riêng" +
+      (ex.poolSize > 1 ? ", ~" + ex.poolSize + "x RAM so với 1 worker" : "") + "):"
     : "Đang chạy bằng 1 worker (pool tắt/lỗi):";
   for (const s of slots) {
     lines += "\nWorker " + s.index + ": " +
@@ -2801,7 +2867,7 @@ function combinedSummary(br) {
     incomplete: games.filter((g) => g.status === "incomplete").length,
     elapsed_s: Math.round(((performance.now() - br.startTime) / 1000) * 10) / 10,
     out_dir: br.runId,
-    jobs: br.executorKind === "pool" ? 2 : 1,
+    jobs: br.executorKind === "pool" ? (br.poolSize || 2) : 1,
     dry_run: br.dryRun,
     budgets: {},
     games,
@@ -2810,7 +2876,7 @@ function combinedSummary(br) {
 function renderBatchResult(summary, meta) {
   const s = summary;
   let html = "<p>Batch " + (s.dry_run ? "<b>dry-run</b>" : "<b>chạy thật</b>") +
-    " · " + (meta.executorNote || (s.jobs === 2 ? "pool 2 worker" : "1 worker")) +
+    " · " + (meta.executorNote || (s.jobs > 1 ? poolLabel(s.jobs) : "1 worker")) +
     " · " + s.ok + " ok / " + s.failed + " lỗi / " + s.skipped +
     " bỏ qua / " + s.total + " game · " + s.elapsed_s + " giây" +
     (meta.resumed ? " · đã tiếp tục từ checkpoint" : "") +
@@ -2897,7 +2963,7 @@ async function runBatchFlow(opts) {
     $("batch-ckpt-info").textContent = "Tất cả " + items.length + " game đã xong theo checkpoint — không còn game nào để chạy.";
     return;
   }
-  // 3. Executor: pool 2 worker, fallback 1 worker nếu pool lỗi/tắt.
+  // 3. Executor: pool N worker, fallback 1 worker nếu pool lỗi/tắt.
   const executor = await ensureBatchExecutor();
   const runId = (state.batchRun && state.batchRun.runId) ? state.batchRun.runId
     : ("batch-" + Date.now().toString(36));
@@ -2906,14 +2972,18 @@ async function runBatchFlow(opts) {
     runId, manifest: opts.manifest, dryRun: opts.dryRun, items, results, merged,
     todo, doneCount: 0, totalTodo: todo.length, startTime: performance.now(),
     stopRequested: false, watchdogStopped: false, finished: false,
-    executorKind: executor.kind, gamesPerSlot: {},
+    executorKind: executor.kind,
+    poolSize: executor.kind === "pool" ? (executor.poolSize || 2) : 1,
+    gamesPerSlot: {},
   };
   executor.beginBatch(budget);
   $("btn-batch-run").disabled = true;
   $("btn-batch-continue").hidden = true;
   $("btn-batch-stop-safe").hidden = false;
   $("btn-batch-stop-safe").disabled = false;
-  progStart(executor.kind === "pool" ? "Chạy batch (pool 2 worker)" : "Chạy batch (1 worker)");
+  progStart(executor.kind === "pool"
+    ? "Chạy batch (" + poolLabel(executor.poolSize) + ")"
+    : "Chạy batch (1 worker)");
   setStatus("Batch đang chạy: " + todo.length + " game còn lại (" + state.executorNote +
     ", watchdog " + budget + " giây)…");
   syncPoolUI();
@@ -2982,7 +3052,7 @@ async function runBatchFlow(opts) {
     syncBatchCkptInfo(); syncPoolUI();
   };
 
-  // 4. Giao từng game cho executor (pool chia đều 2 worker, hàng đợi tự
+  // 4. Giao từng game cho executor (pool chia đều các worker, hàng đợi tự
   // bơm game tiếp theo khi có worker rảnh).
   const jobs = todo.map((it) => {
     const base = (it.path || "").split("/").pop().toLowerCase();
@@ -3036,10 +3106,12 @@ async function runBatchFlow(opts) {
     note: (zipError ? "Gộp file batch.zip lỗi: " + zipError +
              " — kết quả từng game vẫn còn trong checkpoint (đã lưu vào IndexedDB). " : "") +
       (executor.kind === "pool"
-        ? "Pool 2 worker: mỗi worker 1 Pyodide + PB3 riêng (~2x RAM so với 1 worker); thao tác đơn vẫn dùng worker riêng như trước. "
+        ? poolLabel(executor.poolSize) + ": mỗi worker 1 Pyodide + PB3 riêng" +
+          (executor.poolSize > 1 ? " (~" + executor.poolSize + "x RAM so với 1 worker)" : "") +
+          "; thao tác đơn vẫn dùng worker riêng như trước. "
         : "Chạy bằng 1 worker (" + state.executorNote + "). ") +
       (executor.kind === "pool"
-        ? "Lưu ý: batch ở chế độ pool không ghi kết quả chạy vào KB (KB của 2 worker không gộp được file SQLite) — thêm game vào KB bằng tab Kho KB."
+        ? "Lưu ý: batch ở chế độ pool không ghi kết quả chạy vào KB (KB của các worker trong pool không gộp được file SQLite) — thêm game vào KB bằng tab Kho KB."
         : "") +
       (canContinue ? "Còn " + remain + " game chưa xong — bấm “Tiếp tục” để chạy tiếp." : "") +
       " Phân công: " + Object.keys(br.gamesPerSlot).sort().map((k) => "worker " + k + ": " + br.gamesPerSlot[k] + " game").join(" · ") + ".",
@@ -3050,6 +3122,43 @@ async function runBatchFlow(opts) {
     ? "Batch đã dừng an toàn — còn " + remain + " game chưa xong, bấm “Tiếp tục” để chạy tiếp."
     : "Batch xong.");
 }
+
+// ---- Chọn số worker pool (Mục C9): đồng bộ ô chọn + ghi chú, lưu lựa chọn.
+// Đổi N giữa chừng KHÔNG crash: nếu đang có đợt batch chạy thì pool cũ chạy
+// nốt đợt này (ghi chú rõ "áp dụng từ đợt sau"); nếu không chạy gì thì hủy
+// pool cũ để đợt sau tạo pool mới đúng N.
+function syncPoolSizeUI(pendingNote) {
+  const sel = $("batch-pool-size");
+  const note = $("batch-pool-size-note");
+  const n = getPoolSize();
+  if (sel) sel.value = String(n);
+  try { window.__PB3_POOL_SIZE = n; } catch (e) { /* bỏ qua */ }
+  if (!note) return;
+  const mem = deviceMemoryGB();
+  const autoOne = mem !== null && mem <= POOL_SIZE_LOW_MEMORY_GB;
+  let txt = "Mặc định 2 worker, song song thật (mỗi worker 1 thread hệ điều hành thật).";
+  if (autoOne) txt += " Thiết bị này báo RAM " + mem + " GB nên tự động dùng 1 worker cho nhẹ RAM — đổi được ở ô trên.";
+  else if (mem !== null) txt += " Thiết bị này báo RAM " + mem + " GB.";
+  txt += " Đổi số worker lưu lại qua lần tải trang sau.";
+  if (pendingNote) txt += " " + pendingNote;
+  note.textContent = txt;
+}
+$("batch-pool-size").addEventListener("change", () => {
+  const n = savePoolSize($("batch-pool-size").value);
+  state.poolSize = n;
+  const running = state.batchRun && !state.batchRun.finished;
+  if (state.executor && !running) {
+    // Không chạy gì: hủy pool cũ để đợt sau tạo pool mới đúng N.
+    try { if (state.executor.destroy) state.executor.destroy(); } catch (e) { /* bỏ qua */ }
+    state.executor = null;
+    state.executorNote = "";
+  }
+  syncPoolSizeUI(running
+    ? "Đã lưu " + n + " worker — đợt đang chạy giữ nguyên pool cũ, áp dụng từ đợt batch sau."
+    : "Đã lưu " + n + " worker — áp dụng từ đợt batch sau.");
+  syncPoolUI();
+});
+syncPoolSizeUI();
 
 $("btn-batch-run").addEventListener("click", async () => {
   const manifest = $("batch-manifest").value.trim();
