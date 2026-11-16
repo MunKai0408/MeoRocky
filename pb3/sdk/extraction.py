@@ -50,9 +50,13 @@ from sdk.api import LocaleRequest, PluginContext
 from sdk.containers import NestedVFS, open_vfs
 from sdk.ir import IRDocument, from_tables
 from sdk.types import LocEntry, LocTable, SourceRef
-from sdk.vfs import MemoryVFS
+from sdk.vfs import MemoryVFS, SingleFileVFS
 
-MAX_PROBE_CANDIDATES = 200
+MAX_PROBE_CANDIDATES = 400  # tăng từ 200 (đợt EK2 2026-11-16: 515 ứng viên thô,
+# file Unity lớn nhất chưa từng được probe vì xếp sau theo thứ tự chữ cái).
+# Thứ tự probe ưu tiên file Unity (TextAsset/MonoBehaviour/StringTable ảo)
+# trước (xem _probe_priority) nên file text game luôn được probe dù tổng
+# ứng viên vượt giới hạn.
 CHECKPOINT_FILENAME = "extraction_checkpoint.json"
 CHECKPOINT_VERSION = 1
 REPORT_JSON = "extraction_report.json"
@@ -76,6 +80,28 @@ _MAGIC_FOR_PLUGIN = {
     "xliff": (lambda h: b"<xliff" in h[:512],),
     "resx": (lambda h: b"<root" in h[:512] and b"resx" in h[:512].lower(),),
 }
+
+
+def _probe_priority(full: str) -> Tuple[int, str]:
+    """Thứ tự probe: file Unity trước, rồi tên gợi ý ngôn ngữ, rồi còn lại.
+
+    (tier, đường_dẫn): tier 0 = file ảo từ Unity (TextAsset/MonoBehaviour/
+    StringTable: "...assets::..." / "...bundle::..."), tier 1 = file Unity
+    trực tiếp, tier 2 = tên/đường dẫn gợi ý file ngôn ngữ, tier 3 = còn lại.
+    Trong cùng tier xếp theo chữ cái (ổn định, dễ đoán). Trước đây probe
+    xếp thuần theo chữ cái nên file Unity lớn (vd sharedassets0.assets của
+    EK2) nằm sau hàng trăm file config nhỏ và rơi ngoài giới hạn 200."""
+    low = full.lower()
+    if "::" in full and (".assets::" in low or ".bundle::" in low
+                         or ".unity3d::" in low):
+        tier = 0
+    elif low.endswith(_UNITY_SOURCE_EXTS):
+        tier = 1
+    elif _NAME_SIGNAL_RE.search(full):
+        tier = 2
+    else:
+        tier = 3
+    return tier, full
 
 
 def _sanitize_segment(name: str) -> str:
@@ -213,12 +239,56 @@ def _source_of(path: str) -> str:
     return str(path)
 
 
-def _expand_unity(data: bytes, vpath: str, backend, limits) -> Tuple[Dict[str, bytes], List[str]]:
-    """TextAsset trong một entry Unity -> ({vpath ảo: script UTF-8}, notes).
+def _expand_serialized(sf, assets_name: str, vpath: str):
+    """TextAsset + text MonoBehaviour của 1 SerializedFile -> (out, mb, notes,
+    n_text_assets, n_mb, n_mb_strings). Dùng chung cho _expand_unity (bundle
+    đã nạp trọn vào RAM) và đường streaming (từng entry giải nén một — file
+    .unity3d lớn không ôm cả payload)."""
+    out: Dict[str, bytes] = {}
+    notes: List[str] = []
+    mb: Dict[str, Any] = {"string_tables": [], "shared_tables": [], "generic": []}
+    tas = sf.text_assets()
+    n_text_assets = len(tas)
+    for _pid, name, script in tas:
+        safe = _sanitize_segment(name)
+        base = vpath + ("::" + assets_name if assets_name else "")
+        out[base + "::" + safe] = script.encode("utf-8")
+    warns: List[str] = []
+    n_mb = 0
+    n_mb_strings = 0
+    for item in sf.monobehaviour_texts(warnings=warns):
+        n_mb += 1
+        kind = item.get("kind")
+        if kind == "string_table":
+            mb["string_tables"].append(item)
+        elif kind == "shared_table":
+            mb["shared_tables"].append(item)
+        elif kind == "locale":
+            pass  # đối tượng Locale: chỉ có mã/tên locale, không phải text dịch
+        else:
+            mb["generic"].append((assets_name, item))
+            fields = item.get("fields")
+            strings = item.get("strings")
+            n_mb_strings += len(fields) if isinstance(fields, dict) else len(strings or [])
+    notes.extend(warns)
+    return out, mb, notes, n_text_assets, n_mb, n_mb_strings
 
-    Bundle: mở từng entry .assets bên trong rồi đọc TextAsset; file
-    .assets độc lập: đọc thẳng. TextAsset hỏng bị bỏ qua (kèm ghi chú
-    trong warnings của SerializedFile, không làm hỏng cả file).
+
+def _expand_unity(data: bytes, vpath: str, backend, limits) -> Tuple[Dict[str, bytes], List[str], Dict[str, Any]]:
+    """TextAsset + text MonoBehaviour trong một entry Unity -> (vpath ảo, notes, mb).
+
+    Bundle: mở từng entry .assets bên trong rồi đọc TextAsset + MonoBehaviour;
+    file .assets độc lập: đọc thẳng. TextAsset hỏng bị bỏ qua (kèm ghi chú
+    trong warnings của SerializedFile, không làm hỏng cả file). MonoBehaviour
+    hỏng cũng vậy (ghi chú trong notes).
+
+    mb = {"string_tables": [item], "shared_tables": [item],
+          "generic": [(assets_name, item)]} — item theo
+    SerializedFile.monobehaviour_texts(): StringTable (entries {m_Id: chuỗi},
+    locale từ m_Code), SharedTableData (entries {m_Id: key}), generic
+    (fields {đường_dẫn: chuỗi} nếu có type tree, strings [...] nếu không).
+    StringTable/SharedTableData join theo m_Id ở _build_layers (chúng có thể
+    nằm ở 2 bundle khác nhau trong cùng IPA).
 
     KHÔNG BAO GIỜ bỏ qua lặng lẽ (lỗi en.json 2026-11-16: bundle
     localization biến mất khỏi report vì mọi đường lỗi đều `return {}`
@@ -227,6 +297,7 @@ def _expand_unity(data: bytes, vpath: str, backend, limits) -> Tuple[Dict[str, b
     ghi vào skipped/log thay vì để bundle biến mất."""
     out: Dict[str, bytes] = {}
     notes: List[str] = []
+    mb: Dict[str, Any] = {"string_tables": [], "shared_tables": [], "generic": []}
     assets: List[Tuple[str, Any]] = []
     det = unity_sdk.detect_bundle(data)
     if det is not None:
@@ -235,7 +306,7 @@ def _expand_unity(data: bytes, vpath: str, backend, limits) -> Tuple[Dict[str, b
         except PB3Error as exc:
             notes.append("parse bundle lỗi [%s]: %s"
                          % (exc.code, exc.message_vi or exc.detail))
-            return out, notes
+            return out, notes, mb
         for name in bundle.entry_names():
             try:
                 entry_data = bundle.get_entry(name)
@@ -255,19 +326,184 @@ def _expand_unity(data: bytes, vpath: str, backend, limits) -> Tuple[Dict[str, b
         except PB3Error as exc:
             notes.append("parse SerializedFile lỗi [%s]: %s"
                          % (exc.code, exc.message_vi or exc.detail))
-            return out, notes
+            return out, notes, mb
     n_text_assets = 0
+    n_mb = 0
+    n_mb_strings = 0
     for assets_name, sf in assets:
-        tas = sf.text_assets()
-        n_text_assets += len(tas)
-        for _pid, name, script in tas:
-            safe = _sanitize_segment(name)
-            base = vpath + ("::" + assets_name if assets_name else "")
-            out[base + "::" + safe] = script.encode("utf-8")
-    if not out:
-        notes.append("không có TextAsset nào (%d SerializedFile đã mở, %d TextAsset)"
-                     % (len(assets), n_text_assets))
-    return out, notes
+        got, mb_i, notes_i, n_ta, n_m, n_s = _expand_serialized(sf, assets_name, vpath)
+        out.update(got)
+        for k in ("string_tables", "shared_tables", "generic"):
+            mb[k].extend(mb_i[k])
+        notes.extend(notes_i)
+        n_text_assets += n_ta
+        n_mb += n_m
+        n_mb_strings += n_s
+    if not out and not mb["string_tables"] and not mb["generic"]:
+        notes.append("không có TextAsset nào (%d SerializedFile đã mở, %d TextAsset, "
+                     "%d MonoBehaviour, %d chuỗi)"
+                     % (len(assets), n_text_assets, n_mb, n_mb_strings))
+    return out, notes, mb
+
+
+def _expand_unity_stream(path: str, vpath: str, backend, limits):
+    """Đọc bundle UnityFS độc lập LỚN theo từng entry (streaming) -> (vpath ảo,
+    notes, mb) — cùng định dạng trả về như _expand_unity.
+
+    Dùng khi file vượt giới hạn entry (vd data.unity3d 590MB): parse_bundle
+    ôm cả payload ~996MB vào RAM (chết tab), còn đây giải nén từng block,
+    giữ cửa sổ trượt, parse từng entry .assets rồi bỏ ngay (RAM đỉnh ~2×
+    entry lớn nhất; đo trên data.unity3d: 236 entry/3,8s, đỉnh ~610MB hệ
+    thống gồm cả parse SerializedFile). Entry không phải SerializedFile /
+    parse lỗi ghi notes như _expand_unity, không làm hỏng cả file."""
+    out: Dict[str, bytes] = {}
+    notes: List[str] = []
+    mb: Dict[str, Any] = {"string_tables": [], "shared_tables": [], "generic": []}
+    n_sf = 0
+    n_text_assets = 0
+    n_mb = 0
+    n_mb_strings = 0
+    try:
+        stream = unity_sdk.stream_bundle_entries(path, backend, limits, where=vpath)
+    except PB3Error as exc:
+        notes.append("parse bundle (streaming) lỗi [%s]: %s"
+                     % (exc.code, exc.message_vi or exc.detail))
+        return out, notes, mb
+    for entry_name, entry_data in stream:
+        try:
+            sf = unity_sdk.parse_serialized(entry_data, limits, where=entry_name)
+        except PB3Error as exc:
+            notes.append("entry %s không phải SerializedFile [%s]: %s"
+                         % (entry_name, exc.code, exc.message_vi or exc.detail))
+            continue
+        n_sf += 1
+        got, mb_i, notes_i, n_ta, n_m, n_s = _expand_serialized(sf, entry_name, vpath)
+        out.update(got)
+        for k in ("string_tables", "shared_tables", "generic"):
+            mb[k].extend(mb_i[k])
+        notes.extend(notes_i)
+        n_text_assets += n_ta
+        n_mb += n_m
+        n_mb_strings += n_s
+    if not out and not mb["string_tables"] and not mb["generic"]:
+        notes.append("không có TextAsset nào (%d SerializedFile đã mở, %d TextAsset, "
+                     "%d MonoBehaviour, %d chuỗi)"
+                     % (n_sf, n_text_assets, n_mb, n_mb_strings))
+    return out, notes, mb
+
+
+def _mb_string_is_noise(s: str) -> bool:
+    """Chuỗi MonoBehaviour nào KHÔNG phải text game (để lọc khỏi JSON xuất).
+
+    Bỏ: quá ngắn, GUID 32 hex (có/không có gạch nối), "[None]" (tham chiếu
+    null của Unity), số phiên bản (1.1.0), đường dẫn asset
+    (Assets/.../Plugins/.../đuôi .png/.mat/.prefab/...), chuỗi không có chữ
+    cái nào (dãy số/ký tự của font, vd "32 - 126, 160, 8203"). Giữ mọi chuỗi
+    có chữ cái (kể cả key kiểu "sim_pause", mã, câu) — lọc mạnh tay sẽ mất
+    text thật; rác còn lại (tên font, "Aniara"...) vẫn đọc được và không
+    làm hỏng dịch."""
+    if not s or len(s) < 2:
+        return True
+    if s == "[None]" or _MB_GUID_RE.match(s) or _MB_GUID_DASHED_RE.match(s) \
+            or _MB_VERSION_RE.match(s):
+        return True
+    if s.startswith("Assets/") or "/Plugins/" in s:
+        return True
+    low = s.lower()
+    if any(low.endswith(e) for e in _MB_NOISE_EXTS):
+        return True
+    return not any(ch.isalpha() for ch in s)
+
+
+_MB_GUID_RE = re.compile(r"^[0-9a-fA-F]{32}$")
+_MB_GUID_DASHED_RE = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
+                                r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
+_MB_VERSION_RE = re.compile(r"^\d+(\.\d+)+$")
+_MB_NOISE_EXTS = (".png", ".jpg", ".jpeg", ".mat", ".prefab", ".ttf", ".otf",
+                  ".shader", ".asset", ".controller", ".anim", ".fbx", ".exr",
+                  ".wav", ".mp3", ".ogg", ".dll", ".cs")
+
+
+def _mb_generic_kv(items):
+    """Danh sách item MonoBehaviour generic -> (dict key-value, đã_giữ, đã_lọc).
+
+    Key = "<tên object đã sanitize>.s<n>" (n là thứ tự chuỗi trong object;
+    object có type tree thì key là tên field). Trùng key thì thêm hậu tố
+    "#2", "#3"... (giữ bản ghi đầu như make_entries)."""
+    kv: Dict[str, str] = {}
+    used = set()
+    kept = 0
+    dropped = 0
+    for item in items:
+        base = _sanitize_segment(item.get("name") or "") or ("mb_%d" % item.get("path_id", 0))
+        pairs = []
+        fields = item.get("fields")
+        if isinstance(fields, dict):
+            for fp, v in sorted(fields.items()):
+                pairs.append((re.sub(r"[^A-Za-z0-9_]+", "_", str(fp)).strip("_") or "f", v))
+        else:
+            for j, v in enumerate(item.get("strings") or []):
+                pairs.append(("s%d" % (j + 1), v))
+        for suffix, v in pairs:
+            if not isinstance(v, str) or _mb_string_is_noise(v):
+                dropped += 1
+                continue
+            key = "%s.%s" % (base, suffix)
+            if key in used:
+                n = 2
+                while "%s#%d" % (key, n) in used:
+                    n += 1
+                key = "%s#%d" % (key, n)
+            used.add(key)
+            kv[key] = v
+            kept += 1
+    return kv, kept, dropped
+
+
+def _join_string_tables(tables, shared):
+    """Join StringTable + SharedTableData theo m_Id -> {(bundle, locale): {key: value}}.
+
+    shared: {tên collection: {m_Id: key}} gộp từ mọi bundle trong IPA.
+    Bảng không tìm được SharedTableData thì key rơi về "id_<m_Id>" (vẫn giữ
+    chuỗi, không mất text) + ghi chú để caller log. Tên collection suy từ
+    tên bảng bỏ hậu tố "_<locale>" (vd "Buildings_en" -> "Buildings")."""
+    shared_map: Dict[str, Dict[int, str]] = {}
+    for item in shared:
+        coll = item.get("collection") or ""
+        if not coll:
+            continue
+        bucket = shared_map.setdefault(coll, {})
+        for i, k in (item.get("entries") or {}).items():
+            bucket.setdefault(i, k)
+    merged: Dict[Tuple[str, str], Dict[str, str]] = {}
+    notes: List[str] = []
+    for bundle_path, item in tables:
+        loc = (item.get("locale") or "").strip().lower()
+        if not loc:
+            notes.append("bảng StringTable %r không rõ locale, bỏ qua"
+                         % (item.get("name") or "?"))
+            continue
+        name = item.get("name") or ""
+        coll = name[:-len(loc) - 1] if name.lower().endswith("_" + loc) else name
+        keys = shared_map.get(coll)
+        bucket = merged.setdefault((bundle_path, loc), {})
+        n_id = 0
+        for i, v in (item.get("entries") or {}).items():
+            key = keys.get(i) if keys else None
+            if key is None:
+                key = "id_%d" % i
+                n_id += 1
+            if key not in bucket:
+                bucket[key] = v
+        if keys is None:
+            notes.append("bảng %r (locale %s): không tìm thấy SharedTableData "
+                         "cho collection %r, dùng id làm key (%d chuỗi)"
+                         % (name, loc, coll, len(item.get("entries") or {})))
+        elif n_id:
+            notes.append("bảng %r (locale %s): %d/%d entry không có key trong "
+                         "SharedTableData, dùng id làm key"
+                         % (name, loc, n_id, len(item.get("entries") or {})))
+    return merged, notes
 
 
 def _build_layers(root_vfs, inv: List[disc.InventoryEntry], limits, backend, log,
@@ -289,6 +525,12 @@ def _build_layers(root_vfs, inv: List[disc.InventoryEntry], limits, backend, log
     layers = [_Layer("", root_vfs, "root")]
     nested = NestedVFS(root_vfs, limits=limits)
     virtual: Dict[str, bytes] = {}
+    # MonoBehaviour: StringTable/SharedTableData có thể nằm ở 2 bundle khác
+    # nhau trong cùng IPA nên gom hết rồi join sau vòng lặp (theo m_Id);
+    # generic gom theo từng đơn vị (.assets / entry CAB trong bundle).
+    mb_tables: List[Tuple[str, Dict[str, Any]]] = []
+    mb_shared: List[Dict[str, Any]] = []
+    mb_generic_units: Dict[Tuple[str, str], List[Dict[str, Any]]] = {}
     total = len(inv)
 
     def _add_skipped(path: str, reason: str) -> None:
@@ -327,24 +569,50 @@ def _build_layers(root_vfs, inv: List[disc.InventoryEntry], limits, backend, log
                 continue
             layers.append(_Layer(entry.path + "::", child, "nested"))
         elif entry.kind == "unity":
+            # File Unity vượt giới hạn entry (64MB): nếu là file độc lập trên
+            # đĩa (SingleFileVFS — vd data.unity3d 590MB) thì đọc streaming
+            # từng entry thay vì bỏ qua (trước đây bỏ qua lặng lẽ bằng lý do
+            # giới hạn, còn trình duyệt thì chết tab vì open_source_vfs đã
+            # nạp trọn file vào MemoryVFS trước đó). Entry trong ZIP/IPA đã
+            # là bytes trong RAM nên không stream được — giữ nguyên skip.
             if entry.size > limits.max_entry_bytes:
-                _add_skipped(entry.path, "file Unity %d byte > giới hạn entry %d byte — "
-                             "không mở bundle/.assets (cần nâng giới hạn Unity nếu "
-                             "bundle thật vượt ngưỡng này)" % (entry.size, limits.max_entry_bytes))
-                log("Unity: %s: %d byte > giới hạn %d, bỏ qua"
-                    % (entry.path, entry.size, limits.max_entry_bytes))
-                continue
-            try:
-                data = bytes(nested.read(entry.path, None))
-            except PB3Error as exc:
-                _add_skipped(entry.path, "không đọc được file Unity [%s]: %s"
-                             % (exc.code, exc.message_vi or exc.detail))
-                log("Unity: %s: không đọc được [%s]" % (entry.path, exc.code))
-                continue
-            got, notes = _expand_unity(data, entry.path, backend, limits)
-            if got:
+                if isinstance(root_vfs, SingleFileVFS) and entry.path == root_vfs.name:
+                    got, notes, mb = _expand_unity_stream(root_vfs.source_path,
+                                                          entry.path, backend, limits)
+                else:
+                    _add_skipped(entry.path, "file Unity %d byte > giới hạn entry %d byte — "
+                                 "không mở bundle/.assets (cần nâng giới hạn Unity nếu "
+                                 "bundle thật vượt ngưỡng này)" % (entry.size, limits.max_entry_bytes))
+                    log("Unity: %s: %d byte > giới hạn %d, bỏ qua"
+                        % (entry.path, entry.size, limits.max_entry_bytes))
+                    continue
+            else:
+                try:
+                    data = bytes(nested.read(entry.path, None))
+                except PB3Error as exc:
+                    _add_skipped(entry.path, "không đọc được file Unity [%s]: %s"
+                                 % (exc.code, exc.message_vi or exc.detail))
+                    log("Unity: %s: không đọc được [%s]" % (entry.path, exc.code))
+                    continue
+                got, notes, mb = _expand_unity(data, entry.path, backend, limits)
+            for item in mb["string_tables"]:
+                mb_tables.append((entry.path, item))
+            mb_shared.extend(mb["shared_tables"])
+            for assets_name, item in mb["generic"]:
+                mb_generic_units.setdefault((entry.path, assets_name), []).append(item)
+            n_st = len(mb["string_tables"])
+            n_gen = len(mb["generic"])
+            n_gen_str = 0
+            for _an, _it in mb["generic"]:
+                _f = _it.get("fields")
+                _s = _it.get("strings")
+                n_gen_str += len(_f) if isinstance(_f, dict) else len(_s or [])
+            if got or n_st or n_gen:
                 virtual.update(got)
-                log("Unity: %s -> %d TextAsset" % (entry.path, len(got)))
+                # Giữ nguyên tiền tố log cũ "-> N TextAsset" (harness cũ
+                # kiểm tra đúng chuỗi này) rồi thêm số liệu MonoBehaviour.
+                log("Unity: %s -> %d TextAsset, %d StringTable, %d MonoBehaviour (%d chuỗi)"
+                    % (entry.path, len(got), n_st, n_gen, n_gen_str))
                 for n in notes:
                     log("Unity: %s: %s" % (entry.path, n))
             else:
@@ -356,6 +624,41 @@ def _build_layers(root_vfs, inv: List[disc.InventoryEntry], limits, backend, log
             progress_fn("layers", total, total)
         except Exception:
             pass
+    # MonoBehaviour -> file JSON ảo (để plugin json_text nhận bằng đuôi .json):
+    # - StringTable: gộp mọi bảng cùng (bundle, locale) thành 1 file
+    #   "<bundle>::<locale>.json" (vd "...bundle::en.json" -> xuất English.json),
+    #   key đã join qua SharedTableData; nguồn bundle hiện ở FileOutcome.source.
+    # - Generic: 1 file "<đơn vị>.monobehaviour.json" cho mỗi .assets / CAB
+    #   (vd "...resources.assets::resources.monobehaviour.json").
+    if mb_tables:
+        merged, join_notes = _join_string_tables(mb_tables, mb_shared)
+        for (bundle_path, loc), kv in sorted(merged.items()):
+            if not kv:
+                continue
+            vpath = "%s::%s.json" % (bundle_path, loc)
+            virtual[vpath] = json.dumps(kv, ensure_ascii=False, indent=1,
+                                        sort_keys=True).encode("utf-8")
+            log("Unity: %s -> StringTable %s: %d chuỗi (xuất %s)"
+                % (bundle_path, loc, len(kv), vpath))
+        for n in join_notes:
+            log("Unity: StringTable: %s" % n)
+    for (unit_path, assets_name), items in sorted(mb_generic_units.items()):
+        kv, kept, dropped = _mb_generic_kv(items)
+        if not kv:
+            continue
+        if assets_name:
+            stem = _sanitize_segment(os.path.splitext(os.path.basename(assets_name))[0]
+                                     or "assets")
+            vpath = "%s::%s::%s.monobehaviour.json" % (unit_path, assets_name, stem)
+        else:
+            stem = _sanitize_segment(os.path.splitext(os.path.basename(unit_path))[0]
+                                     or "assets")
+            vpath = "%s::%s.monobehaviour.json" % (unit_path, stem)
+        virtual[vpath] = json.dumps(kv, ensure_ascii=False, indent=1,
+                                    sort_keys=True).encode("utf-8")
+        log("Unity: %s -> MonoBehaviour: %d chuỗi (lọc %d chuỗi rác, xuất %s)"
+            % (unit_path + ("::" + assets_name if assets_name else ""),
+               kept, dropped, vpath))
     if virtual:
         layers.append(_Layer("", MemoryVFS(virtual, limits=limits), "virtual"))
     return layers
@@ -659,8 +962,10 @@ def run_extraction(req: ExtractionRequest) -> ExtractionResult:
     log("ứng viên thô: %d" % len(raw))
 
     # -- bước 4: probe -------------------------------------------------------
+    # Thứ tự ưu tiên file Unity trước (xem _probe_priority): file text game
+    # luôn được probe dù tổng ứng viên vượt giới hạn.
     probed: List[Dict[str, Any]] = []
-    _probe_keys = sorted(raw, key=lambda k: (k[1], k[0]))
+    _probe_keys = sorted(raw, key=lambda k: (_probe_priority(k[1])[0], k[1], k[0]))
     _probe_total = len(_probe_keys)
     for _probe_i, key in enumerate(_probe_keys, 1):
         _report_lag("probe", _probe_i, _probe_total)
@@ -830,6 +1135,12 @@ def run_extraction(req: ExtractionRequest) -> ExtractionResult:
     source_hash = _source_hash(req.source, root_vfs) if req.out_dir else ""
     tables: List[LocTable] = []
     all_locales: set = set()   # mọi locale có trong game (trước khi lọc --locale)
+    # Outcome không gắn locale (loc None) bị lọc cứng (--locale của batch)
+    # loại: giữ lại TẠM, quyết định sau vòng lặp — nếu game không có locale
+    # gắn nhãn nào (toàn bộ text không gắn locale, vd chuỗi MonoBehaviour)
+    # thì giữ lại làm text mặc định; nếu game CÓ locale gắn nhãn thì bỏ
+    # (giữ đúng test test_locale_filter_en_only: batch en chỉ ra file en).
+    deferred_untagged: List[Tuple] = []
     _exp_total = len(chosen)
     for _exp_i, item in enumerate(chosen, 1):
         _report_lag("export", _exp_i, _exp_total)
@@ -872,8 +1183,6 @@ def run_extraction(req: ExtractionRequest) -> ExtractionResult:
                                            "reason": "locale %s không phải %s"
                                                      % (loc_code or "không xác định", wanted_txt)})
                     continue
-                if req.locale not in (None, "all") and loc_code != req.locale:
-                    continue
                 outcome = FileOutcome(item["full"], rec.plugin_id,
                                       loc_code,
                                       entries=len(kv), ok=len(kv), kv=dict(kv),
@@ -884,6 +1193,13 @@ def run_extraction(req: ExtractionRequest) -> ExtractionResult:
                                       sha256=file_sha,
                                       source=_source_of(item["full"]))
                 outcome.exported = reused.get("exported", {}).get(loc)
+                if req.locale not in (None, "all") and loc_code != req.locale:
+                    # Lọc cứng loại entry không gắn locale: hoãn quyết định
+                    # (cứu lại sau vòng lặp nếu game không có locale gắn
+                    # nhãn nào); entry gắn nhãn khác locale yêu cầu thì bỏ.
+                    if loc_code is None:
+                        deferred_untagged.append(("reused", outcome))
+                    continue
                 result.files.append(outcome)
                 result.total_entries += len(kv)
             continue
@@ -916,6 +1232,11 @@ def run_extraction(req: ExtractionRequest) -> ExtractionResult:
                                                  % (loc or "không xác định", wanted_txt)})
                 continue
             if req.locale not in (None, "all") and loc != req.locale:
+                # Như nhánh checkpoint ở trên: entry không gắn locale thì
+                # hoãn quyết định tới sau vòng lặp (cứu lại nếu game không
+                # có locale gắn nhãn nào); entry gắn nhãn khác thì bỏ.
+                if loc is None:
+                    deferred_untagged.append(("parsed", (table, rec, item, loc, entries, file_sha)))
                 continue
             outcome = _outcome_for(table, rec, item["full"], loc, entries)
             outcome.sha256 = file_sha
@@ -927,11 +1248,33 @@ def run_extraction(req: ExtractionRequest) -> ExtractionResult:
         _progress("export", _exp_total, _exp_total)
     if req.locale not in (None, "all"):
         wanted = req.locale
-        have = all_locales
-        if wanted not in have:
+        tagged = {h for h in all_locales if h is not None}
+        if not tagged:
+            # Game không có locale gắn nhãn nào: toàn bộ text không gắn
+            # locale (vd chuỗi MonoBehaviour của Unity) — giữ lại các file
+            # đã hoãn làm text mặc định của game thay vì bỏ hết rồi fail
+            # E_LOCALE_NOT_FOUND (lỗi batch 2026-11-16: batch extract en
+            # trên data.unity3d fail dù trích xuất đơn — lọc mềm — ra 85 file).
+            for kind, payload in deferred_untagged:
+                if kind == "reused":
+                    outcome = payload
+                    result.files.append(outcome)
+                    result.total_entries += len(outcome.kv)
+                else:
+                    table, rec, item, loc, entries, file_sha = payload
+                    outcome = _outcome_for(table, rec, item["full"], loc, entries)
+                    outcome.sha256 = file_sha
+                    result.files.append(outcome)
+                    result.total_entries += len(outcome.kv)
+                    result.generated_keys.extend(
+                        e.key for e in entries if e.key_origin in ("generated", "rowindex"))
+            if deferred_untagged:
+                log("locale %s: game không có locale gắn nhãn, giữ %d file không gắn locale"
+                    % (wanted, len(deferred_untagged)))
+        elif wanted not in tagged:
             result.errors.append({"path": "", "code": "E_LOCALE_NOT_FOUND",
                                   "message": "game không có locale %s; có sẵn: %s"
-                                             % (wanted, ", ".join(sorted(h or "?" for h in have)) or "không có")})
+                                             % (wanted, ", ".join(sorted(tagged)))})
             result.ok = False
             result.decision = "none"
             result.report = _build_report(req, result, logs, t0)

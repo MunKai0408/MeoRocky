@@ -14,6 +14,7 @@ VFS thật do Claude 04 cài; MemoryVFS là bản tham chiếu cho test và ví 
 from __future__ import annotations
 
 import io
+import os
 from dataclasses import dataclass
 from typing import Dict, Iterator, Optional
 
@@ -160,6 +161,65 @@ class MemoryVFS(VFS):
 
     def open_stream(self, path: str):
         return _ReadOnlyStream(self._get(path))
+
+
+class SingleFileVFS(VFS):
+    """VFS chỉ đọc cho MỘT file lớn trên đĩa: không nạp cả file vào RAM.
+
+    Dùng cho file UnityFS độc lập > giới hạn entry (vd data.unity3d 590MB):
+    inventory chỉ cần stat + lát cắt đầu (magic), còn trích xuất đọc từng
+    phần qua open_stream/slice thay vì ôm cả file (trước đây open_source_vfs
+    đọc trọn file vào MemoryVFS rồi _build_layers mới skip vì >64MB — đủ
+    gây OOM tab trên file 590MB). `source_path` là đường dẫn thật trên đĩa
+    (để tầng trích xuất mở stream trực tiếp); `name` là tên entry duy nhất
+    (basename). read() nguyên file vẫn tuân read_policy (file > giới hạn
+    entry thì E_TOO_LARGE như MemoryVFS, không cắt cụt im lặng)."""
+
+    def __init__(self, path, limits=None):
+        self.source_path = str(path)
+        self.name = os.path.basename(self.source_path)
+        self.limits = limits or Limits()
+        try:
+            self._size = os.path.getsize(self.source_path)
+        except OSError as exc:
+            raise PB3Error("E_INPUT_NOT_FOUND", "không có file: %s" % self.source_path,
+                           where=self.source_path) from exc
+        check_vpath(self.name)
+
+    def _check(self, path: str) -> None:
+        check_vpath(path)
+        if path != self.name:
+            raise PB3Error("E_INPUT_NOT_FOUND", "không có trong VFS", where=path)
+
+    def iter_entries(self, prefix: Optional[str] = None) -> Iterator[str]:
+        if prefix is None or self.name.startswith(prefix):
+            yield self.name
+
+    def stat(self, path: str) -> VStat:
+        self._check(path)
+        return VStat(path, self._size, False)
+
+    def read(self, path: str, max_bytes: Optional[int] = None) -> bytes:
+        self._check(path)
+        take = read_policy(self._size, max_bytes, self.limits, path)
+        with open(self.source_path, "rb") as fh:
+            return fh.read(take)
+
+    def slice(self, path: str, offset: int, size: int) -> bytes:
+        self._check(path)
+        _int_arg(offset, "offset", path)
+        _int_arg(size, "size", path)
+        self.limits.check_memory_read(min(size, max(0, self._size - offset)),
+                                      where=path)
+        if offset >= self._size or size == 0:
+            return b""
+        with open(self.source_path, "rb") as fh:
+            fh.seek(offset)
+            return fh.read(min(size, self._size - offset))
+
+    def open_stream(self, path: str):
+        self._check(path)
+        return open(self.source_path, "rb")
 
 
 class _CountingStream(io.RawIOBase):

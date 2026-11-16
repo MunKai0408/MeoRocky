@@ -101,7 +101,10 @@ class TestCsvParse(TmpCase):
     def test_header_case_insensitive(self):
         t = _parse(b"KEY,EN\nhello,Xin chao\n", self.tmp)
         self.assertTrue(t.stats["header"])
-        self.assertEqual(t.entries[0].locale, "EN")
+        # Chuẩn hoá locale (đợt sửa trích xuất file thật 2026-11-16): header
+        # "EN" vẫn được nhận dù viết hoa, nhưng locale lưu dạng chuẩn "en"
+        # (BCP 47 chữ thường) để vòng lọc `loc not in {'en'}` so sánh được.
+        self.assertEqual(t.entries[0].locale, "en")
 
 
 class TestCsvBuild(TmpCase):

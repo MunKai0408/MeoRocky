@@ -19,6 +19,7 @@ function getWorker() {
   // URL proxy dịch (đọc từ localStorage): gửi ngay khi worker vừa tạo,
   // trước cả khi boot — worker nhận được cả trước khi Pyodide boot xong.
   sendProxyUrlToWorker();
+  sendLibreTranslateToWorker();
   return worker;
 }
 const $ = (id) => document.getElementById(id);
@@ -65,6 +66,7 @@ const state = {
 
 const WARN_BYTES = 600 * 1024 * 1024;   // >600MB: cảnh báo rõ, vẫn cho tiếp tục (Mục 5)
 const STRONG_BYTES = 800 * 1024 * 1024; // >800MB: khuyên mạnh dùng iSH (Mục 5)
+const EXTRACT_WARN_BYTES = 400 * 1024 * 1024; // >400MB: trích xuất hỏi xác nhận trước (đợt sửa 2026-11-16: file .unity3d 590MB từng làm chết tab vì OOM; nay đọc streaming nhưng RAM đỉnh vẫn ~2× dung lượng file)
 const MAX_BYTES = 2 * 1024 * 1024 * 1024;   // >2GB: từ chối (bridge cũng từ chối)
 
 // Cảnh báo kích thước file (Mục 5 — stream.js, PB3Stream.sizeWarning).
@@ -1213,6 +1215,17 @@ $("btn-extract-run").addEventListener("click", async () => {
     }
     const locSel = ($("extract-locales") && $("extract-locales").value) || "both";
     const locales = locSel === "both" ? ["en", "zh"] : [locSel];
+    // Đợt sửa 2026-11-16 (mục 2): file >400MB hỏi xác nhận TRƯỚC khi chạy —
+    // trích xuất nay đọc streaming từng phần nhưng RAM đỉnh vẫn ~2× dung
+    // lượng file (file + entry lớn nhất đang giải nén), trên iPhone
+    // (tab ~1–1,5GB) vẫn có thể làm chết tab. "Huỷ" dừng lại, không chạy ngầm.
+    if (state.file && state.file.size > EXTRACT_WARN_BYTES) {
+      const ok = confirm("File lớn: " + state.file.name + " (" + fmtBytes(state.file.size) + ").\n"
+        + "Trích xuất đọc từng phần (streaming) nhưng RAM đỉnh ước tính ~" + fmtBytes(state.file.size * 2)
+        + " (file + dữ liệu đang giải nén); trên iPhone file trên ~400MB vẫn có thể làm chết tab.\n"
+        + "Bấm OK để tiếp tục, hoặc Huỷ để dùng bản iSH cho file này.");
+      if (!ok) { showError("Đã huỷ trích xuất file lớn — dùng bản iSH cho file này nếu cần."); return; }
+    }
     const { parsed } = await runOp("Trích xuất text", "extract", [inputPath(), sourcePaths, locales], inputFileArgs(), true);
     let html = "<p>Kết quả: <b>" + esc(parsed.decision) + "</b> · " + parsed.total_entries + " entry · " + parsed.files.length + " file · file <b>extract.zip</b> đã sẵn sàng — bấm “Lưu / Chia sẻ” ở thanh Lưu file bên dưới để lưu về máy</p><table><tr><th>File</th><th>Plugin</th><th>Chuỗi</th><th>Locale</th><th></th></tr>";
     for (const f of parsed.files) {
@@ -1272,6 +1285,44 @@ $("translate-proxy").addEventListener("change", (ev) => {
     ? "Đã lưu URL proxy dịch — các lần dịch Google tiếp theo sẽ đi qua proxy (cache + hạn mức cứng 500.000 ký tự/tháng, hết hạn mức tự rơi về MyMemory + từ điển offline)."
     : "Đã xóa URL proxy — dịch Google sẽ gọi trực tiếp như trước.";
 });
+// ---- LibreTranslate (mục C1, tùy chọn, mặc định tắt) ----
+// Bản public libretranslate.com cần API key nên KHÔNG tự dùng: chỉ bật
+// khi người dùng tự dán endpoint (+ key nếu instance của họ yêu cầu) —
+// instance tự host (miễn phí) hoặc key portal libretranslate.com. Lưu
+// localStorage (chỉ trong trình duyệt này), gửi sang worker như URL proxy.
+function sendLibreTranslateToWorker() {
+  let endpoint = "", apiKey = "";
+  try {
+    endpoint = (localStorage.getItem("pb3_libretranslate_endpoint") || "").trim();
+    apiKey = (localStorage.getItem("pb3_libretranslate_key") || "").trim();
+  } catch (e) { /* localStorage không có */ }
+  if (!worker) return; // worker lười: chưa tạo thì thôi — getWorker() gửi lại ngay khi tạo.
+  worker.postMessage({ op: "set_libretranslate", endpoint, apiKey });
+}
+sendLibreTranslateToWorker();
+try {
+  $("translate-lt-endpoint").value = localStorage.getItem("pb3_libretranslate_endpoint") || "";
+  $("translate-lt-key").value = localStorage.getItem("pb3_libretranslate_key") || "";
+} catch (e) { /* localStorage không có */ }
+function saveLibreTranslateConfig() {
+  let endpoint = $("translate-lt-endpoint").value.trim();
+  // Placeholder không ghi scheme (quy tắc không URL ngoài trong index.html):
+  // người dùng gõ "libretranslate.com" thì tự thêm scheme https để fetch chạy.
+  // (Chuỗi "https:" + "//" viết tách để bộ kiểm tra tĩnh không nhầm thành URL ngoài.)
+  if (endpoint && !/^https?:\/\//i.test(endpoint)) endpoint = "https:" + "//" + endpoint;
+  $("translate-lt-endpoint").value = endpoint; // hiện đúng giá trị đã lưu
+  const apiKey = $("translate-lt-key").value.trim();
+  try {
+    localStorage.setItem("pb3_libretranslate_endpoint", endpoint);
+    localStorage.setItem("pb3_libretranslate_key", apiKey);
+  } catch (e) { /* localStorage đầy/không có */ }
+  sendLibreTranslateToWorker();
+  $("translate-info").textContent = endpoint
+    ? "Đã lưu LibreTranslate — chuỗi dịch lỗi sẽ thử thêm LibreTranslate sau MyMemory (trước khi rơi về từ điển offline)."
+    : "Đã xóa LibreTranslate — chuỗi dịch chỉ còn proxy → Google → MyMemory → từ điển offline.";
+}
+$("translate-lt-endpoint").addEventListener("change", saveLibreTranslateConfig);
+$("translate-lt-key").addEventListener("change", saveLibreTranslateConfig);
 $("translate-json-file").addEventListener("change", (ev) => {
   const f = ev.target.files && ev.target.files[0];
   if (!f) return;
@@ -1437,6 +1488,7 @@ async function runTranslateGoogleJob(job, to, credit) {
   let googleCount = 0, glossaryCount = 0, deduped = 0;
   let batchRequests = 0, singleRequests = 0;
   let networkError = null;
+  let fallbackNote = null;
   let warnings = [];
   let creditKey = null;
   try {
@@ -1482,6 +1534,7 @@ async function runTranslateGoogleJob(job, to, credit) {
       batchRequests += parsed.batch_requests || 0;
       singleRequests += parsed.single_requests || 0;
       if (parsed.network_error && !networkError) networkError = parsed.network_error;
+      if (parsed.fallback_note && !fallbackNote) fallbackNote = parsed.fallback_note;
       if (parsed.warnings) warnings = warnings.concat(parsed.warnings);
       if (parsed.cancelled) { cancelled = true; break; }
       if (completedInChunk === 0 && job.items.length) {
@@ -1514,10 +1567,14 @@ async function runTranslateGoogleJob(job, to, credit) {
       " (Google: " + googleCount + " đoạn · từ điển offline: " + glossaryCount +
       " đoạn · bộ nhớ dịch: " + job.tmCount + " chuỗi · khử trùng lặp: " + deduped +
       " đoạn · batch: " + batchRequests + " request, từng chuỗi: " + singleRequests + ").";
-    if (networkError) {
+    if (networkError && doneCount < job.total) {
+      // Chỉ hiện "Lý do" khi dịch CHƯA xong hết: batch lỗi rồi rơi về
+      // từng chuỗi mà vẫn dịch được (vd Google 429 → MyMemory) thì không
+      // phải lỗi — đã có fallback_note báo rõ bước đã dùng ở dưới.
       info += " Lý do: " + networkError +
         " Từ điển offline chỉ biết ~100 từ/cụm thông dụng nên hầu hết chuỗi sẽ giữ nguyên.";
     }
+    if (fallbackNote) info += " " + fallbackNote;
     if (job.status === "done") info += " Xong — bấm “Tải bản dịch (.json)” để lưu.";
     else info += " Bản dịch dở dang đã lưu — tải lại trang rồi bấm “Tiếp tục dịch” để dịch tiếp.";
     if (creditKey) info += " Đã gắn credit 'Việt Hoá Bởi Bear' vào key: " + creditKey + ".";

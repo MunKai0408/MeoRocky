@@ -12,6 +12,7 @@ import re
 from typing import Any, Dict, List, Optional, Tuple
 
 from core.errors import PB3Error
+from sdk.discovery import normalize_locale_name
 from sdk.formats import FormatPluginBase, decode_text, make_entries, stable_row_key
 from sdk.types import LocTable
 
@@ -44,6 +45,38 @@ MANIFEST = {
 _KEY_NAMES = {"key", "id", "name", "string_id", "key_id"}
 _DELIMS = (",", ";", "\t", "|")
 _NOTE_RE = re.compile(r"^csv:(\d+):(\d+)$")
+# Tên cột KHÔNG phải ngôn ngữ: bỏ hẳn (không thành locale, không ra entry)
+# — cột ghi chú/diễn giải, cột trống (đợt sửa 2026-11-16: 'Notes', col13/14
+# của PB3_LOC_DEFAULT.csv trước đây thành locale "Notes" rồi bị lọc loại ở
+# vòng export; nay bỏ ngay từ lúc đọc).
+_DROP_COL_NAMES = {"notes", "note", "comment", "comments"}
+# Tên cột giá trị CHUNG (không phải tên ngôn ngữ nhưng cột chứa text dịch,
+# vd bảng key,value): giữ entry, không gắn locale (locale None) thay vì bỏ
+# — bỏ hẳn sẽ mất text thật; gắn locale None thì vòng lọc mềm vẫn giữ lại
+# (nội dung không gắn ngôn ngữ không thể gọi là "không phải en/zh").
+_VALUE_COL_NAMES = {"value", "text", "translation", "string", "val", "txt",
+                    "content", "message", "label", "translated", "target"}
+
+
+def _col_locale(header_name):
+    """Tên cột header -> mã locale chuẩn, None (giữ cột, không gắn locale),
+    hoặc False (bỏ cột). 'English'->'en', 'EN'->'en'; cột không phải ngôn
+    ngữ và không phải cột giá trị chung (vd 'Notes', 'Max Length', cột
+    trống) thì bỏ. Ngôn ngữ ngoài bảng LOCALE_BUILTIN (vd Czech) hiện cũng
+    bị bỏ — ghi nhận là giới hạn (trước đây thành locale giả "Czech" rồi
+    cũng bị lọc loại khỏi output en/zh)."""
+    loc = normalize_locale_name(header_name)
+    if loc is not None:
+        return loc
+    raw = (header_name or "").strip()
+    if not raw or re.match(r"^col\d+$", raw, re.IGNORECASE):
+        return False
+    low = raw.lower()
+    if low in _DROP_COL_NAMES:
+        return False
+    if low in _VALUE_COL_NAMES:
+        return None
+    return False
 
 
 def _detect_delimiter(text: str, path: str) -> str:
@@ -101,7 +134,16 @@ class CsvPlugin(FormatPluginBase):
             key_col = next((i for i, c in enumerate(header)
                             if (c or "").strip().lower() in _KEY_NAMES), 0)
             value_cols = [i for i in range(len(header)) if i != key_col]
-            col_locale = [(i, (header[i] or "").strip() or ("col%d" % i)) for i in value_cols]
+            # Đợt sửa 2026-11-16: chuẩn hoá tên cột thành mã locale NGAY khi
+            # đọc header, trước mọi so sánh lọc ('English'->'en' — trước đây
+            # cột tiếng Anh cũng bị lọc loại vì 'English' != 'en'). Cột
+            # không phải ngôn ngữ ('Notes', col13/col14 trống...) bị bỏ hẳn;
+            # cột giá trị chung ('value'...) giữ entry với locale None.
+            col_locale = []
+            for i in value_cols:
+                loc = _col_locale(header[i])
+                if loc is not False:
+                    col_locale.append((i, loc))
             data_rows = rows[1:]
             ncols = len(header)
         else:
@@ -135,8 +177,13 @@ class CsvPlugin(FormatPluginBase):
         if has_header:
             key_col = next((i for i, c in enumerate(header)
                             if (c or "").strip().lower() in _KEY_NAMES), 0)
-            col_locale = [(i, (header[i] or "").strip() or ("col%d" % i))
-                          for i in range(len(header)) if i != key_col]
+            col_locale = []
+            for i in range(len(header)):
+                if i == key_col:
+                    continue
+                loc = _col_locale(header[i])
+                if loc is not False:
+                    col_locale.append((i, loc))
         else:
             key_col, col_locale = 0, [(1, table.locale)]
         # Áp giá trị theo vị trí ô trong notes; chỉ ghi entry ok/empty (bản trùng giữ nguyên).

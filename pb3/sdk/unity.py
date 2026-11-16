@@ -39,6 +39,7 @@ import hashlib
 import importlib
 import io
 import lzma
+import os
 import re
 import struct
 from dataclasses import dataclass, field
@@ -698,6 +699,152 @@ def parse_bundle(data, backend=None, limits=None, where="bundle"):
         payload=payload, source_hash=hashing.sha256_bytes(data), where=where)
 
 
+def stream_bundle_entries(stream_or_path, backend=None, limits=None, where="bundle"):
+    """Yield (tên_entry, bytes_entry) từng entry của UnityFS, không giữ cả payload.
+
+    Đọc header + blocks-info bằng lát cắt nhỏ, rồi giải nén từng block theo
+    thứ tự, giữ cửa sổ trượt chỉ đủ chứa entry đang đọc dở (entry đã yield
+    xong được bỏ khỏi cửa sổ ngay). File 590MB/236 entry (payload giải nén
+    ~996MB) xử lý được với RAM đỉnh ~2× entry lớn nhất, thay vì ôm cả
+    payload + nhiều bản copy như parse_bundle (đủ làm chết tab trình duyệt).
+    stream_or_path: đường dẫn file hoặc đối tượng nhị phân đã mở (seekable;
+    hàm tự mở/đóng khi nhận đường dẫn, không đóng stream của người gọi).
+    Entry yield theo thứ tự offset trong payload (không phải thứ tự khai
+    trong blocks-info). Bundle mã hóa / version không hỗ trợ / entry vượt
+    payload -> raise PB3Error như parse_bundle (bên gọi ghi skipped)."""
+    backend = backend or UnityBackend("AUTO", limits)
+    lim = limits or backend.limits
+    own = isinstance(stream_or_path, (str, bytes, os.PathLike))
+    fh = open(stream_or_path, "rb") if own else stream_or_path
+    try:
+        head = fh.read(4096)
+        if len(head) < 8 or head[:7] != UNITYFS_MAGIC:
+            raise PB3Error("E_UNSUPPORTED_FORMAT", "không phải UnityFS (magic sai)",
+                           where=where)
+        r = _Reader(head, ">", where=where)
+        r.read(8)
+        version = r.u32()
+        if version not in SUPPORTED_BUNDLE_VERSIONS:
+            raise PB3Error("E_UNSUPPORTED_FORMAT",
+                           "UnityFS version %d chưa hỗ trợ (chỉ %s)"
+                           % (version, "/".join(map(str, SUPPORTED_BUNDLE_VERSIONS))),
+                           where=where)
+        unity_version = r.string_to_null()
+        unity_revision = r.string_to_null()
+        total_size, comp_info_size, uncomp_info_size, data_flags = r.unpack("QIII")
+        new_flags = _uses_new_flags(unity_revision)
+        encryption_flag = FLAG_ENCRYPTION_NEW if new_flags else FLAG_ENCRYPTION_OLD
+        if data_flags & encryption_flag:
+            raise PB3Error("E_ENCRYPTED", "bundle mã hóa (flag 0x%x)" % data_flags,
+                           where=where)
+        compression = data_flags & 0x3F
+        if compression == 4 or compression > 4:
+            raise PB3Error("E_UNSUPPORTED_FORMAT",
+                           "compression %d (%s) chưa hỗ trợ"
+                           % (compression, COMPRESSION_NAMES.get(compression, "?")),
+                           where=where)
+        if version >= 7 or parse_unity_version(unity_revision) >= (2019, 4, 15):
+            r.align(16)
+        header_end = r.pos
+        blocks_info_at_end = bool(data_flags & FLAG_BLOCKS_INFO_AT_END)
+        fh.seek(0, 2)
+        file_size = fh.tell()
+        if comp_info_size > file_size or uncomp_info_size > lim.max_entry_bytes:
+            raise PB3Error("E_CORRUPT", "kích thước blocks info không hợp lệ", where=where)
+        if blocks_info_at_end:
+            info_start = file_size - comp_info_size
+            if info_start < header_end:
+                raise PB3Error("E_CORRUPT", "blocks info ở cuối vượt ra ngoài file",
+                               where=where)
+            fh.seek(info_start)
+            info_comp = fh.read(comp_info_size)
+            block_data_start = header_end
+            block_data_end = info_start
+        else:
+            if header_end + comp_info_size > len(head):
+                fh.seek(header_end)
+                info_comp = fh.read(comp_info_size)
+            else:
+                info_comp = head[header_end:header_end + comp_info_size]
+            block_data_start = header_end + comp_info_size
+            block_data_end = None  # không cần (đọc tuần tự tới hết block)
+        info_raw = backend.decompress(info_comp, uncomp_info_size, compression,
+                                      where=where + "::blocks-info")
+        ir = _Reader(info_raw, ">", where=where + "::blocks-info")
+        ir.read(16)
+        block_count = ir.i32()
+        if block_count < 0 or block_count > 100000:
+            raise PB3Error("E_CORRUPT", "số block %d không hợp lệ" % block_count,
+                           where=where)
+        blocks = []
+        for _ in range(block_count):
+            unc, comp_size, flags = ir.unpack("IIH")
+            blocks.append(BundleBlock(unc, comp_size, flags))
+        entry_count = ir.i32()
+        if entry_count < 0:
+            raise PB3Error("E_CORRUPT", "số entry âm", where=where)
+        lim.check_entries(entry_count, where)
+        entries = []
+        for _ in range(entry_count):
+            offset, size, flags = ir.unpack("qqi")
+            name = ir.string_to_null()
+            entries.append(BundleEntry(name, offset, size, flags))
+        lim.check_total(sum(b.uncompressed_size for b in blocks), where)
+        total_payload = sum(b.uncompressed_size for b in blocks)
+        for e in entries:
+            if e.offset < 0 or e.size < 0 or e.offset + e.size > total_payload:
+                raise PB3Error("E_CORRUPT", "entry %r vượt quá payload" % e.name,
+                               where=where)
+        # Giải nén từng block, giữ cửa sổ trượt; yield entry theo thứ tự offset.
+        ordered = sorted(entries, key=lambda e: (e.offset, e.size))
+        pos = block_data_start
+        if new_flags and (data_flags & FLAG_PADDING_NEW):
+            pos = _align_up(pos, 16)
+        window = bytearray()
+        window_start = 0
+        next_i = 0
+        for i, block in enumerate(blocks):
+            lim.check_entry_size(block.uncompressed_size, "%s::block%d" % (where, i))
+            fh.seek(pos)
+            chunk = fh.read(block.compressed_size)
+            if len(chunk) != block.compressed_size:
+                raise PB3Error("E_CORRUPT", "block %d cắt cụt" % i, where=where)
+            pos += block.compressed_size
+            if block_data_end is not None and pos > block_data_end:
+                raise PB3Error("E_CORRUPT", "block data vượt quá vùng cho phép",
+                               where=where)
+            window += backend.decompress(chunk, block.uncompressed_size,
+                                         block.compression,
+                                         where="%s::block%d" % (where, i))
+            window_end = window_start + len(window)
+            while next_i < len(ordered):
+                e = ordered[next_i]
+                if e.offset + e.size > window_end:
+                    break
+                start = e.offset - window_start
+                entry_bytes = bytes(window[start:start + e.size])
+                next_i += 1
+                # Bỏ phần cửa sổ trước entry kế tiếp NGAY (giữ lại byte
+                # chung nếu 2 entry chồng nhau cùng offset) — bản copy
+                # entry_bytes đã độc lập nên yield sau khi bỏ vẫn an toàn,
+                # và RAM đỉnh trong lúc caller xử lý entry chỉ còn ~1×
+                # entry thay vì 2× (cửa sổ + copy).
+                if next_i < len(ordered):
+                    drop_to = ordered[next_i].offset
+                else:
+                    drop_to = window_end
+                if drop_to > window_start:
+                    del window[:drop_to - window_start]
+                    window_start = drop_to
+                yield e.name, entry_bytes
+        if next_i < len(ordered):
+            raise PB3Error("E_CORRUPT", "còn %d entry chưa đọc đủ dữ liệu"
+                           % (len(ordered) - next_i), where=where)
+    finally:
+        if own:
+            fh.close()
+
+
 def build_bundle(entries, *, version=7, unity_version=UNITY_VERSION,
                  unity_revision=None, compression="none", blocks_info_at_end=False,
                  extra_data_flags=0, pad_block_data=False, backend=None,
@@ -888,6 +1035,87 @@ class SerializedFile:
         self._text_cache = out
         return list(out)
 
+    def monobehaviour_texts(self, warnings=None):
+        """Text trong mọi object MonoBehaviour (class 114).
+
+        Trả list dict, mỗi object một mục:
+        - kind "string_table": Unity Localization StringTable — entries
+          {m_Id: chuỗi localized}, locale từ m_LocaleId.m_Code (vd "en").
+        - kind "shared_table": SharedTableData — entries {m_Id: key},
+          collection từ m_TableCollectionName (để join với StringTable).
+        - kind "locale": đối tượng Locale (chỉ có m_Identifier/m_LocaleName,
+          không phải text dịch) — bên gọi bỏ qua.
+        - kind "generic": MonoBehaviour khác — fields {đường_dẫn: chuỗi}
+          nếu có type tree, strings [chuỗi...] nếu không (quét đã xác minh).
+        Object đọc lỗi bị bỏ qua kèm ghi chú vào `warnings` (nếu có) thay
+        vì làm hỏng cả file, như text_assets()."""
+        out = []
+        notes = []
+        for o in self.objects:
+            if o.class_id != 114:
+                continue
+            try:
+                typ = self.types[o.type_id]
+            except IndexError:
+                notes.append("bỏ qua MonoBehaviour path_id=%d (type_id lạ)" % o.path_id)
+                continue
+            if typ.node is not None:
+                try:
+                    val = read_monobehaviour_object(self, o.path_id)
+                except PB3Error as exc:
+                    notes.append("bỏ qua MonoBehaviour path_id=%d (%s)"
+                                 % (o.path_id, exc.code))
+                    continue
+                name = val.get("m_Name") if isinstance(val.get("m_Name"), str) else ""
+                if "m_TableData" in val and "m_LocaleId" in val:
+                    loc = val.get("m_LocaleId")
+                    code = loc.get("m_Code") if isinstance(loc, dict) else None
+                    entries = {}
+                    for e in val.get("m_TableData") or []:
+                        if (isinstance(e, dict) and isinstance(e.get("m_Id"), int)
+                                and isinstance(e.get("m_Localized"), str)):
+                            entries[e["m_Id"]] = e["m_Localized"]
+                    out.append({"path_id": o.path_id, "name": name or "",
+                                "kind": "string_table",
+                                "locale": code if isinstance(code, str) else None,
+                                "entries": entries})
+                elif "m_Entries" in val and "m_TableCollectionName" in val:
+                    entries = {}
+                    for e in val.get("m_Entries") or []:
+                        if (isinstance(e, dict) and isinstance(e.get("m_Id"), int)
+                                and isinstance(e.get("m_Key"), str)):
+                            entries[e["m_Id"]] = e["m_Key"]
+                    out.append({"path_id": o.path_id, "name": name or "",
+                                "kind": "shared_table",
+                                "collection": val.get("m_TableCollectionName") or "",
+                                "entries": entries})
+                elif "m_Identifier" in val:
+                    ident = val.get("m_Identifier")
+                    code = ident.get("m_Code") if isinstance(ident, dict) else None
+                    out.append({"path_id": o.path_id, "name": name or "",
+                                "kind": "locale",
+                                "locale": code if isinstance(code, str) else None})
+                else:
+                    fields = {}
+                    _flatten_typetree_strings(val, "", fields)
+                    out.append({"path_id": o.path_id, "name": name or "",
+                                "kind": "generic", "locale": None,
+                                "fields": fields})
+            else:
+                try:
+                    raw = self.object_bytes(o.path_id)
+                    name, strings = scan_monobehaviour_strings(raw, self.endian)
+                except PB3Error as exc:
+                    notes.append("bỏ qua MonoBehaviour path_id=%d (%s)"
+                                 % (o.path_id, exc.code))
+                    continue
+                out.append({"path_id": o.path_id, "name": name or "",
+                            "kind": "generic", "locale": None,
+                            "strings": strings})
+        if warnings is not None:
+            warnings.extend(notes)
+        return out
+
     def find_text_asset(self, name=None, path_id=None):
         if path_id is not None:
             # tìm đúng object đích: hỏng thì raise kèm path_id (không bỏ qua).
@@ -975,6 +1203,254 @@ def read_text_asset_head(data, endian="<"):
         return name, len(raw.decode("utf-8"))
     except UnicodeDecodeError as exc:
         raise error_from_exception(exc, where=where)
+
+
+# ------------------------------------------------------- MonoBehaviour text
+# Đọc text trong MonoBehaviour (class 114) — text chính của game thường nằm
+# đây (Unity Localization StringTable/SharedTableData, I2Languages, ...),
+# không phải trong TextAsset (class 49). Hai đường:
+# - Có type tree (vd bundle Addressables của 9 Kings): đọc theo cây kiểu,
+#   biết tên field -> StringTable join key/value chính xác theo m_Id.
+# - Không có type tree (mọi .assets trong build player: type tree bị strip):
+#   quét chuỗi aligned_string đã xác minh bằng length-prefix trong từng
+#   object MonoBehaviour (đầu object luôn là m_GameObject/m_Enabled/
+#   m_Script/m_Name nên m_Name đọc được theo vị trí cố định).
+# Tên type/field trong type tree thường là "common_NNN" (chỉ số vào bảng
+# chuỗi chung của engine) nên reader suy theo HÌNH DẠNG node, không theo tên:
+# node Array có đúng 2 con tên common_795 (size) + common_106 (data); string
+# là node có 1 con Array mà element là lá 1 byte; struct là các con còn lại;
+# mọi field căn 4 (đã kiểm chứng: parse bundle localization 9 Kings thật
+# cho end == đúng kích thước object, join SharedTableData 100/100).
+_MB_RUN_RE = re.compile(
+    rb"(?:[\x20-\x7E]|[\xC2-\xDF][\x80-\xBF]|[\xE0-\xEF][\x80-\xBF]{2}"
+    rb"|[\xF0-\xF4][\x80-\xBF]{3}){3,}")
+_MB_HEADER_SIZE = 28  # PPtr m_GameObject (12) + m_Enabled (1) + đệm 3 + PPtr m_Script (12)
+
+
+def _typetree_align4(pos):
+    return (pos + 3) & ~3
+
+
+def _typetree_is_array(node):
+    """Node Array: đúng 1 con, con đó có đúng 2 con tên common_795 + common_106."""
+    if len(node.children) != 1:
+        return False
+    arr = node.children[0]
+    if len(arr.children) != 2:
+        return False
+    size_node, _elem = arr.children
+    return (size_node.byte_size == 4 and not size_node.children
+            and arr.children[0].name == "common_795"
+            and arr.children[1].name == "common_106")
+
+
+def read_typetree_value(data, node, pos, endian="<"):
+    """Đọc 1 giá trị theo node type tree tại pos (tương đối đầu object).
+
+    Trả (giá_trị, vị_trị_mới). dict = struct, list = vector, str = chuỗi
+    (byte[] giải UTF-8 lỗi thì trả bytes để bên gọi bỏ qua, không hỏng cả
+    object). Hỏng cấu trúc -> PB3Error E_CORRUPT."""
+    where = "MonoBehaviour"
+    n = len(data)
+    if node.children:
+        if _typetree_is_array(node):
+            _size_node, elem = node.children[0].children
+            pos = _typetree_align4(pos)
+            if pos + 4 > n:
+                raise PB3Error("E_CORRUPT", "đọc vượt quá dữ liệu (4 byte tại %d)"
+                               % pos, where=where)
+            (count,) = struct.unpack_from(endian + "i", data, pos)
+            pos += 4
+            if count < 0 or count > 1000000:
+                raise PB3Error("E_CORRUPT", "vector %r dài %d không hợp lệ"
+                               % (node.name, count), where=where)
+            if elem.byte_size == 1 and not elem.children:
+                if pos + count > n:
+                    raise PB3Error("E_CORRUPT", "chuỗi dài %d vượt quá dữ liệu"
+                                   % count, where=where)
+                raw = data[pos:pos + count]
+                pos = _typetree_align4(pos + count)
+                try:
+                    return raw.decode("utf-8"), pos
+                except UnicodeDecodeError:
+                    return bytes(raw), pos
+            vals = []
+            for _ in range(count):
+                pos = _typetree_align4(pos)
+                v, pos = read_typetree_value(data, elem, pos, endian)
+                vals.append(v)
+            return vals, pos
+        out = {}
+        for c in node.children:
+            pos = _typetree_align4(pos)
+            v, pos = read_typetree_value(data, c, pos, endian)
+            out[c.name] = v
+        return out, pos
+    if node.byte_size == 0:
+        return None, pos
+    if node.byte_size == 1:
+        if pos + 1 > n:
+            raise PB3Error("E_CORRUPT", "đọc vượt quá dữ liệu (1 byte tại %d)"
+                           % pos, where=where)
+        return data[pos], pos + 1
+    if node.byte_size == 2:
+        if pos + 2 > n:
+            raise PB3Error("E_CORRUPT", "đọc vượt quá dữ liệu (2 byte tại %d)"
+                           % pos, where=where)
+        return struct.unpack_from(endian + "h", data, pos)[0], pos + 2
+    if node.byte_size == 4:
+        if pos + 4 > n:
+            raise PB3Error("E_CORRUPT", "đọc vượt quá dữ liệu (4 byte tại %d)"
+                           % pos, where=where)
+        return struct.unpack_from(endian + "i", data, pos)[0], pos + 4
+    if node.byte_size == 8:
+        if pos + 8 > n:
+            raise PB3Error("E_CORRUPT", "đọc vượt quá dữ liệu (8 byte tại %d)"
+                           % pos, where=where)
+        return struct.unpack_from(endian + "q", data, pos)[0], pos + 8
+    raise PB3Error("E_CORRUPT", "node lá byte_size=%d (%s) chưa hiểu"
+                   % (node.byte_size, node.name), where=where)
+
+
+def read_monobehaviour_name(data, endian="<"):
+    """Tên MonoBehaviour (m_Name) theo vị trí cố định ở đầu object.
+
+    Đầu object MonoBehaviour luôn là m_GameObject (PPtr 12 byte) +
+    m_Enabled (1 byte) + đệm 3 + m_Script (PPtr 12 byte) = 28 byte, rồi
+    chuỗi aligned_string m_Name. Lỗi/đọc không được -> None (không raise)."""
+    try:
+        if len(data) < _MB_HEADER_SIZE + 4:
+            return None
+        (size,) = struct.unpack_from(endian + "i", data, _MB_HEADER_SIZE)
+        if size < 0 or size > 4096 or _MB_HEADER_SIZE + 4 + size > len(data):
+            return None
+        return data[_MB_HEADER_SIZE + 4:_MB_HEADER_SIZE + 4 + size].decode("utf-8")
+    except (struct.error, UnicodeDecodeError):
+        return None
+
+
+def _mb_text_ok(raw):
+    """bytes -> str nếu toàn ký tự in được/khoảng trắng (\n\r\t) hợp lệ UTF-8."""
+    try:
+        s = bytes(raw).decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+    for ch in s:
+        o = ord(ch)
+        if o in (9, 10, 13) or 0x20 <= o <= 0x7E or o >= 0xA0:
+            continue
+        return None
+    return s
+
+
+def scan_monobehaviour_strings(data, endian="<"):
+    """Quét chuỗi trong 1 object MonoBehaviour KHÔNG có type tree.
+
+    Trả (m_Name|None, [chuỗi đã xác minh]). Mỗi chuỗi phải là aligned_string
+    thật: i32 độ dài L ở vị trí căn 4 ngay trước chuỗi, L byte là text UTF-8
+    in được, đệm sau (nếu có) toàn 0. Tìm ứng viên bằng regex chạy bằng C
+    trên bytes rồi chỉ xác minh những ứng viên đó — chạy 59MB trong ~0,2s,
+    không quét từng offset bằng Python. Chuỗi chứa \n (regex cắt làm đôi)
+    vẫn nhận được bằng cách lấy đúng L byte từ đầu chuỗi."""
+    data = bytes(data)
+    n = len(data)
+    name = read_monobehaviour_name(data, endian)
+    body_start = _MB_HEADER_SIZE
+    if name is not None:
+        body_start = _MB_HEADER_SIZE + 4 + len(name.encode("utf-8"))
+        body_start += (-body_start) % 4
+    out = []
+    for m in _MB_RUN_RE.finditer(data, body_start):
+        s0 = m.start()
+        run = m.group()
+        lp = s0 - 4
+        if lp < body_start or lp % 4 != 0:
+            continue
+        try:
+            (size,) = struct.unpack_from(endian + "i", data, lp)
+        except struct.error:
+            continue
+        if size <= 0 or size > 65536 or lp + 4 + size > n:
+            continue
+        if size == len(run):
+            s = _mb_text_ok(run)
+            if s is None:
+                continue
+            pad = (-(lp + 4 + size)) % 4
+            if pad and any(data[lp + 4 + size:lp + 4 + size + pad]):
+                continue
+            out.append(s)
+        elif size > len(run):
+            # Chuỗi chứa \n (regex cắt) hoặc ký tự regex không nhận: lấy đúng size byte.
+            s = _mb_text_ok(data[s0:s0 + size])
+            if s is None:
+                continue
+            pad = (-(lp + 4 + size)) % 4
+            if pad and any(data[s0 + size:s0 + size + pad]):
+                continue
+            out.append(s)
+        else:  # size < len(run): run gộp nhiều chuỗi (không có byte 0 ngăn) — lấy đúng size byte đầu.
+            s = _mb_text_ok(run[:size])
+            if s is None:
+                continue
+            out.append(s)
+    return name, out
+
+
+def _flatten_typetree_strings(value, prefix, out):
+    """Thu mọi chuỗi lá trong dict type tree đã đọc -> {đường_dẫn_field: chuỗi}.
+
+    Bỏ cây `references` + `m_Metadata` (tên kiểu/assembly, không phải text
+    game) và các field gốc m_GameObject/m_Enabled/m_Script/m_Name (PPtr
+    không có chuỗi; m_Name đã làm tên object). bytes (byte[] giải UTF-8 lỗi)
+    thì bỏ qua."""
+    if isinstance(value, dict):
+        for k, v in value.items():
+            if k in ("references", "m_Metadata", "m_GameObject", "m_Enabled",
+                     "m_Script", "m_Name"):
+                continue
+            _flatten_typetree_strings(v, prefix + "." + k if prefix else k, out)
+    elif isinstance(value, list):
+        for i, v in enumerate(value):
+            _flatten_typetree_strings(v, "%s[%d]" % (prefix, i), out)
+    elif isinstance(value, str):
+        out[prefix] = value
+
+
+def read_monobehaviour_object(sf, path_id):
+    """Đọc 1 MonoBehaviour CÓ type tree thành dict (tên field -> giá trị).
+
+    Tên 4 field gốc (m_GameObject/m_Enabled/m_Script/m_Name) trong type tree
+    lưu bằng chỉ số common-string nên đổi theo vị trí (chỉ khi hình dạng
+    khớp: con 0/2 là PPtr, con 1 là bool 1 byte, con 3 là chuỗi). Không có
+    type tree -> PB3Error E_UNSUPPORTED_FORMAT (dùng scan_monobehaviour_strings)."""
+    o = sf.get_object(path_id)
+    if o.class_id != 114:
+        raise PB3Error("E_CONFIG_INVALID", "object %d không phải MonoBehaviour" % path_id,
+                       where=sf.where + "::%d" % path_id)
+    typ = sf.types[o.type_id]
+    if typ.node is None:
+        raise PB3Error("E_UNSUPPORTED_FORMAT",
+                       "MonoBehaviour path_id=%d không có type tree (bị strip ở build player)"
+                       % path_id, where=sf.where + "::%d" % path_id)
+    raw = sf.object_bytes(path_id)
+    val, _end = read_typetree_value(raw, typ.node, 0, sf.endian)
+    if not isinstance(val, dict):
+        raise PB3Error("E_CORRUPT", "MonoBehaviour path_id=%d: gốc type tree không phải struct"
+                       % path_id, where=sf.where + "::%d" % path_id)
+    children = typ.node.children
+    if len(children) >= 4:
+        c0, c1, c2, c3 = children[0], children[1], children[2], children[3]
+        pptr = (lambda c: len(c.children) == 2
+                and [g.name for g in c.children] == ["m_FileID", "m_PathID"])
+        if (pptr(c0) and c1.byte_size == 1 and not c1.children
+                and pptr(c2) and isinstance(val.get(c3.name), str)):
+            names = [c.name for c in children[:4]]
+            val["m_GameObject"] = val.pop(names[0])
+            val["m_Enabled"] = val.pop(names[1])
+            val["m_Script"] = val.pop(names[2])
+            val["m_Name"] = val.pop(names[3])
+    return val
 
 
 def _parse_typetree_blob(reader, version, where):

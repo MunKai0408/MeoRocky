@@ -144,6 +144,69 @@ def load_locale_table(root: Optional[str] = None) -> List[Dict[str, Any]]:
     return table
 
 
+# Tên cột header CSV -> mã chuẩn, GHI ĐÈ trước khi khớp bảng (đợt sửa
+# 2026-11-16): "Chinese (Simplified)" -> "zh" (lọt lọc en/zh của UI —
+# giản thể là tiếng Trung mặc định của preset), "Chinese (Traditional)" ->
+# "zh-Hant" (KHÔNG lọt lọc en/zh: lọc chỉ nhận {'en','zh'} nên cột phồn
+# thể bị loại khi lọc en/zh — đúng ngữ nghĩa của bộ lọc, không phải lỗi).
+# "zh-tw"/"zh-hk" -> "zh-Hant" (Đài Loan/Hồng Kông dùng phồn thể) dù bảng
+# LOCALE_BUILTIN liệt kê chúng cả dưới "zh" (khớp theo thứ tự bảng sẽ sai).
+_LOCALE_NAME_OVERRIDES = {
+    "chinese (simplified)": "zh",
+    "simplified chinese": "zh",
+    "chinese (traditional)": "zh-Hant",
+    "traditional chinese": "zh-Hant",
+    "zh-tw": "zh-Hant",
+    "zh_tw": "zh-Hant",
+    "zh-hk": "zh-Hant",
+    "zh_hk": "zh-Hant",
+    "zh-mo": "zh-Hant",
+    "zh_mo": "zh-Hant",
+}
+
+
+def normalize_locale_name(name, table=None):
+    """Chuẩn hoá tên locale (tên cột header CSV, tên ngôn ngữ) về mã chuẩn:
+    'English'->'en', 'French'->'fr', 'Chinese'->'zh', 'en'/'zh' giữ nguyên.
+    Không phân biệt hoa/thường, '_' ~ '-', bỏ khoảng trắng thừa và phần
+    trong ngoặc khi khớp display ("Chinese (Simplified)" khớp cả display
+    lẫn alias). Trả None khi tên KHÔNG phải ngôn ngữ ('Notes', 'Key',
+    'col13', ''...) — cột đó bị bỏ qua, không thành locale. Dùng bảng
+    LOCALE_BUILTIN (cộng config/locales.toml nếu truyền table đã load)."""
+    if not isinstance(name, str):
+        return None
+    raw = name.strip()
+    if not raw or re.match(r"^col\d+$", raw, re.IGNORECASE):
+        return None
+    norm = re.sub(r"\s+", " ", raw.lower().replace("_", "-")).strip()
+    norm = re.sub(r"\s*\(\s*", " (", norm)
+    norm = re.sub(r"\s*\)\s*", ")", norm).strip()
+    if norm in _LOCALE_NAME_OVERRIDES:
+        return _LOCALE_NAME_OVERRIDES[norm]
+    table = table if table is not None else LOCALE_BUILTIN
+    # Khớp mã/alias/display trực tiếp, rồi khớp tên gốc bỏ phần ngoặc
+    # ("Chinese (Simplified)" -> "chinese" khớp display "Chinese" của zh).
+    base = re.sub(r"\s*\([^)]*\)\s*", "", norm).strip()
+    for cand in {norm, base}:
+        if not cand:
+            continue
+        for loc in table:
+            if cand == loc["code"].lower() or cand == loc["display"].lower():
+                return loc["code"]
+            for a in loc.get("aliases", []):
+                if cand == a.lower():
+                    return loc["code"]
+    # Khớp alias dạng "simplified chinese" từ phần trong ngoặc.
+    m = re.search(r"\(([^)]+)\)", norm)
+    if m and base:
+        qual = (base + " " + m.group(1)).strip()
+        for loc in table:
+            for a in loc.get("aliases", []):
+                if qual == a.lower():
+                    return loc["code"]
+    return None
+
+
 def _alias_hit(text_low: str, alias: str) -> bool:
     """Alias xuất hiện trong text (khớp ranh giới từ/ký tự phân tách)."""
     if not alias:
@@ -766,6 +829,14 @@ def open_source_vfs(source, limits):
         return open_vfs(path, limits=limits, source_name=os.path.basename(path))
     if kind == "7z":
         raise PB3Error("E_UNSUPPORTED_FORMAT", "7z chưa có backend", where=path)
+    # File UnityFS độc lập vượt giới hạn entry (vd data.unity3d 590MB): VFS
+    # lười theo đường dẫn, KHÔNG nạp cả file vào RAM (trước đây đọc trọn
+    # file vào MemoryVFS rồi _build_layers mới skip vì >64MB — 590MB đó
+    # cộng với bản copy trong FS trình duyệt đủ làm chết tab). Tầng trích
+    # xuất đọc từng entry qua stream_bundle_entries.
+    if head[:7] == b"UnityFS" and os.path.getsize(path) > limits.max_entry_bytes:
+        from sdk.vfs import SingleFileVFS
+        return SingleFileVFS(path, limits=limits)
     with open(path, "rb") as fh:
         data = fh.read()
     return MemoryVFS({os.path.basename(path): data}, limits=limits)

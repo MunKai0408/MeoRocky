@@ -1,0 +1,37 @@
+{
+  "when": "2026-11-16T11:21:26.262Z",
+  "head": "site/ working tree (unpushed)",
+  "failures": 0,
+  "results": {
+    "extract_9kings_en": {
+      "ok": true,
+      "detail": "boot: \"Sẵn sàng — 20 plugin đang chạy · font đi kèm: đủ 142/142 (134 chữ cái + 8 dấu)\"; extract.zip 51 file; English.json: true (Farm: true, Castle: true, câu dài: true); resources.monobehaviour.json: true; nguồn bundle localization hiện trong kết quả: true; kết quả: \"Kết quả: done · 96665 entry · 48 file · file extract.zip đã sẵn sàng — bấm “Lưu / Chia sẻ” ở thanh Lưu file bên dưới để lưu về máyFilePluginChuỗiLocalecom.apple.ZipMetadata.jsonapple_plist7Dịch sang tiếng Việttừ: META-INF/com.apple.ZipMetadata.plistmachine.jsonxml_strings3Dịch sang tiếng Việttừ: Pay\"…",
+      "seconds": 17
+    },
+    "extract_pb3_csv_en": {
+      "ok": true,
+      "detail": "extract.zip 88 file; English.json từ CSV: true (BINDING_START_SIM → 'Start Simulation'); nguồn PB3_LOC_DEFAULT.csv hiện: true; resources.monobehaviour.json có sim_pause: true, replay: true; kết quả: \"Kết quả: done · 63372 entry · 85 file · file extract.zip đã sẵn sàng — bấm “Lưu / Chia sẻ” ở thanh Lưu file bên dưới để lưu về máyFilePluginChuỗiLocalemachine.jsonxml_strings3Dịch sang tiếng Việttừ: Payload/ipa.store.app/Data/Managed/mono/4.0/machine.configpropstub.jsonjson_text5Dịch sang tiếng Việt\"…",
+      "seconds": 38.5
+    },
+    "extract_ek2_probe": {
+      "ok": true,
+      "detail": "extract.zip 23 file; sharedassets0.assets xuất hiện trong report (log/skipped/files): true; sharedassets0.monobehaviour.json: true; EK_Avatar_Animation.json: true; kết quả: \"Kết quả: done · 43147 entry · 20 file · file extract.zip đã sẵn sàng — bấm “Lưu / Chia sẻ” ở thanh Lưu file bên dưới để lưu về máyFilePluginChuỗiLocalemachine.jsonxml_strings3Dịch sang tiếng Việttừ: Payload/ipastore.app/Data/Managed/mono/4.0/machine.configGoogleService-Info.jsonapple_plist15Dịch san\"…",
+      "seconds": 17.6
+    },
+    "extract_u3d_warning_cancel": {
+      "ok": true,
+      "detail": "dialog cảnh báo hiện: \"File lớn: data.unity3d (563 MB).\\nTrích xuất đọc từng phần (streaming) nhưng RAM đỉnh ước tính ~1.1 GB (file + dữ liệu đang giải nén); trên iPhone file trên ~400MB vẫn có thể làm chết tab.\\nBấm OK để tiếp tục, hoặc Huỷ để dùng bản iSH cho file này.\"; sau Huỷ, kết quả extract: \"\" (phải KHÔNG có \"Kết quả:\"); trang còn sống: true",
+      "seconds": 248.2
+    },
+    "extract_u3d_continue_streaming": {
+      "ok": true,
+      "detail": "sau Tiếp tục: 88 file trong 137.5s; level0.monobehaviour.json: true; resources.monobehaviour.json: true; decision: \"Kết quả: done · 5470 entry · 85 file · file extract.zip đã sẵn sàng — bấm “Lưu / Chia sẻ” ở thanh Lưu file bên dưới để lưu về máyFilePluginChuỗiLocalelevel0.monobehaviour.jsonjson_text99Dịch sang tiến\"…; tab còn sống (không crash): true",
+      "seconds": 137.5
+    },
+    "batch_u3d_no_fastfail": {
+      "ok": true,
+      "detail": "xong 1/1 game, số lần bấm \"Tiếp tục\" (watchdog): 0; kết quả game: {\"index\":1,\"path\":\"data.unity3d\",\"mode\":\"extract\",\"locale\":\"en\",\"key\":\"30080dff0e9cd3008de876fc76f3b1ee5eebd61e6eab335fee51c41c39381324\",\"status\":\"ok\",\"note\":\"5470 entry, 85 file, 14.9s\",\"elapsed_s\":15.17,\"game_dir\":\"/tmp/batch/batch-mwj6agg3/game_01_data\",\"error_code\":\"\",\"error_message\":\"\"}; batch-result: \"Batch chạy thật · pool 2 worker · 1 ok / 0 lỗi / 0 bỏ qua / 1 game · 17.3 giây · file batch.zip đã sẵn sàng — bấm “Lưu / Chia sẻ” ở thanh Lưu file bên dưới để lưu về máy (summary, checkpoint, index, từng game)#GameModeKết quảLỗiGiâyGhi chú1data.unity3dextractok 15.175470 entry, 85 file, 14.9sPool 2 worker: mỗi worker 1 Pyodide + PB3 riêng (~2x RAM so với 1 worker); thao tác đơn vẫn dùng worker riêng như trước. Lưu ý: batch ở chế độ pool không ghi kết quả chạy vào KB (KB của 2 worker không gộp được file SQLite) — thêm game vào KB bằng tab Kho KB. Phân công: worker 0: 1 game.\"",
+      "seconds": 33
+    }
+  }
+}
