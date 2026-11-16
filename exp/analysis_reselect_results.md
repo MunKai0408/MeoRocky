@@ -142,10 +142,15 @@ Trường hợp khác (cùng harness, 390px):
 
 ## 6. Đẩy live
 
-- Commit: _TBD — điền sau khi push-tree._
-- Kiểm chứng trên main: _TBD._
-- Live: https://munkai0408.github.io/MeoRocky/ (sau khi push, SW v17
-  tự kích hoạt và xóa cache cũ).
+- Commit: `10e22a0544c1bfa7ddafaa4280d41aa740b00b9c` —
+  "Phan (C): nut Chon lai file o File gan day (harness 26/26, full suite
+  Python 1696 passed, (A) 33/33, (B) 24/24)".
+- Kiểm chứng trên main (raw.githubusercontent.com, không có `site/`):
+  `sw.js` có `CACHE_VERSION = "v17-20261116"`; `app.js` có
+  `__PB3_RESELECT_STATE` + `reselectTargetTab` (5 chỗ nhắc "Chọn lại
+  file"); `exp/analysis_reselect_results.json` ghi 26/26 PASS.
+- Live: https://munkai0408.github.io/MeoRocky/ (SW v17 tự kích hoạt
+  và xóa cache cũ khi Joseph mở lại trang).
 
 ## 7. Còn kẹt / chưa kiểm chứng
 
