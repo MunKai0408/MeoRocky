@@ -43,22 +43,22 @@
     "live_google_real": {
       "ok": true,
       "detail": "Google thật trả HTTP 200; body đầu: \"[[[\\\"chơi\\\",\\\"play\\\",null,null,4]],null,\\\"en\\\",null,null,null,null,[]]\" (probe chỉ ghi nhận, không ép PASS dịch được)",
-      "seconds": 0.6
+      "seconds": 0.7
     },
     "live_mymemory_real": {
       "ok": true,
       "detail": "MyMemory thật trả HTTP 200, responseStatus=200, translatedText=\"Xin chào thế giới\"",
-      "seconds": 1.4
+      "seconds": 1.5
     },
     "live_libretranslate_languages": {
       "ok": true,
       "detail": "GET libretranslate.com/languages → HTTP 200, ACAO=*, en→vi hỗ trợ: true (CORS không phải vấn đề; vấn đề là API key ở bước POST)",
-      "seconds": 1
+      "seconds": 1.3
     },
     "live_libretranslate_post_blocked_note": {
       "ok": true,
       "detail": "POST libretranslate.com/translate → HTTP 400, body đầu: \"{\\\"error\\\":\\\"Visit https://portal.libretranslate.com to get an API key\\\"}\\n\" (từ sandbox này POST /translate bị egress chặn policy_denied nên KHÔNG đo được phản hồi thật của server; bằng chứng \"cần API key (HTTP 400)\" lấy từ kiểm chứng độc lập 2026-10-27, xem fallback_chain_results.md)",
-      "seconds": 0.9
+      "seconds": 0.2
     },
     "bridge_google429_mymemory_note": {
       "ok": true,
@@ -78,12 +78,12 @@
     "browser_boot": {
       "ok": true,
       "detail": "boot tới Sẵn sàng (390px)",
-      "seconds": 6
+      "seconds": 6.2
     },
     "browser_google429_mymemory_ui": {
       "ok": true,
       "detail": "output hello=\"Xin chào thế giới\"; info: \"Đã dịch 1/1 chuỗi (Google: 1 đoạn · từ điển offline: 0 đoạn · bộ nhớ dịch: 0 chuỗi · khử trùng lặp: 0 đoạn · batch: 0 request, từng chuỗi: 1). Đã dùng fallback: MyMemory cho 1 chuỗi. Xong — bấm “Tải bản dịch (.json)” để lưu.\"; không hiện \"Lý do\" giả khi đã dịch xong qua fallback; route Google 429 đã chặn 8 request (worker fetch thật bị chặn, không phải mock trong code)",
-      "seconds": 14.7
+      "seconds": 14.9
     },
     "browser_all_fail_clear_error": {
       "ok": true,

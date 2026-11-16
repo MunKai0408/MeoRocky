@@ -1,0 +1,71 @@
+{
+  "when": "2026-11-16T11:45:53.313Z",
+  "failures": 0,
+  "results": {
+    "node_trace_ms_status": {
+      "ok": true,
+      "detail": "kết quả=\"Xin chào thế giới\"; google={ok:false, status:429, ms:7077, kind:http}; mymemory={ok:true, ms:5}; Google gọi 4 lần, MyMemory 1 lần",
+      "seconds": 7.1
+    },
+    "node_trace_proxy_ok": {
+      "ok": true,
+      "detail": "kết quả=\"VI qua proxy: Hello world\"; proxy={ok:true, ms:5}; proxy gọi 1 lần, Google 0 lần, MyMemory 0 lần",
+      "seconds": 0
+    },
+    "browser_boot": {
+      "ok": true,
+      "detail": "boot tới Sẵn sàng (390px, proxy giả đã cấu hình sẵn)",
+      "seconds": 7.4
+    },
+    "browser_diag_tab_full": {
+      "ok": true,
+      "detail": "appdiag-status: \"Khởi động: OK · 20 plugin (20 id) · font đi kèm: đủ 142/142Bộ nhớ ước tính: đã dùng 18 MB / hạn mức 433 MB · RAM thiết bị ~8 GBProviderTrạng tháiLần gọi gần nhấtProxy CloudflareĐã cấu hìnhchưa gọi lần nàoGoogle trực tiếpDùng sau proxychưa gọi lần nàoMyMemorySẵn sàng (không cần key)chưa gọi lần nàoLibreTranslateChưa cấu hình (mặc định tắt)chưa gọi lần nàoTừ điển offlineLuôn sẵn sàng (~100 từ/cụm)chưa gọi lần nào\"",
+      "seconds": 0.2
+    },
+    "browser_diag_proxy_configured_uncalled": {
+      "ok": true,
+      "detail": "hàng Proxy trước tự kiểm tra: \"Proxy CloudflareĐã cấu hìnhchưa gọi lần nào\"",
+      "seconds": 0.2
+    },
+    "browser_selftest_all_pass": {
+      "ok": true,
+      "detail": "6 mục (Khởi động PB3 | Danh sách plugin | Font đi kèm (142 mục) | Trích xuất thử (fixture) | Dịch thử 1 chuỗi | IndexedDB / KB); PASS 6/6; chi tiết: Khởi động PB3=PASS [Pyodide + PB3 đã khởi động, 20 plugin (0 ms)]; Danh sách plugin=PASS [20 plugin: apple_plist, apple_strings, cocos_detect, csv_table, defold_detect, … (0 ms)]; Font đi kèm (142 mục)=PASS [Be Vietnam Pro đủ 142/142 (527 glyph) (4 ms)]; Trích xuất thử (fixture)=PASS [English.json đủ 3 chuỗi (hello/start/settings), quyết định: done (737 ms)]; Dịch thử 1 chuỗi=PASS [provider: proxy — “Hello world” → “VI qua proxy: Hello world” (59 ms)]; IndexedDB / KB=PASS [ghi-đọc-xóa khóa thử __selftest__ trong IndexedDB OK (4 ms)]",
+      "seconds": 0.9
+    },
+    "browser_selftest_repeatable": {
+      "ok": true,
+      "detail": "lần 2: PASS 6/6 (nút bấm lại được, không treo UI)",
+      "seconds": 0.1
+    },
+    "browser_diag_last_call_after_selftest": {
+      "ok": true,
+      "detail": "hàng Proxy sau tự kiểm tra: \"Proxy CloudflareĐã cấu hìnhOK · 7 ms\"",
+      "seconds": 0
+    },
+    "browser_export_diag_json": {
+      "ok": true,
+      "detail": "file beartea-chan-doan.json (2483 byte): booted=true, plugins=20, quotaMB=433, proxy trace ok ms=7, selftest passed=6/6",
+      "seconds": 0.1
+    },
+    "browser_390_no_overflow_main": {
+      "ok": true,
+      "detail": "390px: scrollWidth=390 clientWidth=390 (không tràn)",
+      "seconds": 0
+    },
+    "browser_selftest_translate_fails_honestly": {
+      "ok": true,
+      "detail": "không proxy + sandbox không mạng ngoài: PASS 5/6; mục Dịch thử = FAIL thật, lỗi nguyên văn: \"Google lỗi mất mạng/CORS → MyMemory lỗi mất mạng/CORS · LibreTranslate chưa cấu hình (cần API key) — tất cả đều lỗi, dùng từ điển offline (~100 từ/cụm) nên hầu hết chuỗi sẽ giữ nguyên.\\n- Google: Không gọi được Google Translate (mất mạng hoặc trình duyệt chặn CORS).\\n- MyMemory: Không gọi được MyMe; không có mục nào bị ghi PASS giả",
+      "seconds": 8.8
+    },
+    "browser_diagnostics_page_export": {
+      "ok": true,
+      "detail": "xuất JSON có env (indexedDB=true); Google trực tiếp từ sandbox: ok=false, lỗi thật=\"fetch lỗi (mất mạng hoặc trình duyệt chặn CORS): Failed to fetch\" (không đứng im, không PASS giả)",
+      "seconds": 0.3
+    },
+    "browser_390_no_overflow_no_errors": {
+      "ok": true,
+      "detail": "diagnostics.html 390px: scrollWidth=390 clientWidth=390; pageerror cả 3 context: không có",
+      "seconds": 0
+    }
+  }
+}

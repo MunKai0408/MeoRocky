@@ -1,0 +1,99 @@
+{
+  "when": "2026-11-16T11:45:43.993Z",
+  "booted": true,
+  "boot": {
+    "ok": true,
+    "plugins": 20,
+    "plugin_ids": [
+      "apple_plist",
+      "apple_strings",
+      "cocos_detect",
+      "csv_table",
+      "defold_detect",
+      "gamemaker_detect",
+      "generic_strings",
+      "godot_pck",
+      "godot_translation",
+      "json_text",
+      "po_mo",
+      "properties",
+      "resx",
+      "sqlite_loc",
+      "unreal_locres",
+      "unreal_pak",
+      "xliff",
+      "xml_strings",
+      "yaml_ini",
+      "zip"
+    ],
+    "problems": []
+  },
+  "font_donor": {
+    "ok": true,
+    "family": "Be Vietnam Pro",
+    "kind": "ttf",
+    "num_glyphs": 527,
+    "total": 142,
+    "covered": 142,
+    "pct": 100,
+    "is_full": true,
+    "summary": "Be Vietnam Pro: đủ tiếng Việt (142/142 ký tự, 527 glyph)"
+  },
+  "memory": {
+    "quotaMB": 433,
+    "usageMB": 18
+  },
+  "device_memory_gb": 8,
+  "diag_state": {
+    "proxy_configured": true,
+    "libretranslate_configured": false,
+    "last_trace": [
+      {
+        "step": "proxy",
+        "ok": true,
+        "detail": "dịch qua proxy",
+        "ms": 7
+      }
+    ],
+    "pyodide_loaded": true,
+    "bridge_ready": true
+  },
+  "selftest": {
+    "when": "2026-11-16T11:45:43.888Z",
+    "passed": 6,
+    "total": 6,
+    "items": [
+      {
+        "name": "Khởi động PB3",
+        "status": "PASS",
+        "detail": "Pyodide + PB3 đã khởi động, 20 plugin (0 ms)"
+      },
+      {
+        "name": "Danh sách plugin",
+        "status": "PASS",
+        "detail": "20 plugin: apple_plist, apple_strings, cocos_detect, csv_table, defold_detect, … (0 ms)"
+      },
+      {
+        "name": "Font đi kèm (142 mục)",
+        "status": "PASS",
+        "detail": "Be Vietnam Pro đủ 142/142 (527 glyph) (5 ms)"
+      },
+      {
+        "name": "Trích xuất thử (fixture)",
+        "status": "PASS",
+        "detail": "English.json đủ 3 chuỗi (hello/start/settings), quyết định: done (54 ms)"
+      },
+      {
+        "name": "Dịch thử 1 chuỗi",
+        "status": "PASS",
+        "detail": "provider: proxy — “Hello world” → “VI qua proxy: Hello world” (8 ms)"
+      },
+      {
+        "name": "IndexedDB / KB",
+        "status": "PASS",
+        "detail": "ghi-đọc-xóa khóa thử __selftest__ trong IndexedDB OK (4 ms)"
+      }
+    ]
+  },
+  "ua": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/131.0.6778.33 Safari/537.36"
+}

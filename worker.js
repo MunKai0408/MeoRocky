@@ -17,10 +17,10 @@
 // supported"). Vì vậy file này dùng import ES module, không dùng cách nạp
 // script của worker classic.
 import { loadPyodide } from "./pyodide/pyodide.mjs";
-import { setTranslateProxyUrl, translateOneWithFallbacks,
+import { setTranslateProxyUrl, getTranslateProxyUrl, translateOneWithFallbacks,
          translateBatchWithFallbacks, abortGoogleTranslate,
          resetGoogleTranslateAbort, getFallbackTrace,
-         setLibreTranslateEndpoint, setLibreTranslateApiKey } from "./gt.js";
+         setLibreTranslateEndpoint, getLibreTranslateEndpoint, setLibreTranslateApiKey } from "./gt.js";
 
 const PYODIDE_INDEX = new URL("pyodide/", self.location.href).href;
 const PB3_ROOT = "/pb3web";
@@ -180,6 +180,37 @@ self.onmessage = async (ev) => {
       setLibreTranslateApiKey(typeof msg.apiKey === "string" ? msg.apiKey : "");
       postMessage({ id: msg.id, ok: true,
         result: JSON.stringify({ libretranslate: !!msg.endpoint }) });
+      return;
+    }
+    if (msg.op === "diag_state") {
+      // Mục C2: trạng thái chẩn đoán cho tab Chẩn đoán (không cần Pyodide
+      // đã boot — chỉ đọc cấu hình provider + dấu vết lần dịch gần nhất).
+      postMessage({ id: msg.id, ok: true, result: JSON.stringify({
+        proxy_configured: !!getTranslateProxyUrl(),
+        libretranslate_configured: !!getLibreTranslateEndpoint(),
+        last_trace: getFallbackTrace(),
+        pyodide_loaded: !!pyodide, bridge_ready: !!bridge,
+      }) });
+      return;
+    }
+    if (msg.op === "diag_translate_probe") {
+      // Mục C2: dịch thử 1 chuỗi "Hello world" qua đủ chuỗi fallback C1
+      // (proxy -> Google -> MyMemory -> LibreTranslate nếu có). Trả ok:true
+      // ở tầng message CẢ KHI dịch thất bại để app.js hiện FAIL kèm lỗi
+      // thật + trace từng bước, thay vì ném exception chung chung.
+      const t0 = performance.now();
+      try {
+        const text = await translateOneWithFallbacks("Hello world", "en", "vi");
+        const trace = getFallbackTrace();
+        const used = trace.find((e) => e.ok && !e.skipped);
+        postMessage({ id: msg.id, ok: true, result: JSON.stringify({
+          ok: true, text, provider: used ? used.step : null,
+          ms: Math.round(performance.now() - t0), trace }) });
+      } catch (e) {
+        postMessage({ id: msg.id, ok: true, result: JSON.stringify({
+          ok: false, error: String(e && e.message || e), kind: e && e.kind,
+          ms: Math.round(performance.now() - t0), trace: getFallbackTrace() }) });
+      }
       return;
     }
     if (msg.op === "boot") {

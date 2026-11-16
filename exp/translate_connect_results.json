@@ -1,11 +1,11 @@
 {
-  "when": "2026-11-16T08:25:02.087Z",
+  "when": "2026-11-16T11:46:30.082Z",
   "failures": 0,
   "results": {
     "node_google_mock_success_progress": {
       "ok": true,
       "detail": "translated_by=mixed google_count=3 glossary_count=2 play=\"Chơi\" hello=\"VI[Hello]\"; tiến trình translate: 4 event, cuối 5/5 (cần đủ 5 chuỗi)",
-      "seconds": 0.4
+      "seconds": 0.6
     },
     "node_google_error_falls_back_offline": {
       "ok": true,
@@ -19,28 +19,28 @@
     },
     "node_offline_1000_time": {
       "ok": true,
-      "detail": "dịch offline 1000 chuỗi xong trong 21ms (0s) — total=1000, untranslated=1000 (từ điển offline chỉ biết ~100 từ/cụm nên hầu hết giữ nguyên là ĐÚNG, không phải lỗi)",
+      "detail": "dịch offline 1000 chuỗi xong trong 29ms (0s) — total=1000, untranslated=1000 (từ điển offline chỉ biết ~100 từ/cụm nên hầu hết giữ nguyên là ĐÚNG, không phải lỗi)",
       "seconds": 0
     },
     "node_live_google_real_result": {
       "ok": true,
       "detail": "Google trả HTTP 200, JSON dịch được: [[[\"chơi\",\"play\",null,null,4]],null,\"en\",null,null,null,null,[]] — Google dịch được từ IP máy chủ",
-      "seconds": 1
+      "seconds": 0.8
     },
     "browser_boot_proxy_set": {
       "ok": true,
-      "detail": "boot tới Sẵn sàng; proxy dịch giả đặt qua localStorage + ô nhập: http://127.0.0.1:38089/translate-proxy",
-      "seconds": 7.2
+      "detail": "boot tới Sẵn sàng; proxy dịch giả đặt qua localStorage + ô nhập: http://127.0.0.1:43733/translate-proxy",
+      "seconds": 9.4
     },
     "browser_extract_connects_translate": {
       "ok": true,
       "detail": "download extract.zip; chế độ mặc định Tự động: true; locale mặc định: both; kết quả có dòng nguồn bundle: true; có nút \"Dịch sang tiếng Việt\": true; dropdown Dịch mặc định: English.json; ô dịch nạp sẵn en.json (Welcome to 9 Kings!): true; banner rỗng ẩn khi đã có nội dung: true",
-      "seconds": 0.6
+      "seconds": 1.1
     },
     "browser_translate_button_loads_zh": {
       "ok": true,
       "detail": "bấm nút Dịch trên Chinese.json -> tab Dịch mở, ô dịch chứa 你好, dropdown chuyển sang: Chinese.json",
-      "seconds": 0.1
+      "seconds": 0.2
     },
     "browser_empty_banner": {
       "ok": true,
@@ -50,12 +50,12 @@
     "browser_offline_5strings": {
       "ok": true,
       "detail": "dịch offline 5 chuỗi xong; info: \"Dịch bằng từ điển offline: 5 chuỗi. Chưa dịch được 3 chuỗi. Đã gắn credit 'Việt Hoá Bởi Bear' vào key: title.\"…; output có Chơi/Thoát",
-      "seconds": 0.2
+      "seconds": 0.4
     },
     "browser_google_1000_estimate_and_cancel": {
       "ok": true,
-      "detail": "dialog ước tính: \"File có 1000 chuỗi. Dịch Google theo batch 100 chuỗi/request — ước tính khoảng 15 giây (có thể lâu hơn nếu mạng chậm; nếu Google không nhận batch thì tool tự rơi về từng chuỗi, sẽ chậm hơn nhiều). Bấm OK để dịch tiếp, hoặc Hủy để dịch offline / chia nhỏ file.\" (cần \"1000 chuỗi\" + \"ước tính khoảng\" + \"batch\" + \"15 giây\"); tốc độ thật: 100 chuỗi/0.3s ≈ 306.60 chuỗi/giây -> 1000 chuỗi ≈ 3.3 giây; sau Hủy: 100/1000 chuỗi đã dịch (giữ lại phần đã dịch, không mất); tải phần đã dịch: translated.vi.json với 100 chuỗi VI:",
-      "seconds": 0.6
+      "detail": "dialog ước tính: \"File có 1000 chuỗi. Dịch Google theo batch 100 chuỗi/request — ước tính khoảng 15 giây (có thể lâu hơn nếu mạng chậm; nếu Google không nhận batch thì tool tự rơi về từng chuỗi, sẽ chậm hơn nhiều). Bấm OK để dịch tiếp, hoặc Hủy để dịch offline / chia nhỏ file.\" (cần \"1000 chuỗi\" + \"ước tính khoảng\" + \"batch\" + \"15 giây\"); tốc độ thật: 100 chuỗi/0.4s ≈ 277.92 chuỗi/giây -> 1000 chuỗi ≈ 3.6 giây; sau Hủy: 100/1000 chuỗi đã dịch (giữ lại phần đã dịch, không mất); tải phần đã dịch: translated.vi.json với 100 chuỗi VI:",
+      "seconds": 0.7
     },
     "browser_390_no_overflow_no_errors": {
       "ok": true,
@@ -63,7 +63,7 @@
       "seconds": 0
     }
   },
-  "offline1000Ms": 21,
-  "googleRate": 306.5952137936266,
-  "googleEta1000": 3.2616295199999876
+  "offline1000Ms": 29,
+  "googleRate": 277.9219930439806,
+  "googleEta1000": 3.598131939999984
 }

@@ -654,6 +654,19 @@
     Asset nhị phân (texture/âm thanh): chỉ đọc, dùng bản iSH.</p>
     <button id="btn-diagnose-run">Chẩn đoán</button>
     <div id="diagnose-result"></div>
+
+    <h3>Chẩn đoán ứng dụng</h3>
+    <p class="note">Trạng thái khởi động, bộ nhớ và từng provider dịch — mỗi
+    provider hiện lần gọi gần nhất (HTTP status, thời gian, tên lỗi nếu có).
+    Muốn thử trực tiếp từng provider từ trình duyệt thì mở
+    <a href="diagnostics.html">Trang Kiểm tra dịch</a>.</p>
+    <p>
+      <button id="btn-appdiag-refresh">Làm mới trạng thái</button>
+      <button id="btn-selftest-run">Tự kiểm tra</button>
+      <button id="btn-appdiag-export" class="secondary">Xuất JSON chẩn đoán</button>
+    </p>
+    <div id="appdiag-status"><p class="note">Chưa tải trạng thái — bấm “Làm mới trạng thái” hoặc “Tự kiểm tra”.</p></div>
+    <div id="selftest-result"></div>
   </div>
 </section>
 

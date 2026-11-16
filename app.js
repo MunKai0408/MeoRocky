@@ -853,8 +853,10 @@ function showTab(name) {
   }
   // Mở tab Trích xuất thì tải danh sách file để chọn tay (nếu đã chọn
   // file và danh sách chưa có); mở tab Dịch thì đồng bộ banner rỗng.
+  // Mở tab Chẩn đoán thì làm mới trạng thái ứng dụng (mục C2).
   if (name === "extract") maybeRefreshExtractFileList();
   if (name === "translate") { syncTranslateEmptyBanner(); refreshTranslateResumeBar(); }
+  if (name === "diagnose") refreshAppDiag();
 }
 for (const t of tabs) {
   $("btn-" + t).addEventListener("click", () => {
@@ -2893,6 +2895,221 @@ $("btn-diagnose-run").addEventListener("click", async () => {
     $("diagnose-result").innerHTML = html;
   } catch (e) { /* đã báo lỗi */ }
 });
+
+// ---- Chẩn đoán ứng dụng (mục C2) ----
+// Trạng thái provider dịch lấy từ worker (op diag_state: cấu hình +
+// dấu vết lần dịch gần nhất của chuỗi fallback C1, đã giàu ms/status/
+// errName/kind từ gt.js); boot/font từ state.bootInfo; bộ nhớ từ
+// navigator.storage.estimate(). "Tự kiểm tra" chạy 6 mục THẬT (boot,
+// plugin, font, trích xuất fixture, dịch thử, IndexedDB) — mục nào chưa
+// chạy được thì ghi "chưa kiểm chứng", không ghi PASS giả.
+const APPDIAG_PROVIDERS = [
+  { id: "proxy", label: "Proxy Cloudflare" },
+  { id: "google", label: "Google trực tiếp" },
+  { id: "mymemory", label: "MyMemory" },
+  { id: "libretranslate", label: "LibreTranslate" },
+  { id: "offline", label: "Từ điển offline" },
+];
+const SELFTEST_FIXTURE = "fixtures/selftest.zip";
+const SELFTEST_TEXT = { hello: "Hello world", start: "Start game", settings: "Settings" };
+
+function appdiagTraceEntry(trace, step) {
+  const tr = Array.isArray(trace) ? trace : [];
+  return tr.find((e) => e && e.step === step) || null;
+}
+
+function appdiagProviderRows(diagState) {
+  const trace = diagState ? diagState.last_trace : null;
+  let html = "<table><tr><th>Provider</th><th>Trạng thái</th><th>Lần gọi gần nhất</th></tr>";
+  for (const p of APPDIAG_PROVIDERS) {
+    let status;
+    const e = appdiagTraceEntry(trace, p.id);
+    if (p.id === "proxy") {
+      status = diagState && diagState.proxy_configured ? "Đã cấu hình" : "Chưa cấu hình";
+    } else if (p.id === "libretranslate") {
+      status = diagState && diagState.libretranslate_configured ? "Đã cấu hình" : "Chưa cấu hình (mặc định tắt)";
+    } else if (p.id === "google") {
+      status = diagState && diagState.proxy_configured ? "Dùng sau proxy" : "Sẵn sàng (gọi trực tiếp)";
+    } else if (p.id === "mymemory") {
+      status = "Sẵn sàng (không cần key)";
+    } else {
+      status = "Luôn sẵn sàng (~100 từ/cụm)";
+    }
+    let last;
+    if (!e) {
+      last = "chưa gọi lần nào";
+    } else if (e.skipped) {
+      last = "bỏ qua — " + (e.detail || "");
+    } else if (e.ok) {
+      last = "OK" + (e.ms != null ? " · " + e.ms + " ms" : "");
+    } else {
+      last = "lỗi" + (e.status != null ? " · HTTP " + e.status : "") +
+        (e.ms != null ? " · " + e.ms + " ms" : "") +
+        (e.errName ? " · " + e.errName : "") +
+        (e.kind ? " (" + e.kind + ")" : "") +
+        (e.detail ? " — " + e.detail : "");
+    }
+    html += "<tr><td>" + esc(p.label) + "</td><td>" + esc(status) + "</td><td>" + esc(last) + "</td></tr>";
+  }
+  html += "</table>";
+  return html;
+}
+
+async function refreshAppDiag() {
+  const box = $("appdiag-status");
+  if (!box) return;
+  let diagState = null, diagError = null;
+  try {
+    const msg = await callWorkerRaw("diag_state", {});
+    diagState = JSON.parse(msg.result);
+  } catch (e) { diagError = e; }
+  let mem = null;
+  try {
+    const s = await navigator.storage.estimate();
+    mem = { quotaMB: Math.round(s.quota / 1048576), usageMB: Math.round(s.usage / 1048576) };
+  } catch (e) { /* không đọc được quota */ }
+  let html = "";
+  if (state.booted && state.bootInfo) {
+    const b = state.bootInfo, d = state.donor;
+    html += "<p>Khởi động: <b>OK</b> · " + b.plugins + " plugin" +
+      (Array.isArray(b.plugin_ids) ? " (" + b.plugin_ids.length + " id)" : "") +
+      " · font đi kèm: " + (d && d.is_full ? "đủ " + d.covered + "/" + d.total : "chưa đủ 142/142 — xem tab Font") + "</p>";
+  } else {
+    html += "<p>Khởi động: <b>chưa khởi động</b> — Pyodide + PB3 chỉ tải khi cần (chọn file hoặc bấm “Tự kiểm tra”).</p>";
+  }
+  html += "<p>Bộ nhớ ước tính: " +
+    (mem ? "đã dùng " + mem.usageMB + " MB / hạn mức " + mem.quotaMB + " MB" : "không đọc được") +
+    (navigator.deviceMemory ? " · RAM thiết bị ~" + navigator.deviceMemory + " GB" : "") + "</p>";
+  if (diagError) {
+    html += "<p class=warn>Không đọc được trạng thái worker: " + esc(diagError.message) + "</p>";
+  } else {
+    html += appdiagProviderRows(diagState);
+  }
+  box.innerHTML = html;
+  state.lastDiag = {
+    when: new Date().toISOString(),
+    booted: state.booted,
+    boot: state.bootInfo || null,
+    font_donor: state.donor || null,
+    memory: mem,
+    device_memory_gb: navigator.deviceMemory || null,
+    diag_state: diagState,
+    selftest: state.lastSelfTest || null,
+  };
+}
+
+async function runSelfTest() {
+  const btn = $("btn-selftest-run");
+  const box = $("selftest-result");
+  if (!btn || !box || btn.disabled) return;
+  btn.disabled = true;
+  const items = [];
+  const render = () => {
+    let html = "<h3>Kết quả tự kiểm tra</h3><table><tr><th>Mục</th><th>Kết quả</th><th>Chi tiết</th></tr>";
+    for (const it of items) {
+      html += "<tr><td>" + esc(it.name) + "</td><td><b>" + esc(it.status) + "</b></td><td>" + esc(it.detail || "") + "</td></tr>";
+    }
+    html += "</table>";
+    box.innerHTML = html;
+  };
+  const check = async (name, fn) => {
+    const it = { name, status: "ĐANG CHẠY…", detail: "" };
+    items.push(it); render();
+    const t0 = performance.now();
+    try {
+      it.detail = await fn();
+      it.status = "PASS";
+    } catch (e) {
+      it.status = "FAIL";
+      it.detail = String(e && e.message ? e.message : e);
+    }
+    it.detail += " (" + Math.round(performance.now() - t0) + " ms)";
+    render();
+  };
+  try {
+    await check("Khởi động PB3", async () => {
+      const info = await ensureBoot();
+      if (!info || !info.ok) throw new Error("boot trả về không OK");
+      return "Pyodide + PB3 đã khởi động, " + info.plugins + " plugin";
+    });
+    await check("Danh sách plugin", async () => {
+      const b = state.bootInfo;
+      if (!b) throw new Error("chưa có thông tin boot");
+      if (!Array.isArray(b.plugin_ids) || !b.plugin_ids.length) throw new Error("không đọc được danh sách plugin");
+      if (b.plugin_ids.length !== b.plugins) throw new Error("số plugin (" + b.plugins + ") khác số id (" + b.plugin_ids.length + ")");
+      return b.plugins + " plugin: " + b.plugin_ids.slice(0, 5).join(", ") + (b.plugin_ids.length > 5 ? ", …" : "");
+    });
+    await check("Font đi kèm (142 mục)", async () => {
+      const msg = await callWorker("run", { fn: "font_donor_info", args: ["/pb3web/fonts/BeVietnamPro-Regular.ttf"] });
+      const p = JSON.parse(msg.result);
+      if (p && p.ok === false) throw new Error(p.error || "font_donor_info lỗi");
+      if (!p.is_full) throw new Error("font thiếu: " + p.covered + "/" + p.total);
+      return "Be Vietnam Pro đủ " + p.covered + "/" + p.total + " (" + p.num_glyphs + " glyph)";
+    });
+    await check("Trích xuất thử (fixture)", async () => {
+      const res = await fetch(SELFTEST_FIXTURE);
+      if (!res.ok) throw new Error("không tải được fixture tự kiểm tra (HTTP " + res.status + ")");
+      const data = await res.arrayBuffer();
+      const msg = await callWorker("run", { fn: "extract", args: ["/tmp/input/selftest.zip", null, ["en"]], files: [{ name: "selftest.zip", data }] });
+      const parsed = JSON.parse(msg.result);
+      if (parsed && parsed.ok === false) throw new Error(parsed.error || "extract lỗi");
+      const f = (parsed.files || []).find((x) => x && x.exported === "English.json");
+      if (!f) throw new Error("extract không ra English.json (được " + (parsed.files || []).length + " file)");
+      const got = await callWorker("run", { fn: "read_extracted", args: ["English.json"] });
+      const rp = JSON.parse(got.result);
+      if (rp && rp.ok === false) throw new Error(rp.error || "không đọc được English.json");
+      const kv = JSON.parse(rp.text);
+      for (const [k, v] of Object.entries(SELFTEST_TEXT)) {
+        if (kv[k] !== v) throw new Error("English.json thiếu/sai key " + k + " (được " + JSON.stringify(kv[k]) + ")");
+      }
+      return "English.json đủ 3 chuỗi (hello/start/settings), quyết định: " + parsed.decision;
+    });
+    await check("Dịch thử 1 chuỗi", async () => {
+      const msg = await callWorkerRaw("diag_translate_probe", {});
+      const p = JSON.parse(msg.result);
+      if (!p.ok) throw new Error(p.error || "dịch thử lỗi");
+      return "provider: " + (p.provider || "?") + " — “Hello world” → “" + p.text + "”";
+    });
+    await check("IndexedDB / KB", async () => {
+      if (typeof KBStore === "undefined") throw new Error("KBStore chưa nạp (kb-store.js)");
+      const probe = new KBStore("__selftest__", { debounceMs: 0 });
+      const bytes = new Uint8Array([66, 101, 97, 114, 84, 101, 97]);
+      try {
+        await probe.saveNow(bytes);
+        const back = await probe.load();
+        if (!back || back.length !== bytes.length) throw new Error("đọc lại được " + (back ? back.length : 0) + " byte, cần " + bytes.length);
+        for (let i = 0; i < bytes.length; i++) if (back[i] !== bytes[i]) throw new Error("byte " + i + " khác nhau khi đọc lại");
+        return "ghi-đọc-xóa khóa thử __selftest__ trong IndexedDB OK";
+      } finally {
+        try { await probe.clear(); } catch (e) { /* dọn dẹp thất bại thì thôi */ }
+      }
+    });
+  } finally {
+    btn.disabled = false;
+  }
+  const passed = items.filter((i) => i.status === "PASS").length;
+  state.lastSelfTest = { when: new Date().toISOString(), passed, total: items.length,
+    items: items.map((i) => ({ name: i.name, status: i.status, detail: i.detail })) };
+  await refreshAppDiag();
+}
+
+$("btn-appdiag-refresh").addEventListener("click", () => { refreshAppDiag(); });
+$("btn-selftest-run").addEventListener("click", () => { runSelfTest(); });
+$("btn-appdiag-export").addEventListener("click", async () => {
+  if (!state.lastDiag) await refreshAppDiag();
+  const payload = Object.assign({}, state.lastDiag, {
+    when: new Date().toISOString(),
+    selftest: state.lastSelfTest || null,
+    ua: navigator.userAgent,
+  });
+  download("beartea-chan-doan.json", JSON.stringify(payload, null, 2));
+});
+
+// Hook cho harness/debug: trạng thái chẩn đoán gần nhất để kiểm chứng
+// xuất JSON mà không cần đoán qua nút Lưu/Chia sẻ.
+if (typeof window !== "undefined") {
+  window.__PB3_LAST_DIAG = () => state.lastDiag || null;
+}
 
 function esc(s) {
   return String(s == null ? "" : s).replace(/[&<>"']/g, (c) => (

@@ -186,29 +186,31 @@ export async function libreTranslateOne(text, src, dst) {
     }
   } catch (e) {
     if (e && e.name === "AbortError") {
-      throw gtError("libretranslate", "LibreTranslate quá thời gian chờ (15 giây).");
+      throw gtError("libretranslate", "LibreTranslate quá thời gian chờ (15 giây).", { errName: e.name });
     }
-    throw gtError("libretranslate", "Không gọi được LibreTranslate (mất mạng hoặc chặn CORS).");
+    throw gtError("libretranslate", "Không gọi được LibreTranslate (mất mạng hoặc chặn CORS).", { errName: e.name });
   }
   let data = null;
   try { data = await res.json(); } catch (e) { /* body không phải JSON */ }
   if (res.status === 400) {
     throw gtError("libretranslate",
       "LibreTranslate từ chối (HTTP 400): " +
-      ((data && data.error) || "bản public cần API key — lấy key ở portal.libretranslate.com hoặc tự host instance riêng.") + ".");
+      ((data && data.error) || "bản public cần API key — lấy key ở portal.libretranslate.com hoặc tự host instance riêng.") + ".",
+      { status: res.status });
   }
   if (res.status === 403) {
     throw gtError("libretranslate",
       "LibreTranslate từ chối (HTTP 403): " +
-      ((data && data.error) || "API key sai hoặc IP bị chặn.") + ".");
+      ((data && data.error) || "API key sai hoặc IP bị chặn.") + ".",
+      { status: res.status });
   }
   if (res.status === 429) {
-    const e = gtError("libretranslate", "LibreTranslate giới hạn tốc độ (HTTP 429).");
+    const e = gtError("libretranslate", "LibreTranslate giới hạn tốc độ (HTTP 429).", { status: res.status });
     e.retryable = true;
     throw e;
   }
   if (!res.ok) {
-    throw gtError("libretranslate", "LibreTranslate trả HTTP " + res.status + ".");
+    throw gtError("libretranslate", "LibreTranslate trả HTTP " + res.status + ".", { status: res.status });
   }
   if (!data || typeof data.translatedText !== "string") {
     throw gtError("libretranslate", "LibreTranslate trả về thiếu bản dịch.");
@@ -285,12 +287,12 @@ export async function myMemoryTranslateOne(text, src, dst) {
     }
   } catch (e) {
     if (e && e.name === "AbortError") {
-      throw gtError("mymemory", "MyMemory quá thời gian chờ (10 giây).");
+      throw gtError("mymemory", "MyMemory quá thời gian chờ (10 giây).", { errName: e.name });
     }
-    throw gtError("mymemory", "Không gọi được MyMemory (mất mạng hoặc chặn CORS).");
+    throw gtError("mymemory", "Không gọi được MyMemory (mất mạng hoặc chặn CORS).", { errName: e.name });
   }
   if (!res.ok) {
-    throw gtError("mymemory", "MyMemory trả HTTP " + res.status + ".");
+    throw gtError("mymemory", "MyMemory trả HTTP " + res.status + ".", { status: res.status });
   }
   let data;
   try {
@@ -331,15 +333,15 @@ export async function proxyTranslateOne(text, src, dst, url) {
     }
   } catch (e) {
     if (e && e.name === "AbortError") {
-      throw gtError("proxy", "Proxy dịch quá thời gian chờ (20 giây).");
+      throw gtError("proxy", "Proxy dịch quá thời gian chờ (20 giây).", { errName: e.name });
     }
-    throw gtError("proxy", "Không gọi được proxy dịch (mất mạng hoặc sai URL).");
+    throw gtError("proxy", "Không gọi được proxy dịch (mất mạng hoặc sai URL).", { errName: e.name });
   }
   let data;
   try {
     data = await res.json();
   } catch (e) {
-    throw gtError("proxy", "Proxy dịch trả về dữ liệu không đọc được (HTTP " + res.status + ").");
+    throw gtError("proxy", "Proxy dịch trả về dữ liệu không đọc được (HTTP " + res.status + ").", { status: res.status });
   }
   if (data && data.ok === true && typeof data.translated === "string") {
     return data.translated;
@@ -350,10 +352,12 @@ export async function proxyTranslateOne(text, src, dst, url) {
       "Proxy dịch: đã hết 500.000 ký tự miễn phí của tháng " +
       "(đã dùng " + (data.month_used != null ? data.month_used : "?") +
       "/" + (data.month_limit != null ? data.month_limit : "?") +
-      ") — tự rơi về MyMemory (+ LibreTranslate nếu đã cấu hình) + từ điển offline, không phát sinh phí.");
+      ") — tự rơi về MyMemory (+ LibreTranslate nếu đã cấu hình) + từ điển offline, không phát sinh phí.",
+      { status: res.status });
   }
   throw gtError("proxy",
-    "Proxy dịch lỗi (" + code + "): " + ((data && data.error) || ("HTTP " + res.status)) + ".");
+    "Proxy dịch lỗi (" + code + "): " + ((data && data.error) || ("HTTP " + res.status)) + ".",
+    { status: res.status });
 }
 
 // Dịch 1 batch qua proxy Cloudflare Worker (xem cloudflare/worker.js):
@@ -388,16 +392,16 @@ export async function proxyTranslateBatch(texts, src, dst, url) {
     }
   } catch (e) {
     if (e && e.name === "AbortError") {
-      if (consumeUserAbort()) throw gtError("cancelled", "Đã hủy dịch theo yêu cầu.");
-      throw gtError("timeout", "Proxy dịch quá thời gian chờ (20 giây).");
+      if (consumeUserAbort()) throw gtError("cancelled", "Đã hủy dịch theo yêu cầu.", { errName: e.name });
+      throw gtError("timeout", "Proxy dịch quá thời gian chờ (20 giây).", { errName: e.name });
     }
-    throw gtError("proxy", "Không gọi được proxy dịch (mất mạng hoặc sai URL).");
+    throw gtError("proxy", "Không gọi được proxy dịch (mất mạng hoặc sai URL).", { errName: e.name });
   }
   let data;
   try {
     data = await res.json();
   } catch (e) {
-    throw gtError("proxy", "Proxy dịch trả về dữ liệu không đọc được (HTTP " + res.status + ").");
+    throw gtError("proxy", "Proxy dịch trả về dữ liệu không đọc được (HTTP " + res.status + ").", { status: res.status });
   }
   if (data && data.ok === true && Array.isArray(data.translated) &&
       data.translated.length === textsArr.length &&
@@ -410,10 +414,12 @@ export async function proxyTranslateBatch(texts, src, dst, url) {
       "Proxy dịch: đã hết 500.000 ký tự miễn phí của tháng " +
       "(đã dùng " + (data.month_used != null ? data.month_used : "?") +
       "/" + (data.month_limit != null ? data.month_limit : "?") +
-      ") — tự rơi về MyMemory (+ LibreTranslate nếu đã cấu hình) + từ điển offline, không phát sinh phí.");
+      ") — tự rơi về MyMemory (+ LibreTranslate nếu đã cấu hình) + từ điển offline, không phát sinh phí.",
+      { status: res.status });
   }
   throw gtError("proxy",
-    "Proxy dịch lỗi (" + code + "): " + ((data && data.error) || ("HTTP " + res.status)) + ".");
+    "Proxy dịch lỗi (" + code + "): " + ((data && data.error) || ("HTTP " + res.status)) + ".",
+    { status: res.status });
 }
 
 // Chuỗi fallback đầy đủ mà worker.js gán cho Python (pb3_google_translate):
@@ -435,6 +441,14 @@ export async function translateOneWithFallbacks(text, src, dst) {
     if (extra) Object.assign(e, extra);
     trace.push(e);
   };
+  // Mục C2: mỗi bước ghi thêm thời gian (ms), HTTP status và tên lỗi gốc
+  // (errName) / kind để trang Chẩn đoán hiện lần gọi gần nhất.
+  const noteOk = (step, detail, t0) =>
+    note(step, true, detail, { ms: Math.round(performance.now() - t0) });
+  const noteErr = (step, e, t0, shortText) =>
+    note(step, false, e.message, { short: shortText,
+      ms: Math.round(performance.now() - t0),
+      status: e.status, errName: e.errName, kind: e.kind });
   const short = (msg) => {
     if (/API key/i.test(String(msg))) return "cần API key";
     const m = String(msg || "").match(/HTTP \d+/);
@@ -445,38 +459,44 @@ export async function translateOneWithFallbacks(text, src, dst) {
     return String(msg || "").split("\n")[0].slice(0, 40) || "?";
   };
   if (proxyUrl) {
+    const t0 = performance.now();
     try {
       const out = await proxyTranslateOne(text, src, dst, proxyUrl);
-      note("proxy", true, "dịch qua proxy");
+      noteOk("proxy", "dịch qua proxy", t0);
       return out;
     } catch (e) {
       if (e && e.kind === "quota") quotaHit = true;
-      note("proxy", false, e.message, { short: e.kind === "quota" ? "hết hạn mức tháng" : short(e.message) });
+      noteErr("proxy", e, t0, e.kind === "quota" ? "hết hạn mức tháng" : short(e.message));
     }
   }
   if (!quotaHit) {
+    const t0 = performance.now();
     try {
       const out = await googleTranslateOne(text, src, dst);
-      note("google", true, "dịch qua Google");
+      noteOk("google", "dịch qua Google", t0);
       return out;
     } catch (e) {
-      note("google", false, e.message, { short: short(e.message) });
+      noteErr("google", e, t0, short(e.message));
     }
   }
-  try {
-    const out = await myMemoryTranslateOne(text, src, dst);
-    note("mymemory", true, "dịch qua MyMemory");
-    return out;
-  } catch (e) {
-    note("mymemory", false, e.message, { short: short(e.message) });
-  }
-  if (libreTranslateEndpoint) {
+  {
+    const t0 = performance.now();
     try {
-      const out = await libreTranslateOne(text, src, dst);
-      note("libretranslate", true, "dịch qua LibreTranslate");
+      const out = await myMemoryTranslateOne(text, src, dst);
+      noteOk("mymemory", "dịch qua MyMemory", t0);
       return out;
     } catch (e) {
-      note("libretranslate", false, e.message, { short: short(e.message) });
+      noteErr("mymemory", e, t0, short(e.message));
+    }
+  }
+  if (libreTranslateEndpoint) {
+    const t0 = performance.now();
+    try {
+      const out = await libreTranslateOne(text, src, dst);
+      noteOk("libretranslate", "dịch qua LibreTranslate", t0);
+      return out;
+    } catch (e) {
+      noteErr("libretranslate", e, t0, short(e.message));
     }
   } else {
     note("libretranslate", false,
@@ -507,6 +527,13 @@ export async function translateBatchWithFallbacks(texts, src, dst) {
     if (extra) Object.assign(e, extra);
     trace.push(e);
   };
+  // Mục C2: như bản đơn — mỗi bước ghi thêm ms / status / errName / kind.
+  const noteOk = (step, detail, t0) =>
+    note(step, true, detail, { ms: Math.round(performance.now() - t0) });
+  const noteErr = (step, e, t0, shortText) =>
+    note(step, false, e.message, { short: shortText,
+      ms: Math.round(performance.now() - t0),
+      status: e.status, errName: e.errName, kind: e.kind });
   const short = (msg) => {
     if (/API key/i.test(String(msg))) return "cần API key";
     const m = String(msg || "").match(/HTTP \d+/);
@@ -515,22 +542,24 @@ export async function translateBatchWithFallbacks(texts, src, dst) {
     return String(msg || "").split("\n")[0].slice(0, 40) || "?";
   };
   if (proxyUrl) {
+    const t0 = performance.now();
     try {
       const out = await proxyTranslateBatch(arr, src, dst, proxyUrl);
-      note("proxy", true, "dịch batch qua proxy");
+      noteOk("proxy", "dịch batch qua proxy", t0);
       return JSON.stringify({ translations: out, mode: "proxy-batch" });
     } catch (e) {
       if (e && e.kind === "quota") quotaHit = true;
-      note("proxy", false, e.message, { short: e.kind === "quota" ? "hết hạn mức tháng" : short(e.message) });
+      noteErr("proxy", e, t0, e.kind === "quota" ? "hết hạn mức tháng" : short(e.message));
     }
   }
   if (!quotaHit) {
+    const t0 = performance.now();
     try {
       const out = await googleTranslateBatch(arr, src, dst);
-      note("google", true, "dịch batch qua Google");
+      noteOk("google", "dịch batch qua Google", t0);
       return JSON.stringify({ translations: out, mode: "gtx-joined" });
     } catch (e) {
-      note("google", false, e.message, { short: short(e.message) });
+      noteErr("google", e, t0, short(e.message));
     }
   }
   note("mymemory", false,
@@ -547,9 +576,13 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function gtError(kind, message) {
+function gtError(kind, message, extra) {
   const e = new Error(message);
   e.kind = kind;
+  // Mục C2: gắn thêm thông tin để trace chẩn đoán ghi được HTTP status /
+  // tên lỗi gốc (errName) — bridge/UI chỉ đọc kind/message nên không đổi
+  // hành vi fallback.
+  if (extra) Object.assign(e, extra);
   return e;
 }
 
@@ -610,20 +643,23 @@ async function gtxFetchOnce(q, usePost, src, dst) {
     }
   } catch (e) {
     if (e && e.name === "AbortError") {
-      if (consumeUserAbort()) throw gtError("cancelled", "Đã hủy dịch theo yêu cầu.");
-      throw gtError("timeout", "Google Translate quá thời gian chờ (20 giây).");
+      if (consumeUserAbort()) throw gtError("cancelled", "Đã hủy dịch theo yêu cầu.", { errName: e.name });
+      throw gtError("timeout", "Google Translate quá thời gian chờ (20 giây).", { errName: e.name });
     }
     throw gtError("network",
-      "Không gọi được Google Translate (mất mạng hoặc trình duyệt chặn CORS).");
+      "Không gọi được Google Translate (mất mạng hoặc trình duyệt chặn CORS).",
+      { errName: e.name });
   }
   if (res.status === 429 || (res.status >= 500 && res.status <= 504)) {
     const e = gtError("http",
-      "Google Translate giới hạn tốc độ (HTTP " + res.status + ").");
+      "Google Translate giới hạn tốc độ (HTTP " + res.status + ").",
+      { status: res.status });
     e.retryable = true;
     throw e;
   }
   if (!res.ok) {
-    throw gtError("http", "Google Translate trả HTTP " + res.status + ".");
+    throw gtError("http", "Google Translate trả HTTP " + res.status + ".",
+      { status: res.status });
   }
   const body = await res.text();
   const trimmed = body.trimStart();

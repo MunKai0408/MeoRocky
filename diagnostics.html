@@ -10,7 +10,7 @@
   h1{font-size:20px}
   button{font:inherit;padding:10px 14px;margin:4px 4px 4px 0;border-radius:8px;border:1px solid #555;background:#2f81f7;color:#fff;cursor:pointer}
   button.secondary{background:#303a45}
-  input[type=text]{width:100%;background:#0d1117;color:#e8ecf0;border:1px solid #2a343f;border-radius:8px;padding:9px;font-size:14px;font-family:ui-monospace,monospace}
+  input[type=text]{width:100%;box-sizing:border-box;background:#0d1117;color:#e8ecf0;border:1px solid #2a343f;border-radius:8px;padding:9px;font-size:14px;font-family:ui-monospace,monospace}
   pre{background:#0d1117;color:#c9f5d3;padding:12px;border-radius:8px;overflow:auto;white-space:pre-wrap;font-size:13px}
   .note{color:#9aa7b4;font-size:13px}
   @media (prefers-color-scheme:light){body{background:#fff;color:#111}pre{background:#111;color:#0f0}input[type=text]{background:#fff;color:#111;border-color:#888}}
@@ -60,6 +60,7 @@ endpoint + key vào trình duyệt để tab Dịch ở trang chính dùng luôn
 
 <h2>Kết quả</h2>
 <button id="btn-copy">Sao chép kết quả</button>
+<button id="btn-export" class="secondary">Xuất JSON</button>
 <pre id="out">Chưa chạy. Bấm 1 nút kiểm tra ở trên.</pre>
 
 <script type="module">
@@ -277,6 +278,25 @@ document.getElementById("btn-copy").onclick = async () => {
     getSelection().removeAllRanges();
     getSelection().addRange(r);
   }
+};
+
+// Mục C2: xuất cùng report JSON ra file (đường lưu chính là Chia sẻ trên
+// iOS, blob là dự phòng — giống nút Lưu/Chia sẻ ở trang chính).
+document.getElementById("btn-export").onclick = async () => {
+  const blob = new Blob([JSON.stringify(report, null, 2)], { type: "application/json" });
+  const name = "beartea-kiem-tra-dich.json";
+  const file = new File([blob], name, { type: "application/json" });
+  try {
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      await navigator.share({ files: [file] });
+      return;
+    }
+  } catch (e) { /* user hủy bảng chia sẻ hoặc share lỗi thì rơi về tải blob */ }
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 600000);
 };
 
 // Điền sẵn URL proxy đã lưu (nếu có) để khỏi gõ lại.
