@@ -32,6 +32,7 @@ const state = {
   lastExtractKv: null,   // JSON text trích xuất được (để dịch tiếp)
   lastDownload: null,    // {name, blob} file vừa tạo xong (để Chia sẻ / tải blob lại)
   unityBundles: [],      // bundle/.assets trong ZIP/IPA đang inspect
+  currentToolTab: "list", // tab công cụ đang mở trong view "Chức năng" (redesign)
   pending: new Map(),    // id -> {resolve, reject, op, t0, lastPct}
   nextId: 1,
   currentOp: null,
@@ -76,6 +77,34 @@ function showError(text) {
   el.hidden = false;
 }
 function clearError() { $("error").hidden = true; $("error").textContent = ""; }
+
+// ---- Chế độ sáng/tối (redesign) ----
+// Theme được áp sớm bằng script inline trong <head> của index.html (đọc
+// localStorage trước khi vẽ, tránh nháy); ở đây chỉ đồng bộ nút bấm +
+// checkbox Cài đặt và đổi theme khi user bấm. document.documentElement
+// được guard vì một số harness nạp app.js trong DOM giả không có nó.
+const THEME_KEY = "pb3_theme";
+function currentTheme() {
+  try { return localStorage.getItem(THEME_KEY) === "light" ? "light" : "dark"; } catch (e) { return "dark"; }
+}
+function syncThemeUI() {
+  const mode = currentTheme();
+  const b = $("btn-theme");
+  if (b) b.textContent = mode === "light" ? "☀️" : "🌙";
+  const c = $("setting-theme");
+  if (c) c.checked = (mode === "light");
+}
+function setTheme(mode) {
+  try { localStorage.setItem(THEME_KEY, mode); } catch (e) { /* localStorage không có */ }
+  if (typeof document !== "undefined" && document.documentElement) {
+    if (mode === "light") document.documentElement.setAttribute("data-theme", "light");
+    else document.documentElement.removeAttribute("data-theme");
+  }
+  syncThemeUI();
+}
+$("btn-theme").addEventListener("click", () => setTheme(currentTheme() === "light" ? "dark" : "light"));
+$("setting-theme").addEventListener("change", (ev) => setTheme(ev.target.checked ? "light" : "dark"));
+syncThemeUI();
 
 // ---- Thanh tiến độ ----
 let progT0 = 0, progLastPct = -1, progLabel = "";
@@ -400,6 +429,11 @@ function download(name, data) {
   // đầu lần tải đó rồi, timer cũ không được chạm vào URL mới).
   setTimeout(() => { if (lastDownloadUrl === url) revokeLastDownloadUrl(); }, 600000);
   state.lastDownload = { name, blob };
+  // Thanh Lưu file cố định phía trên bottom nav (redesign): hiện lên khi có
+  // file xuất, để tới được từ mọi màn (trước đây nút nằm trong thẻ "1. Chọn
+  // file" ở đầu trang, phải cuộn lên mới thấy).
+  const bar = $("download-bar");
+  if (bar) bar.hidden = false;
   const hint = $("download-hint");
   const shareBtn = $("btn-share-download");
   const blobBtn = $("btn-blob-download");
@@ -456,6 +490,13 @@ $("btn-blob-download").addEventListener("click", () => {
   }
   fireBlobDownload(lastDownloadUrl, d.name);
 });
+// Nút ✕ trên thanh Lưu file: ẩn thanh (chỉ ẩn tới lần xuất file sau —
+// download() hiện lại thanh mỗi khi có file mới). File đã xuất vẫn còn
+// trong state.lastDownload nên nút Lưu/Chia sẻ hiện lại cùng thanh.
+$("btn-download-close").addEventListener("click", () => {
+  const bar = $("download-bar");
+  if (bar) bar.hidden = true;
+});
 
 function inputFileArgs() {
   if (!state.file) throw new Error("Chưa chọn file. Hãy chọn file ở trên trước.");
@@ -497,15 +538,114 @@ async function maybeShowIpaZipHint(el) {
   } catch (e) { /* gợi ý chỉ là phụ: lỗi thì thôi, không báo thêm */ }
 }
 
-// ---- Chọn file ----
-$("file-input").addEventListener("change", (ev) => {
-  const f = ev.target.files && ev.target.files[0];
-  if (!f) return;
-  if (!gameExtOk(f.name)) {
-    showError(gameExtError(f.name));
-    ev.target.value = "";
+// ---- File gần đây (redesign) ----
+// CHỈ metadata trong phiên + localStorage (tên, dung lượng, loại, thời
+// gian) — KHÔNG lưu nội dung file (trình duyệt không giữ được file thật
+// sau khi tải lại trang). Nút “Tải lại” ở mỗi dòng chỉ hiện khi dữ liệu
+// file còn trong bộ nhớ phiên này (state.file / state.batchFiles); hết
+// phiên thì dòng đó chỉ còn tên + gợi ý chọn lại file. Không bịa file mẫu.
+const RECENT_KEY = "pb3_recent_files";
+const RECENT_MAX = 8;
+let recentFiles = [];   // [{name, size, kind, time, key}]
+function historyEnabled() {
+  try { return localStorage.getItem("pb3_save_history") !== "0"; } catch (e) { return true; }
+}
+function recentKind(name) {
+  const n = (name || "").toLowerCase();
+  if (n.endsWith(".tar.xz")) return "TAR.XZ";
+  if (n.endsWith(".ipa")) return "IPA";
+  if (n.endsWith(".unity3d")) return "UNITY3D";
+  if (n.endsWith(".assets")) return "ASSETS";
+  if (n.endsWith(".zip")) return "ZIP";
+  if (n.endsWith(".ttf")) return "TTF";
+  if (n.endsWith(".json")) return "JSON";
+  return "FILE";
+}
+function recentKeyOf(f) { return f.name + "|" + f.size + "|" + (f.lastModified || 0); }
+function saveRecent() {
+  if (!historyEnabled()) return;
+  try {
+    localStorage.setItem(RECENT_KEY, JSON.stringify(recentFiles.map((e) => (
+      { name: e.name, size: e.size, kind: e.kind, time: e.time, key: e.key }))));
+  } catch (e) { /* localStorage đầy/không có */ }
+}
+function loadRecent() {
+  if (!historyEnabled()) { recentFiles = []; renderRecent(); return; }
+  try {
+    const raw = localStorage.getItem(RECENT_KEY);
+    if (raw) {
+      const arr = JSON.parse(raw);
+      if (Array.isArray(arr)) recentFiles = arr.filter((e) => e && e.name).slice(0, RECENT_MAX);
+    }
+  } catch (e) { recentFiles = []; }
+  renderRecent();
+}
+function addRecent(f) {
+  const key = recentKeyOf(f);
+  const entry = { name: f.name, size: f.size, kind: recentKind(f.name), time: Date.now(), key };
+  recentFiles = [entry, ...recentFiles.filter((e) => e.key !== key)].slice(0, RECENT_MAX);
+  saveRecent();
+  renderRecent();
+}
+function recentInSession(key) {
+  if (state.file && recentKeyOf(state.file) === key) return state.file;
+  const b = state.batchFiles.find((x) => recentKeyOf(x) === key);
+  return b || null;
+}
+function renderRecent() {
+  const el = $("recent-list");
+  if (!el) return;
+  if (!recentFiles.length) {
+    el.innerHTML = "<p class=\"note\">Chưa có file nào trong phiên này — chọn 1 file game ở khung trên.</p>";
     return;
   }
+  let html = "";
+  for (const e of recentFiles) {
+    const inSession = recentInSession(e.key);
+    const when = new Date(e.time).toLocaleString("vi-VN");
+    html += "<div class=\"recent-row\"><span class=\"badge\">" + esc(e.kind) + "</span><span class=\"recent-name\">" + esc(e.name) +
+      "</span><span class=\"recent-meta\">" + fmtBytes(e.size) + " · " + esc(when) + "</span>" +
+      (inSession
+        ? "<button class=\"secondary\" data-act=\"dl\" data-key=\"" + esc(e.key) + "\">Tải lại</button>"
+        : "<span class=\"note\">hết phiên — chọn lại file</span>") +
+      "<button class=\"secondary\" data-act=\"rm\" data-key=\"" + esc(e.key) + "\">Xóa</button></div>";
+  }
+  el.innerHTML = html;
+}
+$("recent-list").addEventListener("click", (ev) => {
+  const t = ev && ev.target;
+  if (!t || typeof t.closest !== "function") return;
+  const btn = t.closest("button");
+  if (!btn || typeof btn.getAttribute !== "function") return;
+  const key = btn.getAttribute("data-key");
+  const act = btn.getAttribute("data-act");
+  if (!key) return;
+  if (act === "rm") {
+    recentFiles = recentFiles.filter((e) => e.key !== key);
+    saveRecent();
+    renderRecent();
+  } else if (act === "dl") {
+    // Chỉ tải lại được khi dữ liệu file còn trong bộ nhớ phiên này.
+    const f = recentInSession(key);
+    if (f) download(f.name, f.data.slice(0));
+  }
+});
+// “Lưu lịch sử gần đây” (Cài đặt): tắt thì không lưu metadata mới nữa,
+// xóa metadata đã lưu, danh sách chỉ còn trong phiên hiện tại.
+$("setting-save-history").addEventListener("change", (ev) => {
+  try { localStorage.setItem("pb3_save_history", ev.target.checked ? "1" : "0"); } catch (e) { /* localStorage không có */ }
+  if (!ev.target.checked) {
+    try { localStorage.removeItem(RECENT_KEY); } catch (e) { /* localStorage không có */ }
+    recentFiles = recentFiles.filter((e) => recentInSession(e.key));
+  } else saveRecent();
+  renderRecent();
+});
+$("setting-save-history").checked = historyEnabled();
+loadRecent();
+
+// ---- Chọn file ----
+function handleChosenFile(f) {
+  if (!f) return;
   if (f.size > MAX_BYTES) {
     showError("File " + fmtBytes(f.size) + " quá lớn cho bản web (>2GB). Dùng bản iSH cho file này.");
     return;
@@ -518,21 +658,131 @@ $("file-input").addEventListener("change", (ev) => {
     state.fileSentFor = null;   // HOTFIX clone: file mới thì gửi lại từ đầu
     $("file-info").textContent = f.name + " · " + fmtBytes(f.size);
     $("file-info").hidden = false;
+    $("btn-clear-file").hidden = false;
     clearError();
+    addRecent(state.file);
+    syncFileChips();
   });
+}
+$("file-input").addEventListener("change", (ev) => {
+  const f = ev.target.files && ev.target.files[0];
+  if (!f) return;
+  if (!gameExtOk(f.name)) {
+    showError(gameExtError(f.name));
+    ev.target.value = "";
+    return;
+  }
+  handleChosenFile(f);
 });
+// Khung thả file (Trang chủ): bấm để chọn + kéo-thả; input vẫn không có
+// accept (quirk picker iOS làm mờ .ipa) — kiểm tra đuôi bằng JS như trước.
+$("dropzone").addEventListener("click", () => {
+  const inp = $("file-input");
+  if (inp && typeof inp.click === "function") inp.click();
+});
+$("dropzone").addEventListener("dragover", (ev) => {
+  ev.preventDefault();
+  $("dropzone").classList.add("drag");
+});
+$("dropzone").addEventListener("dragleave", () => $("dropzone").classList.remove("drag"));
+$("dropzone").addEventListener("drop", (ev) => {
+  ev.preventDefault();
+  $("dropzone").classList.remove("drag");
+  const f = ev.dataTransfer && ev.dataTransfer.files && ev.dataTransfer.files[0];
+  if (f && !gameExtOk(f.name)) { showError(gameExtError(f.name)); return; }
+  handleChosenFile(f);
+});
+function clearFile() {
+  state.file = null;
+  state.fileSentFor = null;
+  const inp = $("file-input");
+  if (inp) inp.value = "";
+  $("file-info").hidden = true;
+  $("btn-clear-file").hidden = true;
+  syncFileChips();
+  renderRecent();
+}
+$("btn-clear-file").addEventListener("click", clearFile);
+$("btn-unity-clear").addEventListener("click", clearFile);
+// Chip file đã chọn ở tab Unity (tên + dung lượng + nút X xóa lựa chọn).
+function syncFileChips() {
+  const chip = $("unity-file-chip");
+  if (chip) {
+    chip.textContent = state.file
+      ? "Đã chọn: " + state.file.name + " · " + fmtBytes(state.file.size)
+      : "Chưa chọn file — chọn file ở Trang chủ (khung thả file) rồi quay lại đây.";
+  }
+  const x = $("btn-unity-clear");
+  if (x) x.hidden = !state.file;
+}
+syncFileChips();
 
 // ---- Tabs ----
 const tabs = ["list", "unity", "extract", "translate", "mod", "batch", "kb", "support", "compress", "font", "diagnose"];
 function showTab(name) {
+  if (name !== "kb") state.currentToolTab = name;
   for (const t of tabs) {
     $("tab-" + t).hidden = (t !== name);
     $("btn-" + t).classList.toggle("active", t === name);
   }
 }
 for (const t of tabs) {
-  $("btn-" + t).addEventListener("click", () => showTab(t));
+  $("btn-" + t).addEventListener("click", () => {
+    // Tab KB sống ở view "Kho KB" riêng (bottom nav), không nằm trong view
+    // "Chức năng" cùng các tab còn lại.
+    if (t === "kb") { showView("kb"); return; }
+    showView("tools");
+    showTab(t);
+  });
 }
+
+// ---- Bottom nav + các view (redesign) ----
+const views = ["home", "tools", "kb", "settings", "about"];
+function showView(name) {
+  for (const v of views) {
+    const el = $("view-" + v);
+    if (el) el.hidden = (v !== name);
+    const b = $("btn-nav-" + v);
+    if (b) b.classList.toggle("active", v === name);
+  }
+  const dd = $("menu-dropdown");
+  if (dd) dd.hidden = true;
+  if (name === "tools") showTab(state.currentToolTab || "list");
+  if (name === "kb") showTab("kb");
+}
+$("btn-nav-home").addEventListener("click", () => showView("home"));
+$("btn-nav-tools").addEventListener("click", () => showView("tools"));
+$("btn-nav-kb").addEventListener("click", () => showView("kb"));
+$("btn-nav-settings").addEventListener("click", () => showView("settings"));
+$("btn-nav-about").addEventListener("click", () => showView("about"));
+// 6 thẻ chức năng ở Trang chủ -> tab công cụ tương ứng.
+function goTool(tab) { showView("tools"); showTab(tab); }
+$("btn-card-unity").addEventListener("click", () => goTool("unity"));
+$("btn-card-extract").addEventListener("click", () => goTool("extract"));
+$("btn-card-translate").addEventListener("click", () => goTool("translate"));
+$("btn-card-mod").addEventListener("click", () => goTool("mod"));
+$("btn-card-batch").addEventListener("click", () => goTool("batch"));
+$("btn-card-kb").addEventListener("click", () => showView("kb"));
+// Nút "Mở cài đặt dịch" ở Cài đặt: tùy chọn dịch (proxy, Google Translate)
+// vẫn nằm ở tab Dịch, ngay chỗ dùng — đây chỉ là điều hướng thật tới đó.
+$("btn-settings-open-translate").addEventListener("click", () => goTool("translate"));
+// Menu hamburger: điều hướng thật tới các view + mục Giới hạn bản web.
+$("btn-menu").addEventListener("click", () => {
+  const dd = $("menu-dropdown");
+  if (dd) dd.hidden = !dd.hidden;
+});
+$("menu-go-home").addEventListener("click", () => showView("home"));
+$("menu-go-tools").addEventListener("click", () => showView("tools"));
+$("menu-go-kb").addEventListener("click", () => showView("kb"));
+$("menu-go-settings").addEventListener("click", () => showView("settings"));
+$("menu-go-about").addEventListener("click", () => showView("about"));
+$("menu-go-limits").addEventListener("click", () => {
+  showView("home");
+  const el = $("limits-card");
+  if (el && typeof el.scrollIntoView === "function") {
+    try { el.scrollIntoView(); } catch (e) { /* cuộn chỉ là phụ */ }
+  }
+});
 
 // ---- Danh sách entry ----
 $("btn-list-run").addEventListener("click", async () => {
@@ -578,7 +828,25 @@ async function inspectUnityEntry() {
   try {
     const { parsed } = await runOp("Inspect Unity", "unity_inspect_entry", [inputPath(), entry], inputFileArgs());
     $("unity-result").innerHTML = renderUnityResult(parsed);
+    updateHomeUnityInfo(parsed);
   } catch (e) { /* runOp đã báo lỗi có nhãn */ }
+}
+// ---- Thẻ "Thông tin Unity" ở Trang chủ: CHỈ hiện sau khi inspect thật ----
+// Unity Version / số object / TextAsset lấy từ kết quả inspect; bridge
+// không trả Build Target nên thẻ không hiện mục đó (không bịa).
+function updateHomeUnityInfo(parsed) {
+  const el = $("unity-info");
+  if (!el) return;
+  const ver = parsed.unity_version ||
+    (parsed.files && parsed.files[0] && parsed.files[0].unity_version) || "?";
+  const objs = (parsed.files || []).reduce((n, f) => n + (f.objects || 0), 0);
+  const tas = (parsed.files || []).reduce((n, f) => n + (f.text_assets || []).length, 0);
+  const name = state.file ? esc(state.file.name) : "?";
+  el.innerHTML = "<p>File: <b>" + name + "</b></p>" +
+    "<p>Unity Version: <b>" + esc(ver) + "</b>" + (parsed.bundle ? " · bundle " + esc(parsed.compression || "?") : " · file .assets độc lập") + "</p>" +
+    "<p>" + objs + " object · " + tas + " TextAsset</p>" +
+    "<p><span class=\"badge\">Đã sẵn sàng</span> <span class=\"badge\">An toàn &amp; Riêng tư</span></p>" +
+    "<p class=\"note\">Xử lý 100% trên thiết bị của bạn — file không được upload đi đâu.</p>";
 }
 $("btn-unity-run").addEventListener("click", async () => {
   try {
@@ -609,6 +877,7 @@ $("btn-unity-run").addEventListener("click", async () => {
       return;
     }
     $("unity-result").innerHTML = renderUnityResult(parsed);
+    updateHomeUnityInfo(parsed);
   } catch (e) { maybeShowIpaZipHint($("unity-ipa-hint")); }
 });
 
@@ -616,7 +885,7 @@ $("btn-unity-run").addEventListener("click", async () => {
 $("btn-extract-run").addEventListener("click", async () => {
   try {
     const { parsed } = await runOp("Trích xuất text", "extract", [inputPath()], inputFileArgs(), true);
-    let html = "<p>Kết quả: <b>" + esc(parsed.decision) + "</b> · " + parsed.total_entries + " entry · " + parsed.files.length + " file · file <b>extract.zip</b> đã sẵn sàng — bấm “Lưu / Chia sẻ” ở mục 1 để lưu về máy</p><table><tr><th>File</th><th>Plugin</th><th>Chuỗi</th><th>Locale</th></tr>";
+    let html = "<p>Kết quả: <b>" + esc(parsed.decision) + "</b> · " + parsed.total_entries + " entry · " + parsed.files.length + " file · file <b>extract.zip</b> đã sẵn sàng — bấm “Lưu / Chia sẻ” ở thanh Lưu file bên dưới để lưu về máy</p><table><tr><th>File</th><th>Plugin</th><th>Chuỗi</th><th>Locale</th></tr>";
     for (const f of parsed.files) {
       html += "<tr><td>" + esc(f.path) + "</td><td>" + esc(f.plugin) + "</td><td>" + f.entries + "</td><td>" + esc(f.locale || "") + "</td></tr>";
     }
@@ -731,7 +1000,7 @@ function modResultHtml(parsed) {
     if ((e.verify || []).length) html += "<tr><td colspan=6>" + esc(e.verify.join("; ")) + "</td></tr>";
   }
   html += "</table>";
-  if ((parsed.outputs || []).length) html += "<p>File đã ghi, đã sẵn sàng để lưu: <b>" + esc(parsed.outputs.join(", ")) + "</b> — bấm “Lưu / Chia sẻ” ở mục 1 để lưu về máy</p>";
+  if ((parsed.outputs || []).length) html += "<p>File đã ghi, đã sẵn sàng để lưu: <b>" + esc(parsed.outputs.join(", ")) + "</b> — bấm “Lưu / Chia sẻ” ở thanh Lưu file bên dưới để lưu về máy</p>";
   html += "<p class=note>" + esc(parsed.note || "") + "</p>";
   return html;
 }
@@ -748,10 +1017,54 @@ async function runMod(allowWrite) {
 }
 $("btn-mod-dryrun").addEventListener("click", () => runMod(false));
 $("btn-mod-write").addEventListener("click", () => runMod(true));
+// Thẻ "Thay Text" (thao tác Mod thật duy nhất trên web): cuộn tới ô nhập
+// chuỗi cũ. Các thẻ còn lại là nút disabled, không có handler.
+$("btn-mod-op-text").addEventListener("click", () => {
+  const m = $("mod-old");
+  if (m) {
+    try { if (typeof m.scrollIntoView === "function") m.scrollIntoView({ block: "center" }); } catch (e) { /* cuộn chỉ là phụ */ }
+    try { if (typeof m.focus === "function") m.focus(); } catch (e) { /* focus chỉ là phụ */ }
+  }
+});
 
 // ---- Batch ----
-$("batch-files").addEventListener("change", async (ev) => {
-  const list = [...(ev.target.files || [])];
+function renderBatchFiles() {
+  const el = $("batch-files-info");
+  if (!el) return;
+  if (!state.batchFiles.length) {
+    el.innerHTML = "Chưa chọn file nào.";
+    el.hidden = false;
+    return;
+  }
+  let html = state.batchFiles.length + " file:<br>";
+  state.batchFiles.forEach((f, i) => {
+    html += "<span class=\"batch-file-row\">" + esc(f.name) + " (" + fmtBytes(f.size) + ") " +
+      "<button class=\"secondary\" data-batch-rm=\"" + i + "\">X</button></span><br>";
+  });
+  el.innerHTML = html;
+  el.hidden = false;
+}
+function syncBatchRunLabel() {
+  const b = $("btn-batch-run");
+  if (!b) return;
+  b.textContent = state.batchFiles.length
+    ? "Chạy batch (" + state.batchFiles.length + " file)"
+    : "Chạy batch";
+}
+$("batch-files-info").addEventListener("click", (ev) => {
+  const t = ev && ev.target;
+  if (!t || typeof t.closest !== "function") return;
+  const btn = t.closest("button");
+  if (!btn || typeof btn.getAttribute !== "function") return;
+  const idx = btn.getAttribute("data-batch-rm");
+  if (idx == null || idx === "") return;
+  state.batchFiles.splice(parseInt(idx, 10), 1);
+  state.batchSentFor = null;   // HOTFIX clone: lô đổi thì gửi lại từ đầu
+  renderBatchFiles();
+  syncBatchRunLabel();
+  renderRecent();
+});
+async function handleBatchFiles(list) {
   state.batchFiles = [];
   let rejected = 0;
   for (const f of list) {
@@ -760,13 +1073,33 @@ $("batch-files").addEventListener("change", async (ev) => {
     state.batchFiles.push({ name: f.name, size: f.size, lastModified: f.lastModified || 0, data: await f.arrayBuffer() });
   }
   state.batchSentFor = null;   // HOTFIX clone: lô mới thì gửi lại từ đầu
-  ev.target.value = "";
+  renderBatchFiles();
+  syncBatchRunLabel();
   if (state.batchFiles.length) {
-    $("batch-files-info").textContent = state.batchFiles.length + " file: " +
-      state.batchFiles.map(f => f.name + " (" + fmtBytes(f.size) + ")").join(", ");
-    $("batch-files-info").hidden = false;
     if (!rejected) clearError();
+    for (const f of state.batchFiles) addRecent(f);
   }
+}
+$("batch-files").addEventListener("change", async (ev) => {
+  const list = [...(ev.target.files || [])];
+  ev.target.value = "";
+  await handleBatchFiles(list);
+});
+// Khung thả nhiều file ở tab Batch: bấm để chọn + kéo-thả.
+$("batch-dropzone").addEventListener("click", () => {
+  const inp = $("batch-files");
+  if (inp && typeof inp.click === "function") inp.click();
+});
+$("batch-dropzone").addEventListener("dragover", (ev) => {
+  ev.preventDefault();
+  $("batch-dropzone").classList.add("drag");
+});
+$("batch-dropzone").addEventListener("dragleave", () => $("batch-dropzone").classList.remove("drag"));
+$("batch-dropzone").addEventListener("drop", (ev) => {
+  ev.preventDefault();
+  $("batch-dropzone").classList.remove("drag");
+  const list = ev.dataTransfer && ev.dataTransfer.files ? [...ev.dataTransfer.files] : [];
+  handleBatchFiles(list);
 });
 $("btn-batch-load-ckpt").addEventListener("click", () => {
   try {
@@ -804,7 +1137,7 @@ $("btn-batch-run").addEventListener("click", async () => {
       " · tuần tự (jobs=1) · " + s.ok + " ok / " + s.failed + " lỗi / " + s.skipped +
       " bỏ qua / " + s.total + " game · " + s.elapsed_s + " giây" +
       (parsed.resumed ? " · đã tiếp tục từ checkpoint" : "") +
-      " · file <b>batch.zip</b> đã sẵn sàng — bấm “Lưu / Chia sẻ” ở mục 1 để lưu về máy (summary, checkpoint, index, từng game)</p>";
+      " · file <b>batch.zip</b> đã sẵn sàng — bấm “Lưu / Chia sẻ” ở thanh Lưu file bên dưới để lưu về máy (summary, checkpoint, index, từng game)</p>";
     html += "<table><tr><th>#</th><th>Game</th><th>Mode</th><th>Kết quả</th><th>Lỗi</th><th>Giây</th><th>Ghi chú</th></tr>";
     for (const g of s.games || []) {
       html += "<tr><td>" + g.index + "</td><td>" + esc(g.path.split("/").pop()) + "</td><td>" + esc(g.mode) +
@@ -867,7 +1200,7 @@ $("btn-kb-export").addEventListener("click", async () => {
     const { parsed } = await runOp("Xuất file KB", "kb_export", [], null, true);
     kbRecordExportNow();
     refreshKbStatus();
-    $("kb-result").innerHTML = "<p>File <b>pb3_kb.sqlite</b> đã sẵn sàng — bấm “Lưu / Chia sẻ” ở mục 1 để lưu về máy (" + fmtBytes(parsed.size) +
+    $("kb-result").innerHTML = "<p>File <b>pb3_kb.sqlite</b> đã sẵn sàng — bấm “Lưu / Chia sẻ” ở thanh Lưu file bên dưới để lưu về máy (" + fmtBytes(parsed.size) +
       ", " + parsed.games + " game). Giữ file này làm bản sao lưu — KB trong trình duyệt đã tự lưu vào IndexedDB, nhưng file .sqlite vẫn là bản sao lưu chắc chắn nhất (phòng khi trình duyệt xóa dữ liệu web).</p>";
   } catch (e) { /* đã báo lỗi */ }
 });
@@ -941,7 +1274,7 @@ $("btn-compress-run").addEventListener("click", async () => {
       "<p>Gốc: <b>" + fmtBytes(parsed.original_size) + "</b> → nén: <b>" + fmtBytes(parsed.compressed_size) +
       "</b> · tỉ lệ " + parsed.ratio + ":1 (giảm " + parsed.saved_pct + "%) · " + parsed.entries +
       " entry · đích ≤400MB: " + (parsed.target_met ? "ĐẠT" : "KHÔNG ĐẠT — file vẫn xuất kèm ghi chú") +
-      " · file <b>out.tar.xz</b> đã sẵn sàng — bấm “Lưu / Chia sẻ” ở mục 1 để lưu về máy</p>" +
+      " · file <b>out.tar.xz</b> đã sẵn sàng — bấm “Lưu / Chia sẻ” ở thanh Lưu file bên dưới để lưu về máy</p>" +
       (parsed.ram_warning ? "<p>Cảnh báo RAM: " + esc(parsed.ram_warning) + "</p>" : "") +
       "<p>File nén ra là bản lưu trữ, KHÔNG phải IPA cài trực tiếp — dùng nút Giải nén để khôi phục.</p>";
   } catch (e) { /* đã báo lỗi */ }
@@ -958,7 +1291,7 @@ $("btn-decompress-run").addEventListener("click", async () => {
     $("compress-result").innerHTML =
       "<p>Khôi phục: <b>" + esc(fname) + "</b> · " + fmtBytes(parsed.restored_size) +
       " · " + parsed.entries + " entry · byte-identical với gốc: <b>" + (parsed.byte_identical ? "ĐÚNG" : "SAI") +
-      "</b> · file gốc <b>" + esc(fname) + "</b> đã sẵn sàng để lưu — bấm “Lưu / Chia sẻ” ở mục 1 để lưu về máy.</p>";
+      "</b> · file gốc <b>" + esc(fname) + "</b> đã sẵn sàng để lưu — bấm “Lưu / Chia sẻ” ở thanh Lưu file bên dưới để lưu về máy.</p>";
   } catch (e) { /* đã báo lỗi */ }
 });
 
@@ -981,7 +1314,7 @@ $("btn-font-merge").addEventListener("click", async () => {
     $("font-result").innerHTML =
       "<p>Đã gộp: thêm <b>" + parsed.added + "</b> ký tự · đã có sẵn " + parsed.already +
       " · font nguồn cũng thiếu " + parsed.donor_missing + " · copy " + parsed.glyphs_copied +
-      " glyph · file <b>merged.ttf</b> đã sẵn sàng — bấm “Lưu / Chia sẻ” ở mục 1 để lưu về máy</p>" +
+      " glyph · file <b>merged.ttf</b> đã sẵn sàng — bấm “Lưu / Chia sẻ” ở thanh Lưu file bên dưới để lưu về máy</p>" +
       ((parsed.warnings || []).length ? "<p>Cảnh báo: " + esc(parsed.warnings.join("; ")) + "</p>" : "");
   } catch (e) { /* đã báo lỗi */ }
 });
@@ -989,7 +1322,7 @@ $("btn-font-replace").addEventListener("click", async () => {
   try {
     const { parsed } = await runOp("Lấy font Be Vietnam Pro", "font_donor_file", [], null, true);
     $("font-result").innerHTML =
-      "<p>File <b>BeVietnamPro-Regular.ttf</b> đã sẵn sàng — bấm “Lưu / Chia sẻ” ở mục 1 để lưu về máy (" + fmtBytes(parsed.size) +
+      "<p>File <b>BeVietnamPro-Regular.ttf</b> đã sẵn sàng — bấm “Lưu / Chia sẻ” ở thanh Lưu file bên dưới để lưu về máy (" + fmtBytes(parsed.size) +
       ") — font đầy đủ tiếng Việt, dùng thay cho font của game.</p>";
   } catch (e) { /* đã báo lỗi */ }
 });
