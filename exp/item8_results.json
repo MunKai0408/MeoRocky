@@ -7,11 +7,11 @@
     "static_node_py_check": {
       "ok": true,
       "detail": "node --check OK: app.js, sw.js; python3 -m py_compile OK: bridge.py, sdk/plan.py, tests/test_plan.py",
-      "seconds": 0.4
+      "seconds": 0.3
     },
     "static_item8_checks": {
       "ok": true,
-      "detail": "stdlib-only + Python 3.9 + files.json=89 + tests.json=157 + sw.js precache có sdk/plan.py + CACHE_VERSION=v8-20261116",
+      "detail": "stdlib-only + Python 3.9 + files.json=89 + tests.json=157 + sw.js precache có sdk/plan.py + CACHE_VERSION=v10-20261116",
       "seconds": 0.1
     },
     "fixture_regenerate": {
@@ -22,12 +22,12 @@
     "python_test_plan": {
       "ok": true,
       "detail": "python3 -m unittest tests.test_plan exit=0; Ran 14 tests, OK",
-      "seconds": 0.3
+      "seconds": 0.2
     },
     "C1_plan_build_model_3_entries": {
       "ok": true,
       "detail": "plan id=3b573d93739c; entries=en.json:3 change, menu.json:3 change, dialog.json:2 change; preview_after en.hello=Xin chào; before_sha khớp script gốc: true",
-      "seconds": 0.6
+      "seconds": 0.4
     },
     "C2_dry_run_no_write": {
       "ok": true,
@@ -47,7 +47,7 @@
     "C5_resume_after_stop": {
       "ok": true,
       "detail": "lần 1: partial, applied=1, remaining=2; lần 2 (checkpoint): done, applied=2, checkpoint completed=3; nội dung gộp đủ 3 entry đã dịch: true",
-      "seconds": 0.1
+      "seconds": 0
     },
     "C6_plan_json_roundtrip_stable_id": {
       "ok": true,
@@ -67,17 +67,17 @@
     "browser_plan_build_3_entries": {
       "ok": true,
       "detail": "status: \"Sẵn sàng — 20 plugin đang chạy · font đi kèm: đủ 142/142 (134 chữ cái + 8 dấu)\"; plan-list có đủ 3 asset + diff Xin chào: true (checkbox: 3)",
-      "seconds": 11.1
+      "seconds": 6.8
     },
     "browser_plan_untick_dryrun": {
       "ok": true,
       "detail": "plan-result: \"Kết quả: dry-run (CHƯA ghi file nào) · 2 entry đã áp · 0 lỗiAssetThay đổiChế độVerifyPayload/9Kings.app/Data/Raw/aa/iOS/localization-locales_assets_all.bundle::CAB-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa::en.json3REBUILD_SECTIONOKPayload/9Kings.app/Data/Raw/aa/iOS/localization-locales_assets_all.bundle::CA\"",
-      "seconds": 0.4
+      "seconds": 0.3
     },
     "browser_plan_select_all_and_download": {
       "ok": true,
       "detail": "bỏ chọn tất cả -> chưa tick: 3/3; chọn tất cả -> đã tick: 3/3; download: plan-3b573d93739c.json (4168B); version=1, entries=3",
-      "seconds": 0.8
+      "seconds": 0.7
     },
     "browser_390_no_overflow_no_errors": {
       "ok": true,

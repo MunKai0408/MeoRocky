@@ -1,10 +1,10 @@
 {
-  "when": "2026-11-16T12:05:30.131Z",
+  "when": "2026-11-16T12:19:28.933Z",
   "total": 16,
   "passed": 16,
   "failures": 0,
-  "cold_boot_ms": 5852,
-  "warm_boot_ms": 4997,
+  "cold_boot_ms": 5721,
+  "warm_boot_ms": 5090,
   "results": {
     "static_node_check_manifest": {
       "ok": true,
@@ -13,7 +13,7 @@
     },
     "static_sw_selftest_precache_prefetch": {
       "ok": true,
-      "detail": "CACHE_VERSION=v9-20261116 (cần v9-20261116); precache 125 mục, có fixtures/selftest.zip=true (file trên đĩa: 169B); PREFETCH_CACHE const=true; fetch thử prefetch cache khi cache chính trượt=true; GET_VERSION trả prefetchCache=true",
+      "detail": "CACHE_VERSION=v10-20261116 (cần v10-20261116); precache 126 mục, có fixtures/selftest.zip=true (file trên đĩa: 169B); PREFETCH_CACHE const=true; fetch thử prefetch cache khi cache chính trượt=true; GET_VERSION trả prefetchCache=true",
       "seconds": 0
     },
     "static_c3_wiring": {
@@ -28,12 +28,12 @@
     },
     "shell_size_after_c3": {
       "ok": true,
-      "detail": "shell lần tải đầu sau C3: index.html raw=54082B gzip=15425B; kb-store.js raw=8192B gzip=3212B; worker-pool.js raw=14404B gzip=5058B; stream.js raw=18092B gzip=6017B; app.js raw=184456B gzip=52390B; gt.js raw=34379B gzip=9599B | TỔNG raw=313605B (306.3KB), gzip=91701B (89.6KB). Ngưỡng raw 100KB vẫn chưa đạt như mục 6 đã ghi (app.js monolith) — C3 thêm ~15228B vào app.js, không đổi kết luận.",
+      "detail": "shell lần tải đầu sau C3: index.html raw=55640B gzip=15854B; kb-store.js raw=8192B gzip=3212B; worker-pool.js raw=14404B gzip=5058B; stream.js raw=18358B gzip=6141B; app.js raw=198447B gzip=55879B; gt.js raw=34379B gzip=9599B | TỔNG raw=329420B (321.7KB), gzip=95743B (93.5KB). Ngưỡng raw 100KB vẫn chưa đạt như mục 6 đã ghi (app.js monolith) — C3 thêm ~29219B vào app.js, không đổi kết luận.",
       "seconds": 0
     },
     "browser_persist_estimate_early": {
       "ok": true,
-      "detail": "#kb-persist (hiện sớm, chưa boot/chưa chọn file): \"Lưu trữ bền vững: CHƯA CẤP — Safari có thể xóa KB sau ~7 ngày không mở trang; hãy cài BearTea vào Màn hình chính (mục dưới) để giữ KB bền hơn. Đã dùng 1012 B / hạn mức 467 MB.\"; __PB3_STORAGE_STATE={\"persisted\":false,\"granted\":false,\"usage\":1012,\"quota\":489869268,\"estError\":null,\"at\":1794830692679} (headless Chromium thường CHƯA CẤP vì chưa cài/ưa dùng — ghi đúng sự thật, không PASS giả)",
+      "detail": "#kb-persist (hiện sớm, chưa boot/chưa chọn file): \"Lưu trữ bền vững: CHƯA CẤP — Safari có thể xóa KB sau ~7 ngày không mở trang; hãy cài BearTea vào Màn hình chính (mục dưới) để giữ KB bền hơn. Đã dùng 110 B / hạn mức 458 MB.\"; __PB3_STORAGE_STATE={\"persisted\":false,\"granted\":false,\"usage\":110,\"quota\":480478063,\"estError\":null,\"at\":1794831531362} (headless Chromium thường CHƯA CẤP vì chưa cài/ưa dùng — ghi đúng sự thật, không PASS giả)",
       "seconds": 0.2
     },
     "browser_pwa_install_wiring": {
@@ -48,22 +48,22 @@
     },
     "browser_boot_cold_ms": {
       "ok": true,
-      "detail": "boot lạnh (context mới, __PB3_NO_PREFETCH, chọn file fixture ngay sau tải trang): 5852ms từ lúc chọn file tới “Sẵn sàng — 20 plugin” (đo thật, gồm tải Pyodide qua mạng local + biên dịch wasm)",
-      "seconds": 5.9
+      "detail": "boot lạnh (context mới, __PB3_NO_PREFETCH, chọn file fixture ngay sau tải trang): 5721ms từ lúc chọn file tới “Sẵn sàng — 20 plugin” (đo thật, gồm tải Pyodide qua mạng local + biên dịch wasm)",
+      "seconds": 5.8
     },
     "browser_boot_warm_vs_cold": {
       "ok": true,
-      "detail": "boot lần 2 (cùng context, cache ấm từ SW precache + prefetch/lần boot trước): 4997ms; boot lần 1 (lạnh): 5852ms → lần 2 NHANH HƠN 15% (855ms). Lưu ý: số đo trên máy chủ local (mạng LAN nhanh) nên chênh lệch nhỏ hơn trên mạng thật/Safari.",
-      "seconds": 5.1
+      "detail": "boot lần 2 (cùng context, cache ấm từ SW precache + prefetch/lần boot trước): 5090ms; boot lần 1 (lạnh): 5721ms → lần 2 NHANH HƠN 11% (631ms). Lưu ý: số đo trên máy chủ local (mạng LAN nhanh) nên chênh lệch nhỏ hơn trên mạng thật/Safari.",
+      "seconds": 5.2
     },
     "browser_export_reminder_shows": {
       "ok": true,
       "detail": "sau khi thêm game vào KB (KB đã có dữ liệu, lần xuất cuối 8 ngày trước): banner nhắc hiện, nội dung=\"Nhắc sao lưu: lần xuất KB cuối đã hơn 7 ngày trước (8/11/2026) — hãy bấm “Tải KB về (.sqlite)” để sao lưu bản mới nhất.\"",
-      "seconds": 5.9
+      "seconds": 6.2
     },
     "browser_export_reminder_exported_btn": {
       "ok": true,
-      "detail": "bấm “Đã xuất”: banner ẩn=true; mốc lần xuất cuối trong localStorage=2026-11-16T12:05:14.721Z (cách bây giờ 0s — đặt lại mốc đúng)",
+      "detail": "bấm “Đã xuất”: banner ẩn=true; mốc lần xuất cuối trong localStorage=2026-11-16T12:19:13.521Z (cách bây giờ 0s — đặt lại mốc đúng)",
       "seconds": 0.3
     },
     "browser_export_reminder_early_reload": {
@@ -73,13 +73,13 @@
     },
     "browser_export_reminder_snooze": {
       "ok": true,
-      "detail": "bấm “Tắt nhắc lần này”: mốc snooze=2026-11-23T12:05:15.222Z (sau ~7 ngày nữa mới nhắc lại); tải lại trang rồi đợi 6s: banner vẫn ẩn=true (không nhắc liên tục mỗi lần mở trang)",
+      "detail": "bấm “Tắt nhắc lần này”: mốc snooze=2026-11-23T12:19:14.005Z (sau ~7 ngày nữa mới nhắc lại); tải lại trang rồi đợi 6s: banner vẫn ẩn=true (không nhắc liên tục mỗi lần mở trang)",
       "seconds": 6.5
     },
     "browser_offline_selftest_after_first_visit": {
       "ok": true,
-      "detail": "lần thăm 1 online: cache chính 125/125+ mục, fixtures/selftest.zip trong cache=true; offline tải lại → boot tới Sẵn sàng → tự kiểm tra: 5/6 PASS (mục Dịch thử FAIL thật: \"Google lỗi mất mạng/CORS → MyMemory lỗi mất mạng/CORS · LibreTranslate chưa cấu hình (cần API key) — tất cả đều lỗi, dùng từ điển offline (~100 từ/cụm) nên hầu — không mạng, không PASS giả); trích xuất thử chạy được offline chứng tỏ selftest.zip đã precache (nợ C2 đã trả)",
-      "seconds": 6.3
+      "detail": "lần thăm 1 online: cache chính 126/125+ mục, fixtures/selftest.zip trong cache=true; offline tải lại → boot tới Sẵn sàng → tự kiểm tra: 5/6 PASS (mục Dịch thử FAIL thật: \"Google lỗi mất mạng/CORS → MyMemory lỗi mất mạng/CORS · LibreTranslate chưa cấu hình (cần API key) — tất cả đều lỗi, dùng từ điển offline (~100 từ/cụm) nên hầu — không mạng, không PASS giả); trích xuất thử chạy được offline chứng tỏ selftest.zip đã precache (nợ C2 đã trả)",
+      "seconds": 6.4
     },
     "browser_390_no_overflow_no_errors": {
       "ok": true,

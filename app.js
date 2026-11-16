@@ -53,7 +53,13 @@ const state = {
   extractEntries: [],    // entry trích xuất được trong file đang chọn (từ list_entries)
   extractListFor: null,  // "tên|cỡ|lastModified" của file mà extractEntries thuộc về
   extractSelected: null, // Set(vpath) đã tick ở chế độ chọn tay; null = chưa tải danh sách (coi như tự động)
-  lastDownload: null,    // {name, blob} file vừa tạo xong (để Chia sẻ / tải blob lại)
+  lastDownload: null,    // file vừa tạo xong (để Chia sẻ / tải blob lại):
+                          // {name, blob, via:"memory"} (file nhỏ / fallback)
+                          // hoặc {name, via:"opfs", opfsName, size} (file lớn
+                          // đã ghi ra OPFS — KHÔNG giữ blob trong RAM, C4)
+  lastDownloadPromise: null, // promise của lần download() đang chạy (để nút
+                          // Lưu/Chia sẻ đợi ghi OPFS xong mới đọc file ra)
+  opfsFallbackReason: null,  // lý do lần ghi OPFS gần nhất rơi về RAM (C4)
   unityBundles: [],      // bundle/.assets trong ZIP/IPA đang inspect
   currentToolTab: "list", // tab công cụ đang mở trong view "Chức năng" (redesign)
   pending: new Map(),    // id -> {resolve, reject, op, t0, lastPct}
@@ -67,6 +73,8 @@ const state = {
 const WARN_BYTES = 600 * 1024 * 1024;   // >600MB: cảnh báo rõ, vẫn cho tiếp tục (Mục 5)
 const STRONG_BYTES = 800 * 1024 * 1024; // >800MB: khuyên mạnh dùng iSH (Mục 5)
 const EXTRACT_WARN_BYTES = 400 * 1024 * 1024; // >400MB: trích xuất hỏi xác nhận trước (đợt sửa 2026-11-16: file .unity3d 590MB từng làm chết tab vì OOM; nay đọc streaming nhưng RAM đỉnh vẫn ~2× dung lượng file)
+const LARGE_FILE_CONFIRM_BYTES = EXTRACT_WARN_BYTES; // >400MB: hộp thoại xác nhận TRƯỚC khi đọc file vào RAM (Mục C4) — nút "Tiếp tục"/"Hủy"
+const OPFS_MIN_BYTES = 1 * 1024 * 1024; // output >=1MB thì ghi ra OPFS thay vì ôm Blob trong RAM (Mục C4)
 const MAX_BYTES = 2 * 1024 * 1024 * 1024;   // >2GB: từ chối (bridge cũng từ chối)
 
 // Cảnh báo kích thước file (Mục 5 — stream.js, PB3Stream.sizeWarning).
@@ -310,7 +318,15 @@ async function runOp(label, fn, args, files, fileOut) {
       throw new Error(msg);
     }
     progDone(label);
-    if (fileOut && msg.file) download(msg.file.name, msg.file.data);
+    if (fileOut && msg.file) {
+      // Mục C4: đợi ghi output xong (OPFS: ghi dần từng phần 8MB) rồi mới
+      // trả — xong thì bỏ tham chiếu tới buffer output của worker để input
+      // + output không cùng nằm trong RAM sau khi xuất (đường OPFS chỉ giữ
+      // tên file, đường RAM giữ Blob đã gói — cả hai đều không giữ thêm
+      // bản ArrayBuffer gốc của worker).
+      await download(msg.file.name, msg.file.data);
+      try { msg.file.data = null; } catch (e) { /* bỏ qua */ }
+    }
     return { parsed, file: msg.file || null };
   } catch (e) {
     progDone(label + " — lỗi");
@@ -461,6 +477,13 @@ if (typeof window !== "undefined" && typeof navigator !== "undefined") {
   const onceInteract = () => { requestStorageEarly(); };
   window.addEventListener("pointerdown", onceInteract, { once: true });
   window.addEventListener("keydown", onceInteract, { once: true });
+  // Mục C4: dọn file tạm OPFS quá 7 ngày lúc mở trang (chạy nền, lỗi thì
+  // im lặng — không chặn trang, không hiện banner).
+  try {
+    if (typeof PB3OPFS !== "undefined" && PB3OPFS.cleanupStaleOnBoot) {
+      setTimeout(() => { PB3OPFS.cleanupStaleOnBoot().catch(() => {}); }, 5000);
+    }
+  } catch (e) { /* OPFS chưa nạp — bỏ qua */ }
 }
 
 // Dòng trạng thái KB: số game, dung lượng, lần tự lưu gần nhất + nhắc export.
@@ -642,11 +665,132 @@ function fireBlobDownload(url, name) {
   document.body.appendChild(a); a.click(); a.remove();
 }
 
+// Lấy Blob/File của file vừa xuất để Chia sẻ / tải lại — đường OPFS thì
+// đọc lại từ OPFS (File lười, không ôm cả file vào RAM), đường RAM thì
+// dùng blob đang giữ. Trả null khi không còn file.
+async function lastDownloadFile() {
+  const d = state.lastDownload;
+  if (!d) return null;
+  if (d.via === "opfs") {
+    if (typeof PB3OPFS === "undefined") return null;
+    try { return await PB3OPFS.readOutput(d.opfsName); } catch (e) { return null; }
+  }
+  return d.blob || null;
+}
+
+// Dọn file tạm OPFS của lần xuất hiện tại (sau khi chia sẻ xong / user bấm
+// dọn / bấm ✕): xóa file trong OPFS, quên state, ẩn nút dọn.
+async function cleanupLastDownloadOpfs() {
+  const d = state.lastDownload;
+  if (d && d.via === "opfs" && typeof PB3OPFS !== "undefined") {
+    try { await PB3OPFS.deleteOutput(d.opfsName); } catch (e) { /* đã dọn */ }
+  }
+  state.lastDownload = null;
+  state.lastDownloadPromise = null;
+  const cleanupBtn = $("btn-opfs-cleanup");
+  if (cleanupBtn) cleanupBtn.hidden = true;
+}
+
+// Trạng thái OPFS cho harness/chẩn đoán (đồng bộ, không đọc OPFS).
+function opfsState() {
+  const d = state.lastDownload;
+  return {
+    supported: (typeof PB3OPFS !== "undefined") ? PB3OPFS.supported() : false,
+    minBytes: OPFS_MIN_BYTES,
+    lastVia: d ? d.via : null,
+    lastName: d ? d.name : null,
+    lastSize: d ? (d.size || (d.blob ? d.blob.size : 0)) : 0,
+    lastHasBlob: !!(d && d.blob),
+    fallbackReason: state.opfsFallbackReason,
+  };
+}
+if (typeof window !== "undefined") window.__PB3_OPFS_STATE = opfsState;
+
 function download(name, data) {
+  // Trả Promise (ghi OPFS là bất đồng bộ); các caller cũ gọi fire-and-
+  // forget vẫn chạy như trước, nút Lưu/Chia sẻ đợi qua lastDownloadPromise.
+  state.lastDownloadPromise = (async () => {
+    try {
+      return await downloadNow(name, data);
+    } catch (e) {
+      showError("Không lưu được file " + name + ": " + (e && e.message ? e.message : e));
+      return null;
+    }
+  })();
+  return state.lastDownloadPromise;
+}
+
+async function downloadNow(name, data) {
   // Mục 5: data có thể là Blob, ArrayBuffer/Uint8Array, hoặc MẢNG NHIỀU
   // PART (Blob part) — output lớn ghi dạng nhiều part, không concat thành
   // một ArrayBuffer khổng lồ trước khi tải (new Blob(parts) không copy
   // các part lại với nhau).
+  const outSize = (typeof PB3OPFS !== "undefined" && PB3OPFS.dataByteLength)
+    ? PB3OPFS.dataByteLength(data)
+    : (data instanceof Blob ? data.size
+      : Array.isArray(data) ? data.reduce((s, p) => s + (p ? (p.size || p.byteLength || p.length || 0) : 0), 0)
+      : (data ? (data.byteLength || data.length || 0) : 0));
+  // Thanh Lưu file cố định phía trên bottom nav (redesign): hiện lên khi có
+  // file xuất, để tới được từ mọi màn (trước đây nút nằm trong thẻ "1. Chọn
+  // file" ở đầu trang, phải cuộn lên mới thấy).
+  const bar = $("download-bar");
+  if (bar) bar.hidden = false;
+  const hint = $("download-hint");
+  const shareBtn = $("btn-share-download");
+  const blobBtn = $("btn-blob-download");
+  const cleanupBtn = $("btn-opfs-cleanup");
+  // ---- Mục C4: output lớn ghi dần ra OPFS thay vì ôm Blob trong RAM ----
+  // Ghi từng phần 8MB (opfs.js toParts: Blob.slice / subarray, không copy
+  // toàn bộ); ghi xong thì state chỉ giữ tên file OPFS, KHÔNG giữ blob —
+  // input + output không còn cùng nằm trong RAM sau khi xuất.
+  if (outSize >= OPFS_MIN_BYTES && typeof PB3OPFS !== "undefined" && PB3OPFS.supported()) {
+    if (hint) {
+      hint.textContent = "Đang ghi " + name + " (" + fmtBytes(outSize) +
+        ") ra bộ nhớ tạm của trình duyệt (OPFS)…";
+      hint.hidden = false;
+    }
+    const res = await PB3OPFS.writeOutput(name, data);
+    if (res.ok) {
+      state.opfsFallbackReason = null;
+      state.lastDownload = { name, via: "opfs", opfsName: res.name, size: res.size };
+      if (cleanupBtn) cleanupBtn.hidden = false;
+      const opfsFile = await PB3OPFS.readOutput(res.name);
+      if (canShareFile(opfsFile, name)) {
+        // ĐƯỜNG LƯU CHÍNH trên iOS: Chia sẻ native (bảng Chia sẻ → "Lưu
+        // vào Tệp"), không qua download manager. Không tự bấm blob.
+        if (hint) {
+          hint.textContent = "File " + name + " (" + fmtBytes(res.size) +
+            ") đã ghi vào bộ nhớ tạm (OPFS) — bấm “Lưu / Chia sẻ” để lưu vào Files (cách chắc chắn nhất trên iPhone). " +
+            "Nếu muốn tải bằng trình duyệt thì bấm “Tải về (blob)” bên dưới. Xong thì bấm “Dọn file tạm” để giải phóng bộ nhớ.";
+          hint.hidden = false;
+          try { hint.scrollIntoView({ block: "nearest" }); } catch (e) {}
+        }
+        if (shareBtn) shareBtn.hidden = false;
+        if (blobBtn) blobBtn.hidden = false;
+      } else {
+        // Không chia sẻ được (vd desktop không hỗ trợ share file): đọc
+        // File từ OPFS rồi tải bằng blob như trước.
+        await downloadOpfsBlob(opfsFile, name);
+        if (hint) {
+          hint.textContent = "Đang tải về " + name + " (" + fmtBytes(res.size) +
+            ") từ bộ nhớ tạm (OPFS) — trình duyệt sẽ hỏi thì bấm Tải về, giữ tab mở; file lớn có thể cần vài phút. Xong thì bấm “Dọn file tạm”.";
+          hint.hidden = false;
+        }
+        if (shareBtn) shareBtn.hidden = true;
+        if (blobBtn) blobBtn.hidden = false;
+      }
+      return state.lastDownload;
+    }
+    // Ghi OPFS lỗi → rơi về đường RAM dưới đây, ghi rõ lý do (không crash lặng).
+    state.opfsFallbackReason = res.error || "ghi OPFS lỗi không rõ";
+  } else if (outSize >= OPFS_MIN_BYTES) {
+    state.opfsFallbackReason = (typeof PB3OPFS === "undefined")
+      ? "opfs.js chưa nạp"
+      : PB3OPFS.unsupportedReason();
+  } else {
+    state.opfsFallbackReason = null;
+  }
+  // ---- Đường RAM (file nhỏ, hoặc fallback khi không có OPFS / ghi lỗi) ----
   const blob = data instanceof Blob ? data
     : Array.isArray(data) ? new Blob(data, { type: "application/octet-stream" })
     : new Blob([data], { type: "application/octet-stream" });
@@ -659,22 +803,19 @@ function download(name, data) {
   // Timer chỉ hủy đúng URL này (nếu đã có lần tải mới thì URL đã bị hủy ở
   // đầu lần tải đó rồi, timer cũ không được chạm vào URL mới).
   setTimeout(() => { if (lastDownloadUrl === url) revokeLastDownloadUrl(); }, 600000);
-  state.lastDownload = { name, blob };
-  // Thanh Lưu file cố định phía trên bottom nav (redesign): hiện lên khi có
-  // file xuất, để tới được từ mọi màn (trước đây nút nằm trong thẻ "1. Chọn
-  // file" ở đầu trang, phải cuộn lên mới thấy).
-  const bar = $("download-bar");
-  if (bar) bar.hidden = false;
-  const hint = $("download-hint");
-  const shareBtn = $("btn-share-download");
-  const blobBtn = $("btn-blob-download");
+  state.lastDownload = { name, blob, via: "memory" };
+  if (cleanupBtn) cleanupBtn.hidden = true;
+  const fallbackNote = state.opfsFallbackReason
+    ? " (Trình duyệt này không ghi được OPFS — " + state.opfsFallbackReason +
+      " — nên file giữ trong RAM, hãy lưu ngay rồi đóng tab để giải phóng RAM.)"
+    : "";
   if (canShareFile(blob, name)) {
     // ĐƯỜNG LƯU CHÍNH trên iOS: Chia sẻ native (bảng Chia sẻ → "Lưu vào
     // Tệp"), không qua download manager. Không tự bấm blob.
     if (hint) {
       hint.textContent = "File " + name + " (" + fmtBytes(blob.size) +
         ") đã sẵn sàng — bấm “Lưu / Chia sẻ” để lưu vào Files (cách chắc chắn nhất trên iPhone). " +
-        "Nếu muốn tải bằng trình duyệt thì bấm “Tải về (blob)” bên dưới.";
+        "Nếu muốn tải bằng trình duyệt thì bấm “Tải về (blob)” bên dưới." + fallbackNote;
       hint.hidden = false;
       try { hint.scrollIntoView({ block: "nearest" }); } catch (e) {}
     }
@@ -685,22 +826,47 @@ function download(name, data) {
     fireBlobDownload(url, name);
     if (hint) {
       hint.textContent = "Đang tải về " + name + " (" + fmtBytes(blob.size) +
-        ") — trình duyệt sẽ hỏi thì bấm Tải về, giữ tab mở; file lớn có thể cần vài phút.";
+        ") — trình duyệt sẽ hỏi thì bấm Tải về, giữ tab mở; file lớn có thể cần vài phút." + fallbackNote;
       hint.hidden = false;
     }
     if (shareBtn) shareBtn.hidden = true;
     if (blobBtn) blobBtn.hidden = true;
   }
+  return state.lastDownload;
+}
+
+// Tải 1 File đã đọc từ OPFS bằng blob URL (đường dự phòng khi Share không
+// có sẵn): tạo URL từ File, bấm anchor, giữ URL 10 phút như đường RAM.
+async function downloadOpfsBlob(file, name) {
+  revokeLastDownloadUrl();
+  const url = URL.createObjectURL(file);
+  lastDownloadUrl = url;
+  setTimeout(() => { if (lastDownloadUrl === url) revokeLastDownloadUrl(); }, 600000);
+  fireBlobDownload(url, name);
 }
 // Nút "Lưu / Chia sẻ": dùng Web Share API để lưu thẳng vào Files (hoặc app
 // khác) — đường lưu chính trên iPhone, không qua download manager.
+// Đường OPFS: đọc File từ OPFS rồi share; chia sẻ xong thì dọn file tạm.
 $("btn-share-download").addEventListener("click", async () => {
+  if (state.lastDownloadPromise) { try { await state.lastDownloadPromise; } catch (e) { /* lỗi đã báo ở download() */ } }
   const d = state.lastDownload;
   if (!d) return;
   try {
-    const file = new File([d.blob], d.name, { type: "application/octet-stream" });
+    const blob = await lastDownloadFile();
+    if (!blob) {
+      showError("Chia sẻ lỗi: Không đọc được file tạm trong OPFS — hãy bấm “Tải về (blob)” để tải bằng trình duyệt.");
+      return;
+    }
+    const file = new File([blob], d.name, { type: "application/octet-stream" });
     if (navigator.canShare && navigator.canShare({ files: [file] })) {
       await navigator.share({ files: [file] });
+      // Xuất xong → dọn file tạm OPFS ngay (đừng để đầy bộ nhớ).
+      if (d.via === "opfs") {
+        await cleanupLastDownloadOpfs();
+        const bar = $("download-bar");
+        if (bar) bar.hidden = true;
+        setStatus("Đã chia sẻ " + d.name + " và dọn file tạm (OPFS).");
+      }
     } else {
       showError("Chia sẻ lỗi: Trình duyệt này không hỗ trợ chia sẻ file — hãy bấm “Tải về (blob)” để tải bằng trình duyệt.");
     }
@@ -717,9 +883,20 @@ $("btn-share-download").addEventListener("click", async () => {
 });
 // Nút "Tải về (blob)": đường dự phòng — bấm anchor blob để trình duyệt tải
 // về. URL có thể đã bị hủy sau 10 phút thì tạo lại từ blob đang giữ.
-$("btn-blob-download").addEventListener("click", () => {
+// Đường OPFS: đọc File từ OPFS rồi tạo URL (không giữ blob trong RAM).
+$("btn-blob-download").addEventListener("click", async () => {
+  if (state.lastDownloadPromise) { try { await state.lastDownloadPromise; } catch (e) { /* lỗi đã báo ở download() */ } }
   const d = state.lastDownload;
   if (!d) return;
+  if (d.via === "opfs") {
+    const file = await lastDownloadFile();
+    if (!file) {
+      showError("Tải về lỗi: Không đọc được file tạm trong OPFS — hãy thử xuất lại.");
+      return;
+    }
+    await downloadOpfsBlob(file, d.name);
+    return;
+  }
   if (!lastDownloadUrl) {
     lastDownloadUrl = URL.createObjectURL(d.blob);
     const u = lastDownloadUrl;
@@ -727,10 +904,27 @@ $("btn-blob-download").addEventListener("click", () => {
   }
   fireBlobDownload(lastDownloadUrl, d.name);
 });
+// Nút "Dọn file tạm": xóa mọi file tạm OPFS (lần xuất hiện tại + file cũ
+// còn sót), quên state, ẩn thanh. File đã tải về/chia sẻ xong thì không
+// cần giữ trong OPFS nữa.
+$("btn-opfs-cleanup").addEventListener("click", async () => {
+  let n = 0;
+  if (typeof PB3OPFS !== "undefined") {
+    try { n = await PB3OPFS.cleanupOutputs(); } catch (e) { n = 0; }
+  }
+  state.lastDownload = null;
+  state.lastDownloadPromise = null;
+  const bar = $("download-bar");
+  if (bar) bar.hidden = true;
+  setStatus(n > 0 ? ("Đã dọn " + n + " file tạm trong OPFS.") : "Không còn file tạm nào trong OPFS.");
+});
 // Nút ✕ trên thanh Lưu file: ẩn thanh (chỉ ẩn tới lần xuất file sau —
-// download() hiện lại thanh mỗi khi có file mới). File đã xuất vẫn còn
-// trong state.lastDownload nên nút Lưu/Chia sẻ hiện lại cùng thanh.
+// download() hiện lại thanh mỗi khi có file mới). File OPFS tạm thì dọn
+// luôn (đừng để đầy bộ nhớ); file RAM thì vẫn còn trong state.lastDownload
+// nên nút Lưu/Chia sẻ hiện lại cùng thanh.
 $("btn-download-close").addEventListener("click", () => {
+  const d = state.lastDownload;
+  if (d && d.via === "opfs") cleanupLastDownloadOpfs();
   const bar = $("download-bar");
   if (bar) bar.hidden = true;
 });
@@ -880,11 +1074,71 @@ $("setting-save-history").addEventListener("change", (ev) => {
 $("setting-save-history").checked = historyEnabled();
 loadRecent();
 
+// ---- Hộp thoại cảnh báo file lớn (Mục C4) ----
+// File >400MB thì hỏi TRƯỚC KHI đọc vào RAM (khác với cảnh báo chữ của
+// mục 5 chỉ hiện rồi vẫn đọc tiếp): user bấm "Tiếp tục" mới mở file,
+// bấm "Hủy" thì dừng hẳn, file cũ (nếu có) vẫn giữ nguyên. >800MB thì
+// cảnh báo mạnh hơn + gợi ý dùng bản iSH (tab Safari chỉ ~1–1,5GB RAM).
+// Trả Promise<boolean>; file <=400MB thì không hiện hộp thoại, trả true ngay.
+// state: để harness/chẩn đoán đọc (visible, files, decision).
+const largeFileModalState = { visible: false, files: [], decision: null };
+if (typeof window !== "undefined") {
+  window.__PB3_LARGE_FILE_STATE = () => ({
+    visible: largeFileModalState.visible,
+    files: largeFileModalState.files.map((f) => ({ name: f.name, size: f.size })),
+    decision: largeFileModalState.decision,
+  });
+}
+function confirmLargeFile(files) {
+  const large = (files || []).filter((f) => f && f.size > LARGE_FILE_CONFIRM_BYTES);
+  if (!large.length) return Promise.resolve(true);
+  const modal = $("large-file-modal");
+  const textEl = $("large-file-text");
+  const btnOk = $("large-file-continue");
+  const btnCancel = $("large-file-cancel");
+  if (!modal || !textEl || !btnOk || !btnCancel) {
+    // Không có hộp thoại trong DOM (vd trang cũ): rơi về confirm() native
+    // — vẫn chặn trước khi đọc file, không đọc lén.
+    const lines = large.map((f) => "• " + f.name + " (" + fmtBytes(f.size) + ")").join("\n");
+    return Promise.resolve(confirm("File lớn:\n" + lines + "\n\nBấm OK để tiếp tục, hoặc Huỷ để dùng bản iSH cho file này."));
+  }
+  const strongest = large.some((f) => f.size > STRONG_BYTES);
+  const lines = large.map((f) => "• " + f.name + " (" + fmtBytes(f.size) + ")").join("\n");
+  const ramNote = strongest
+    ? "File rất lớn (>800MB). Tab trình duyệt trên iPhone chỉ có khoảng 1–1,5GB RAM — file này cộng với dữ liệu đang giải nén có thể làm tab bị tắt giữa chừng. Nên dùng bản iSH cho file này."
+    : "File lớn (>400MB). Trích xuất/nén đọc từng phần (streaming) nhưng RAM đỉnh ước tính ~2× dung lượng file (file + dữ liệu đang giải nén); trên iPhone vẫn có thể làm chết tab.";
+  textEl.textContent = lines + "\n\n" + ramNote + "\n\nBấm “Tiếp tục” để mở file trên web (nên đóng các tab khác trước), hoặc bấm “Hủy” để dùng bản iSH cho file này.";
+  largeFileModalState.visible = true;
+  largeFileModalState.files = large.map((f) => ({ name: f.name, size: f.size }));
+  largeFileModalState.decision = null;
+  modal.hidden = false;
+  return new Promise((resolve) => {
+    const done = (decision) => {
+      modal.hidden = true;
+      largeFileModalState.visible = false;
+      largeFileModalState.decision = decision;
+      btnOk.removeEventListener("click", onOk);
+      btnCancel.removeEventListener("click", onCancel);
+      resolve(decision);
+    };
+    const onOk = () => done(true);
+    const onCancel = () => done(false);
+    btnOk.addEventListener("click", onOk);
+    btnCancel.addEventListener("click", onCancel);
+  });
+}
+
 // ---- Chọn file ----
-function handleChosenFile(f) {
+async function handleChosenFile(f) {
   if (!f) return;
   if (f.size > MAX_BYTES) {
     showError("File " + fmtBytes(f.size) + " quá lớn cho bản web (>2GB). Dùng bản iSH cho file này.");
+    return;
+  }
+  // Mục C4: file >400MB thì hỏi TRƯỚC KHI đọc vào RAM — "Hủy" thì dừng
+  // hẳn (file cũ vẫn giữ nguyên, không boot, không đọc); "Tiếp tục" mới đọc.
+  if (!(await confirmLargeFile([f]))) {
+    showError("Đã huỷ mở file lớn — dùng bản iSH cho file này nếu cần.");
     return;
   }
   // Mục 5: >600MB cảnh báo rõ, >800MB khuyên mạnh dùng iSH — vẫn cho tiếp tục.
@@ -2396,14 +2650,24 @@ $("batch-files-info").addEventListener("click", (ev) => {
   renderRecent();
 });
 async function handleBatchFiles(list) {
-  state.batchFiles = [];
   let rejected = 0;
   let batchWarn = null;   // Mục 5: cảnh báo file lớn nhất trong lô
+  const valid = [];
   for (const f of list) {
     if (!gameExtOk(f.name)) { showError(gameExtError(f.name)); rejected++; continue; }
     if (f.size > MAX_BYTES) { showError("File " + f.name + " quá lớn cho bản web (>2GB)."); continue; }
     const w = sizeWarningFor(f.size);
     if (w.text && (!batchWarn || w.level === "strong")) batchWarn = { name: f.name, w };
+    valid.push(f);
+  }
+  // Mục C4: lô có file >400MB thì hỏi TRƯỚC KHI đọc file nào vào RAM —
+  // "Hủy" thì dừng hẳn, lô cũ vẫn giữ nguyên, không đọc file nào.
+  if (valid.length && !(await confirmLargeFile(valid))) {
+    showError("Đã huỷ mở lô file lớn — dùng bản iSH cho các file này nếu cần.");
+    return;
+  }
+  state.batchFiles = [];
+  for (const f of valid) {
     state.batchFiles.push({ name: f.name, size: f.size, lastModified: f.lastModified || 0, data: await f.arrayBuffer() });
   }
   state.batchSentFor = null;   // HOTFIX clone: lô mới thì gửi lại từ đầu

@@ -156,6 +156,18 @@
     background: var(--card); border: 1px solid var(--orange); border-radius: 12px;
     padding: 10px 12px; box-shadow: 0 8px 24px rgba(0,0,0,.35); }
 
+  /* ---- Hộp thoại cảnh báo file lớn (Mục C4) ---- */
+  /* .modal đặt display:flex nên phải ghi đè [hidden] tường minh — nếu
+     không, hộp thoại đã ẩn vẫn phủ màn hình và chặn mọi cú bấm. */
+  .modal[hidden] { display: none; }
+  .modal { position: fixed; inset: 0; z-index: 80; background: rgba(0,0,0,.55);
+    display: flex; align-items: center; justify-content: center; padding: 16px; }
+  .modal-card { background: var(--card); border: 1px solid var(--orange); border-radius: 12px;
+    padding: 16px; max-width: 420px; width: 100%; box-shadow: 0 8px 24px rgba(0,0,0,.4); }
+  .modal-card h3 { margin: 0 0 8px; }
+  .modal-card p { white-space: pre-line; line-height: 1.5; margin: 0 0 12px; }
+  .modal-card .row { display: flex; gap: 8px; justify-content: flex-end; }
+
   /* ---- Bottom nav ---- */
   .bottomnav { position: fixed; left: 0; right: 0; bottom: 0; z-index: 50;
     display: flex; background: var(--card); border-top: 1px solid var(--border);
@@ -835,7 +847,21 @@
   <div class="row">
     <button id="btn-share-download" class="secondary" hidden>Lưu / Chia sẻ</button>
     <button id="btn-blob-download" class="secondary" hidden>Tải về (blob)</button>
+    <button id="btn-opfs-cleanup" class="secondary" hidden>Dọn file tạm</button>
     <button id="btn-download-close" class="secondary" aria-label="Ẩn thanh Lưu file">✕</button>
+  </div>
+</div>
+
+<!-- Hộp thoại cảnh báo file lớn (Mục C4): hiện TRƯỚC khi đọc file >400MB
+     vào RAM; "Tiếp tục" mới mở file, "Hủy" thì dừng hẳn, không chạy ngầm. -->
+<div id="large-file-modal" class="modal" hidden role="alertdialog" aria-labelledby="large-file-title">
+  <div class="modal-card">
+    <h3 id="large-file-title">File lớn — cần xác nhận</h3>
+    <p id="large-file-text"></p>
+    <div class="row">
+      <button id="large-file-continue" class="primary">Tiếp tục</button>
+      <button id="large-file-cancel" class="secondary">Hủy</button>
+    </div>
   </div>
 </div>
 
@@ -850,6 +876,7 @@
 <script src="kb-store.js"></script>
 <script src="worker-pool.js"></script>
 <script src="stream.js"></script>
+<script src="opfs.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

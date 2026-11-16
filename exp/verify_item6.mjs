@@ -71,7 +71,7 @@ const CACHE_NAME = CACHE_VERSION ? "beartea-" + CACHE_VERSION : null;
     performance.now() - t0);
 }
 
-const SHELL_FILES = ["index.html", "kb-store.js", "worker-pool.js", "stream.js", "app.js", "gt.js"];
+const SHELL_FILES = ["index.html", "kb-store.js", "worker-pool.js", "stream.js", "opfs.js", "app.js", "gt.js"];
 let shellRaw = 0, shellGzip = 0;
 const shellLines = [];
 for (const f of SHELL_FILES) {
@@ -83,7 +83,7 @@ for (const f of SHELL_FILES) {
 { // A2a. Shell tĩnh gzip <100KB (số thật, đo từ đĩa)
   const t0 = performance.now();
   rec("shell_gzip_under_100kb", shellGzip < 100 * 1024,
-    "shell lần tải đầu (index.html + 5 JS giao diện, KHÔNG tính Pyodide): " +
+    "shell lần tải đầu (index.html + 6 JS giao diện, KHÔNG tính Pyodide): " +
     shellLines.join("; ") + " | TỔNG gzip=" + shellGzip + "B (" + (shellGzip / 1024).toFixed(1) +
     "KB) < 100KB; index.html riêng raw=" + fs.statSync(SITE + "/index.html").size +
     "B (" + (fs.statSync(SITE + "/index.html").size / 1024).toFixed(1) + "KB) < 100KB",

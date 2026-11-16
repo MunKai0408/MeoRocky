@@ -23,7 +23,10 @@
 //     vẫn đi qua bridge (compress.py đã stream nội bộ qua tarfile r|xz).
 //   - Output từ worker (extract.zip, batch.zip, out.tar.xz) vẫn là một
 //     ArrayBuffer duy nhất do worker trả về; chỉ được gói thành Blob
-//     (không copy thêm) rồi tải — OPFS là mục C4, làm SAU đợt này.
+//     (không copy thêm) rồi tải — MỤC C4 ĐÃ LÀM: output >=1MB được ghi dần
+//     ra OPFS từng phần 8MB (opfs.js, app.js download()), xong thì bỏ tham
+//     chiếu buffer gốc (runOp) nên input + output không cùng nằm trong RAM
+//     sau khi xuất; đường RAM chỉ còn cho file nhỏ / fallback không OPFS.
 //
 // Fallback về bridge khi: không phải ZIP (không có EOCD), ZIP64, có
 // container lồng (entry .zip/.ipa/.tar/.gz/.tgz/.xz/.bz2/.pck/.pak —

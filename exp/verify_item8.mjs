@@ -74,7 +74,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   try {
     const j = JSON.parse(r.stdout || "{}");
     if (j.fails && j.fails.length) { ok = false; detail = j.fails.join(" | "); }
-    else detail = "stdlib-only + Python 3.9 + files.json=89 + tests.json=157 + sw.js precache có sdk/plan.py + CACHE_VERSION=v9-20261116";
+    else detail = "stdlib-only + Python 3.9 + files.json=89 + tests.json=157 + sw.js precache có sdk/plan.py + CACHE_VERSION=v10-20261116";
   } catch (e) { ok = false; detail = "không đọc được JSON: " + (r.stdout || "") + (r.stderr || ""); }
   rec("static_item8_checks", ok, detail, performance.now() - t0);
 }
