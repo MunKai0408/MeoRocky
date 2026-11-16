@@ -9,9 +9,11 @@
 //                  | {id, ok:true, result: string(JSON), file?: {name, data:ArrayBuffer}}
 //                  | {id, ok:false, error: string}
 
-importScripts("https://cdn.jsdelivr.net/pyodide/v314.0.8/full/pyodide.js");
+// Pyodide được vendor ngay trong repo (thư mục pyodide/) để tránh lỗi CORS
+// của Safari khi tải cross-origin từ CDN trong Worker.
+importScripts("pyodide/pyodide.js");
 
-const PYODIDE_INDEX = "https://cdn.jsdelivr.net/pyodide/v314.0.8/full/";
+const PYODIDE_INDEX = new URL("pyodide/", self.location.href).href;
 const PB3_ROOT = "/pb3web";
 
 let pyodide = null;

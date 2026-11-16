@@ -17,8 +17,9 @@ GitHub API không bật được Pages nên bước này cần bấm tay:
 
 ## Cách dùng
 
-1. Mở trang, đợi trạng thái “Sẵn sàng” (lần đầu cần mạng để tải Pyodide ~10MB;
-   sau đó xử lý hoàn toàn trên máy bạn).
+1. Mở trang, đợi trạng thái “Sẵn sàng” (lần đầu cần mạng để tải trang +
+   Pyodide ~13MB — đã vendor cùng trang, không qua CDN; sau đó xử lý
+   hoàn toàn trên máy bạn).
 2. Chọn file (IPA/ZIP/.unity3d/.assets/.ttf/.json/.tar.xz) bằng nút chọn file.
 3. Chọn tab tính năng:
    - **Danh sách**: liệt kê entry của ZIP/IPA.
@@ -44,8 +45,13 @@ GitHub API không bật được Pages nên bước này cần bấm tay:
 - `fonts/`: font Be Vietnam Pro (SIL OFL 1.1, xem `fonts/OFL.txt`) lưu
   dạng base64 text để đẩy lên GitHub bằng API text-only; trình duyệt
   giải mã lại thành file .ttf khi chạy.
-- Pyodide **v314.0.8** (Python 3.14.2 trong Pyodide), tải từ
-  `cdn.jsdelivr.net/pyodide/v314.0.8/full/`, kèm binding `lz4`.
+- Pyodide **v314.0.8** (Python 3.14.2 trong Pyodide) được **vendor ngay
+  trong repo** (thư mục `pyodide/`: `pyodide.js`, `pyodide.asm.mjs`,
+  `pyodide.asm.wasm`, `pyodide-lock.json`, `python_stdlib.zip`, kèm wheel
+  `lz4`) — tải cùng origin với trang, **không qua CDN**. Lý do: Safari
+  trên iPhone chặn `fetch` cross-origin trong Worker (lỗi
+  “Network response is CORS-cross-origin” khi tải Pyodide từ
+  `cdn.jsdelivr.net`), nên bản web v1.1 bỏ hẳn CDN.
 
 ## Kết quả thử nghiệm (đo thật — giai đoạn 1, Node.js trên VM)
 
@@ -80,8 +86,9 @@ Hai điều chỉnh ở tầng khởi động (không sửa mã PB3): dựng reg
   IPA game thật (200MB, nhiều bundle) chưa thử trên web.
 - Font: atlas SDF của TextMeshPro không tái tạo được; gộp glyph chỉ cho
   TrueType glyf (giới hạn gốc của PB3).
-- Lần mở trang đầu cần mạng (tải Pyodide + gói `lz4` từ CDN). Sau đó xử lý
-  offline; riêng tính năng dịch Google (khi nào có) mới cần mạng.
+- Lần mở trang đầu cần mạng (tải trang + Pyodide ~13MB từ chính trang này,
+  không qua CDN). Sau đó xử lý offline; riêng tính năng dịch Google (khi
+  nào có) mới cần mạng.
 - IPA đã là ZIP nén sẵn nên nén 5:1 thường không đạt — tool báo kích thước
   thật, không hứa quá.
 
@@ -110,6 +117,15 @@ bằng Pyodide npm — 15/15 mục PASS, 0 FAIL (`exp/verify_site.mjs`,
 Chưa kiểm chứng: đường tải file bằng `fetch` trong Worker trên trình duyệt
 thật và trên iPhone (Safari). Logic Python đã xanh; phần JS tải file + Worker
 cần thử bằng trình duyệt sau khi bật Pages.
+
+## Kiểm chứng Pyodide vendor (không CDN, Node)
+
+`exp/verify_vendor.mjs` nạp Pyodide với `indexURL` trỏ vào `site/pyodide/`
+và chặn mọi `fetch` http(s) trong lúc chạy — **16/16 mục PASS, 0 FAIL**,
+0 lần fetch http trong suốt quá trình boot (`exp/vendor_results.md`):
+khởi động 20/20 plugin, nạp binding `lz4` từ wheel vendor, extract
+`game1.zip` (21 entry, 6 file), dịch offline + credit, nén/giải nén
+byte-identical. Chứng minh boot không còn chạm cross-origin nào.
 
 ## Kiểm chứng cục bộ (không cần trình duyệt)
 
