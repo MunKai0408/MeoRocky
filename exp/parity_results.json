@@ -1,0 +1,75 @@
+{
+  "write_site_files": {
+    "ok": true,
+    "detail": "87 file pb3/ ghi vào /pb3web; stand-in iSH: KHÔNG — chạy trên bản vendor thật",
+    "seconds": 0
+  },
+  "boot_20_plugins": {
+    "ok": true,
+    "detail": "{\"ok\":true,\"plugins\":20,\"plugin_ids\":[\"apple_plist\",\"apple_strings\",\"cocos_detect\",\"csv_table\",\"defold_detect\",\"gamemaker_detect\",\"generic_strings\",\"godot_pck\",\"godot_translation\",\"json_text\",\"po_mo\",\"properties\",\"resx\",\"sqlite_loc\",\"unreal_locres\",\"unreal_pak\",\"xliff\",\"xml_strings\",\"yaml_ini\",\"zip\"],\"problems\":[]}",
+    "seconds": 1.1
+  },
+  "bridge_new_fns": {
+    "ok": true,
+    "detail": "{\"mod_patch\":true,\"batch_run\":true,\"kb_add\":true,\"kb_query\":true,\"kb_list\":true,\"kb_forget\":true,\"kb_export\":true,\"kb_import\":true,\"support_matrix\":true}",
+    "seconds": 0
+  },
+  "mod_dryrun": {
+    "ok": true,
+    "detail": "verified=true occ=1 mode=PATCH_INPLACE script 17->17B unit 6763->6763B dest=null no_mod_out=true input_unchanged=true progress_mod=true",
+    "seconds": 0.4
+  },
+  "mod_write": {
+    "ok": true,
+    "detail": "dest=/tmp/mod_out/resources.assets exists=true patched_script=\"Chào 9 Kings!\\u0000\\u0000\\u0000\" input_unchanged=true",
+    "seconds": 0
+  },
+  "mod_bundle": {
+    "ok": true,
+    "skipped": false,
+    "detail": "entry=CAB-0123456789abcdef0123456789abcdef pid=1001 old=\"Xin \" verified=true occ=1 mode=PATCH_INPLACE",
+    "seconds": 0
+  },
+  "kb_add_query_list": {
+    "ok": true,
+    "detail": "game_id=1 engine=unknown query_found=true files=5 list_games=1 size=115368B",
+    "seconds": 0.1
+  },
+  "kb_export": {
+    "ok": true,
+    "detail": "dest=/tmp/pb3_kb.sqlite size=57344B games=1 copy_reopen_games=1",
+    "seconds": 0
+  },
+  "kb_forget": {
+    "ok": true,
+    "detail": "forgotten=true list_games_after=0",
+    "seconds": 0
+  },
+  "kb_import": {
+    "ok": true,
+    "detail": "file_phase2: imported=0 skipped=1 (game1.zip không có bundle id) list_after=0 source_unchanged=true; file_có_bundle: imported=1 bundle=com.example.kbtest list_after=1 warnings=1",
+    "seconds": 0
+  },
+  "batch_sequential_2jobs": {
+    "ok": true,
+    "detail": "total=2 ok=2 failed=0 jobs=1 ckpt_games=2 zip=2077B progress_batch_2_2=true games=[ok:game_01_game1,ok:game_02_resources]",
+    "seconds": 0.1
+  },
+  "batch_resume_checkpoint": {
+    "ok": true,
+    "detail": "total=2 skipped=2 ok=0 notes=[\"đã xong (checkpoint)\",\"đã xong (checkpoint)\"]",
+    "seconds": 0
+  },
+  "support_matrix": {
+    "ok": "M2",
+    "detail": "plugins=20 containers=11 unity=7 real_game=1 unsupported=7 first=apple_plist/M2 md_lines=105",
+    "seconds": 0
+  },
+  "translate_regression": {
+    "ok": true,
+    "detail": "offline play->Chơi; worker import gt.js=true expose globalThis=true gt.js export=true; google_fn fallback offline=offline play->Chơi",
+    "seconds": 0.2
+  },
+  "_failures": 0,
+  "_standin_used": false
+}

@@ -1,0 +1,43 @@
+{
+  "no_http_fetch_during_load": {
+    "ok": true,
+    "detail": "http fetch trong lúc loadPyodide: 0",
+    "seconds": 0
+  },
+  "write_site_files": {
+    "ok": true,
+    "detail": "87 file pb3/ + font b64 ghi vào /pb3web",
+    "seconds": 0
+  },
+  "boot": {
+    "ok": true,
+    "detail": "{\"ok\":true,\"plugins\":20,\"plugin_ids\":[\"apple_plist\",\"apple_strings\",\"cocos_detect\",\"csv_table\",\"defold_detect\",\"gamemaker_detect\",\"generic_strings\",\"godot_pck\",\"godot_translation\",\"json_text\",\"po_mo\",\"properties\",\"resx\",\"sqlite_loc\",\"unreal_locres\",\"unreal_pak\",\"xliff\",\"xml_strings\",\"yaml_ini\",\"zip\"],\"problems\":[]}",
+    "seconds": 1.1
+  },
+  "extract_xml_trigger_no_crash": {
+    "ok": true,
+    "detail": "decision=done total_entries=3 files=[res/values/strings.xml@xml_strings, data/en.json@json_text] errors=[]",
+    "seconds": 0.4
+  },
+  "xml_routed_to_xml_strings": {
+    "ok": true,
+    "detail": "strings.xml plugin=xml_strings entries=1; có file nào qua yaml_ini=false",
+    "seconds": 0
+  },
+  "yaml_ini_sniff_xml_zero": {
+    "ok": true,
+    "detail": "sniff(XML thụt đầu dòng) = 0 (mong đợi 0.0)",
+    "seconds": 0
+  },
+  "parse_ini_struct_xml_e_corrupt": {
+    "ok": true,
+    "detail": "_parse_ini_struct(trigger XML) = PB3Error:E_CORRUPT (mong đợi PB3Error:E_CORRUPT)",
+    "seconds": 0
+  },
+  "normalize_typed_path_trailing_dot": {
+    "ok": true,
+    "detail": "game.ipa. -> /tmp/pathtest/game.ipa; game.ipa -> /tmp/pathtest/game.ipa; khongco.ipa. -> /tmp/pathtest/khongco.ipa.",
+    "seconds": 0
+  },
+  "_failures": 0
+}

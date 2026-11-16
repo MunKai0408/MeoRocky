@@ -1,0 +1,32 @@
+{
+  "no_http_fetch_during_load": {
+    "ok": true,
+    "detail": "http fetch trong lúc loadPyodide: 0",
+    "seconds": 0
+  },
+  "write_site_files": {
+    "ok": true,
+    "detail": "87 file pb3/ ghi vào /pb3web",
+    "seconds": 0
+  },
+  "max_web_input_value": {
+    "ok": true,
+    "detail": "bridge.MAX_WEB_INPUT = 2147483648 (mong đợi 2147483648)",
+    "seconds": 0
+  },
+  "check_size_boundary": {
+    "ok": true,
+    "detail": "1GiB (1024MB): qua — mong đợi qua\n1.5GiB (1536MB): qua — mong đợi qua\n2GiB_chinh_xac (2048MB): qua — mong đợi qua\n2GiB_cong_1 (2048MB): chặn — mong đợi chặn, lỗi nhắc 2GB=true\n2.5GiB (2560MB): chặn — mong đợi chặn, lỗi nhắc 2GB=true",
+    "seconds": 0
+  },
+  "app_js_max_bytes": {
+    "ok": true,
+    "detail": "MAX_BYTES = 2147483648 (mong đợi 2147483648); cổng f.size > MAX_BYTES=true; thông báo nhắc >2GB=true",
+    "seconds": 0
+  },
+  "texts_2gb_warning": {
+    "ok": true,
+    "detail": "không còn \"1GB\" trong 4 file=true; index.html có ≤2GB + cảnh báo 1–1,5GB=true; README có tối đa 2GB + cảnh báo=true",
+    "seconds": 0
+  }
+}
