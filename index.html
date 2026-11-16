@@ -249,6 +249,12 @@
       <p class="note">File chỉ được xử lý trên thiết bị của bạn.</p>
     </div>
     <input type="file" id="file-input" class="visually-hidden">
+    <div class="row">
+      <button id="btn-import-ipa" onclick="document.getElementById('file-input').click()">📲 Nhập file .ipa</button>
+    </div>
+    <p id="ipa-direct-note" class="note"><b>Chọn trực tiếp file .ipa, không cần đổi tên thành .zip.</b>
+    Tab Batch cũng nhận nhiều file .ipa cùng lúc (khung chọn không giới hạn đuôi file).</p>
+    <p id="ipa-fallback-note" class="note">Nếu iPhone không cho chọn file .ipa, hãy đổi tên một bản sao thành .zip rồi chọn file .zip đó.</p>
     <p id="file-info" class="sub" hidden></p>
     <button id="btn-clear-file" class="secondary" hidden>Xóa lựa chọn</button>
     <p class="note">File chỉ được đọc và xử lý trong trình duyệt của bạn. Bản web giới hạn
@@ -753,6 +759,7 @@
 
 <script src="kb-store.js"></script>
 <script src="worker-pool.js"></script>
+<script src="stream.js"></script>
 <script src="app.js"></script>
 </body>
 </html>
