@@ -38,7 +38,7 @@ transfer list thật — đúng chuỗi đã lỗi trên Safari (list → inspec
 | batch_sent_once_second_run_reuses | PASS | 0.1 | batch1=true batch2=true worker_nhan_sau_lan1=6 sau_lan2=6 (kỳ vọng bằng nhau) log=["game.zip","game2.zip","game.zip","game.zip","b1.zip","b2.zip"] buffer_batch_nguyen=true |
 | ipa_hint_negative_cases | PASS | 0.2 | zip_1_ipa_thang_hint_an=true; zip_thuong_khong_ipa_hint_an=true |
 | static_hotfix_markers | PASS | 0 | fileSentFor/batchSentFor=true slice(0)=true khong_con_transfer_goc=true hint_fn=true hint_els_html=true worker_ghi_chu=true |
-| pyodide_bridge_mojibake | PASS | 3.6 | entries=["‎ 9 Kings_v1.0.5-AppAssassin.ipa","__MACOSX/._‎ 9 Kings_v1.0.5-AppAssassin.ipa"] http_fetch=0 (bridge thật trong Pyodide, file site/pb3 đã sửa) |
+| pyodide_bridge_mojibake | PASS | 3.5 | entries=["‎ 9 Kings_v1.0.5-AppAssassin.ipa","__MACOSX/._‎ 9 Kings_v1.0.5-AppAssassin.ipa"] http_fetch=0 (bridge thật trong Pyodide, file site/pb3 đã sửa) |
 | python_mojibake_regression | PASS | 0.3 | status=0, 4/4 test ok trong output unittest (4 dòng "... ok") |
 
 Thất bại: 0
@@ -50,15 +50,3 @@ Thất bại: 0
   đúng " 9 Kings…", chỉ là ký tự điều khiển hướng chữ do iOS chèn, không phải lỗi.
 - Fix mojibake nằm ở bản vendor site/pb3 (web); cây iSH ~/workspace/pb3_fix/pb3 chưa
   được sửa — cần port cùng fix sang đó ở đợt vá iSH sau (patch03).
-## Kiểm chứng thêm (chạy sau khi harness viết báo cáo này)
-- Harness cũ chạy lại, tất cả xanh: verify_module_worker.mjs 17/17,
-  verify_patch01_web.mjs 8/8, verify_parity.mjs 14/14, verify_limit_2gb.mjs 6/6,
-  verify_phase1_ci.mjs 8/8.
-- Full suite site/pb3 (unittest discover, hệ thống): Ran 1566 tests OK
-  (1562 cũ + 4 test mojibake mới), 0 fail — gồm test_container 43/43 và
-  test_compress 36/36.
-- Manifest đã cập nhật: exp/phase1_push_manifest.json 26 → 32 entry
-  (cập nhật app.js, index.html, pb3/tests/test_container.py; thêm worker.js,
-  pb3/sdk/containers.py, pb3/sdk/compress.py, exp/verify_clone_fix.mjs,
-  exp/clone_fix_worker.mjs, exp/clone_fix_results.md với sha256 + bytes đúng).
-- KHÔNG đẩy gì lên GitHub trong đợt này (theo yêu cầu task); coordinator lo phần đẩy.

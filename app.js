@@ -30,6 +30,8 @@ const state = {
   lastCheckpoint: null,  // chuỗi checkpoint batch mới nhất (để tải về)
   loadedCheckpoint: null, // checkpoint nạp từ localStorage để resume
   lastExtractKv: null,   // JSON text trích xuất được (để dịch tiếp)
+  lastDownload: null,    // {name, blob} file vừa tạo xong (để Chia sẻ / tải blob lại)
+  unityBundles: [],      // bundle/.assets trong ZIP/IPA đang inspect
   pending: new Map(),    // id -> {resolve, reject, op, t0, lastPct}
   nextId: 1,
   currentOp: null,
@@ -177,6 +179,13 @@ async function runOp(label, fn, args, files, fileOut) {
   try {
     const msg = await callWorker("run", { fn, args: args || [], files: files || [] });
     const parsed = JSON.parse(msg.result);
+    // Lỗi từ bridge (parsed.ok === false) thì ném luôn để catch dưới hiện
+    // banner CÓ NHÃN thao tác ("<Tên thao tác> lỗi: ..."). Trước đây các
+    // handler tự kiểm tra parsed.ok rồi showError("Lỗi: " + ...) nên banner
+    // mất nhãn, không biết thao tác nào lỗi.
+    if (parsed && parsed.ok === false) {
+      throw new Error(parsed.error || parsed.code || "Lỗi không rõ");
+    }
     progDone(label);
     if (fileOut && msg.file) download(msg.file.name, msg.file.data);
     return { parsed, file: msg.file || null };
@@ -190,14 +199,113 @@ async function runOp(label, fn, args, files, fileOut) {
   }
 }
 
-function download(name, data) {
-  const blob = new Blob([data], { type: "application/octet-stream" });
-  const url = URL.createObjectURL(blob);
+// ---- Tải file về (Safari) ----
+// NGUYÊN NHÂN GỐC download kẹt trên Safari thật (Joseph 11:32–11:36):
+// file CÓ nằm trong Files > Tải về nhưng là file dở dang, kẹt mãi không bao
+// giờ xong. Safari tạo entry tải về rồi daemon tải đọc blob URL bất đồng bộ
+// để ghi file — bản cũ hủy URL sau đúng 5 giây tính từ lúc click, daemon đọc
+// file lớn (95MB) chưa xong thì link đã chết → file dở dang kẹt mãi. Giả
+// thuyết "bấm Tải về trong 5 giây thì được" đã bị Joseph bác bỏ 11:34 (bấm
+// ngay vẫn kẹt) — đường blob a.click() trên Safari iPhone này không đáng tin
+// cậy dù bấm nhanh. Vì vậy: (a) giữ URL sống 10 phút, hủy URL lần tải trước
+// khi bắt đầu lần mới (chỉ giữ tối đa 1 blob), hủy khi trang đóng (pagehide);
+// (b) Share API là ĐƯỜNG LƯU CHÍNH trên iOS (bảng Chia sẻ → "Lưu vào Tệp"),
+// blob chỉ là dự phòng khi Share không có sẵn hoặc user chủ động chọn.
+let lastDownloadUrl = null;
+function revokeLastDownloadUrl() {
+  if (lastDownloadUrl) {
+    try { URL.revokeObjectURL(lastDownloadUrl); } catch (e) { /* URL đã hủy */ }
+    lastDownloadUrl = null;
+  }
+}
+window.addEventListener("pagehide", revokeLastDownloadUrl);
+// Kiểm tra xem file này có chia sẻ được bằng Web Share API không.
+// (iOS Safari: canShare({files}) trả true — đường này là native, không qua
+// download manager nên không kẹt như blob a.click().)
+function canShareFile(blob, name) {
+  try {
+    const f = new File([blob], name, { type: "application/octet-stream" });
+    return !!(navigator.canShare && navigator.canShare({ files: [f] }));
+  } catch (e) { return false; }
+}
+
+// Bấm anchor blob để trình duyệt tải về (đường dự phòng — Safari iPhone kẹt
+// cả khi bấm "Tải về" ngay trong 5 giây, Joseph 11:34; chỉ dùng khi Share
+// không có sẵn hoặc user chủ động chọn nút “Tải về (blob)”).
+function fireBlobDownload(url, name) {
   const a = document.createElement("a");
   a.href = url; a.download = name;
   document.body.appendChild(a); a.click(); a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 5000);
 }
+
+function download(name, data) {
+  const blob = data instanceof Blob ? data : new Blob([data], { type: "application/octet-stream" });
+  revokeLastDownloadUrl();   // chỉ giữ tối đa 1 blob URL sống
+  const url = URL.createObjectURL(blob);
+  lastDownloadUrl = url;
+  // Hủy sau 10 phút — đủ cho daemon tải của Safari đọc xong cả file lớn
+  // (95MB); không hủy sau 5 giây như trước (giết link giữa chừng khi daemon
+  // đang ghi → file dở dang kẹt mãi trong Files > Tải về, Joseph 11:36).
+  // Timer chỉ hủy đúng URL này (nếu đã có lần tải mới thì URL đã bị hủy ở
+  // đầu lần tải đó rồi, timer cũ không được chạm vào URL mới).
+  setTimeout(() => { if (lastDownloadUrl === url) revokeLastDownloadUrl(); }, 600000);
+  state.lastDownload = { name, blob };
+  const hint = $("download-hint");
+  const shareBtn = $("btn-share-download");
+  const blobBtn = $("btn-blob-download");
+  if (canShareFile(blob, name)) {
+    // ĐƯỜNG LƯU CHÍNH trên iOS: Chia sẻ native (bảng Chia sẻ → "Lưu vào
+    // Tệp"), không qua download manager. Không tự bấm blob.
+    if (hint) {
+      hint.textContent = "File " + name + " (" + fmtBytes(blob.size) +
+        ") đã sẵn sàng — bấm “Lưu / Chia sẻ” để lưu vào Files (cách chắc chắn nhất trên iPhone). " +
+        "Nếu muốn tải bằng trình duyệt thì bấm “Tải về (blob)” bên dưới.";
+      hint.hidden = false;
+      try { hint.scrollIntoView({ block: "nearest" }); } catch (e) {}
+    }
+    if (shareBtn) shareBtn.hidden = false;
+    if (blobBtn) blobBtn.hidden = false;
+  } else {
+    // Không chia sẻ được (vd desktop không hỗ trợ share file): tải bằng blob như trước.
+    fireBlobDownload(url, name);
+    if (hint) {
+      hint.textContent = "Đang tải về " + name + " (" + fmtBytes(blob.size) +
+        ") — trình duyệt sẽ hỏi thì bấm Tải về, giữ tab mở; file lớn có thể cần vài phút.";
+      hint.hidden = false;
+    }
+    if (shareBtn) shareBtn.hidden = true;
+    if (blobBtn) blobBtn.hidden = true;
+  }
+}
+// Nút "Lưu / Chia sẻ": dùng Web Share API để lưu thẳng vào Files (hoặc app
+// khác) — đường lưu chính trên iPhone, không qua download manager.
+$("btn-share-download").addEventListener("click", async () => {
+  const d = state.lastDownload;
+  if (!d) return;
+  try {
+    const file = new File([d.blob], d.name, { type: "application/octet-stream" });
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      await navigator.share({ files: [file] });
+    } else {
+      showError("Chia sẻ lỗi: Trình duyệt này không hỗ trợ chia sẻ file — hãy bấm “Tải về (blob)” để tải bằng trình duyệt.");
+    }
+  } catch (e) {
+    if (e && e.name === "AbortError") return;   // user hủy bảng chia sẻ
+    showError("Chia sẻ lỗi: " + (e.message || e));
+  }
+});
+// Nút "Tải về (blob)": đường dự phòng — bấm anchor blob để trình duyệt tải
+// về. URL có thể đã bị hủy sau 10 phút thì tạo lại từ blob đang giữ.
+$("btn-blob-download").addEventListener("click", () => {
+  const d = state.lastDownload;
+  if (!d) return;
+  if (!lastDownloadUrl) {
+    lastDownloadUrl = URL.createObjectURL(d.blob);
+    const u = lastDownloadUrl;
+    setTimeout(() => { if (lastDownloadUrl === u) revokeLastDownloadUrl(); }, 600000);
+  }
+  fireBlobDownload(lastDownloadUrl, d.name);
+});
 
 function inputFileArgs() {
   if (!state.file) throw new Error("Chưa chọn file. Hãy chọn file ở trên trước.");
@@ -280,7 +388,6 @@ for (const t of tabs) {
 $("btn-list-run").addEventListener("click", async () => {
   try {
     const { parsed } = await runOp("Liệt kê entry", "list_entries", [inputPath()], inputFileArgs());
-    if (!parsed.ok) { showError("Lỗi: " + parsed.error); return; }
     let html = "<p>Loại: <b>" + esc(parsed.kind) + "</b> · " + parsed.total + " entry</p><table><tr><th>Đường dẫn</th><th>Loại</th><th>Kích thước</th></tr>";
     for (const e of parsed.entries.slice(0, 200)) {
       html += "<tr><td>" + esc(e.path) + "</td><td>" + esc(e.kind) + "</td><td>" + fmtBytes(e.size) + "</td></tr>";
@@ -293,34 +400,73 @@ $("btn-list-run").addEventListener("click", async () => {
 });
 
 // ---- Unity inspect ----
+// File ZIP/IPA: bridge trả danh sách bundle/.assets bên trong để user chọn
+// 1 cái inspect trực tiếp (không parse cả file ZIP — trước đây lỗi
+// E_UNSUPPORTED_FORMAT). Không có bundle nào thì hiện hướng dẫn trích xuất.
+function renderUnityResult(parsed) {
+  let html = "";
+  if (parsed.entry) html += "<p>Entry trong IPA/ZIP: <b>" + esc(parsed.entry) + "</b></p>";
+  if (parsed.bundle) {
+    html += "<p>Bundle Unity: <b>" + esc(parsed.unity_version || "?") + "</b> · nén " + esc(parsed.compression || "?") + " · " + (parsed.entries || []).length + " entry</p>";
+  } else {
+    html += "<p>File .assets độc lập (không phải bundle).</p>";
+  }
+  for (const f of parsed.files || []) {
+    if (f.error) { html += "<p>Entry " + esc(f.entry) + ": lỗi " + esc(f.error) + "</p>"; continue; }
+    html += "<h3>" + esc(f.entry) + " — Unity " + esc(f.unity_version || "?") + " · " + f.objects + " object · " + f.text_assets.length + " TextAsset</h3><ul>";
+    for (const t of f.text_assets) {
+      html += "<li>#" + t.path_id + " <b>" + esc(t.name) + "</b>: " + esc(t.head) + "</li>";
+    }
+    html += "</ul>";
+  }
+  return html || "<p>Không thấy TextAsset nào.</p>";
+}
+async function inspectUnityEntry() {
+  const sel = $("unity-bundle-select");
+  const entry = sel && sel.value;
+  if (!entry) return;
+  try {
+    const { parsed } = await runOp("Inspect Unity", "unity_inspect_entry", [inputPath(), entry], inputFileArgs());
+    $("unity-result").innerHTML = renderUnityResult(parsed);
+  } catch (e) { /* runOp đã báo lỗi có nhãn */ }
+}
 $("btn-unity-run").addEventListener("click", async () => {
   try {
     const { parsed } = await runOp("Inspect Unity", "unity_inspect", [inputPath()], inputFileArgs());
-    if (!parsed.ok) { showError("Lỗi: " + parsed.error); maybeShowIpaZipHint($("unity-ipa-hint")); return; }
-    let html = "";
-    if (parsed.bundle) {
-      html += "<p>Bundle Unity: <b>" + esc(parsed.unity_version || "?") + "</b> · nén " + esc(parsed.compression || "?") + " · " + (parsed.entries || []).length + " entry</p>";
-    } else {
-      html += "<p>File .assets độc lập (không phải bundle).</p>";
-    }
-    for (const f of parsed.files || []) {
-      if (f.error) { html += "<p>Entry " + esc(f.entry) + ": lỗi " + esc(f.error) + "</p>"; continue; }
-      html += "<h3>" + esc(f.entry) + " — Unity " + esc(f.unity_version || "?") + " · " + f.objects + " object · " + f.text_assets.length + " TextAsset</h3><ul>";
-      for (const t of f.text_assets) {
-        html += "<li>#" + t.path_id + " <b>" + esc(t.name) + "</b>: " + esc(t.head) + "</li>";
+    if (parsed.is_container) {
+      // Giữ hint unity-ipa-hint: file ZIP-chứa-IPA (do "Nén" thay vì "Đổi tên")
+      // thì gợi ý đổi tên — trước đây hint chỉ hiện ở nhánh catch, nay inspect
+      // ZIP không còn ném lỗi nữa nên phải gọi tường minh ở nhánh container.
+      // maybeShowIpaZipHint tự ẩn hint khi file không khớp mẫu (IPA thật).
+      maybeShowIpaZipHint($("unity-ipa-hint"));
+      const bundles = parsed.bundles || [];
+      if (!bundles.length) {
+        $("unity-result").innerHTML =
+          "<p>File này là ZIP/IPA và <b>không chứa bundle .unity3d hay file .assets nào</b> để inspect trực tiếp.</p>" +
+          "<p class=note>Inspect Unity chỉ đọc trực tiếp bundle .unity3d hoặc file .assets độc lập. " +
+          "Hãy dùng tab Trích xuất để lấy text ra, hoặc mở IPA ra lấy 1 file .assets rồi chọn file đó để inspect.</p>";
+      } else {
+        let html = "<p>File này là ZIP/IPA (" + parsed.total_entries + " entry) — chọn 1 bundle/.assets bên trong để inspect" +
+          (parsed.bundles_total > bundles.length ? " (hiện " + bundles.length + "/" + parsed.bundles_total + ")" : "") + ":</p>" +
+          "<select id=\"unity-bundle-select\">";
+        for (const b of bundles) {
+          html += "<option value=\"" + esc(b.path) + "\">" + esc(b.path) + " (" + fmtBytes(b.size) + ")</option>";
+        }
+        html += "</select> <button id=\"btn-unity-inspect-entry\">Inspect bundle đã chọn</button>";
+        $("unity-result").innerHTML = html;
+        $("btn-unity-inspect-entry").addEventListener("click", inspectUnityEntry);
       }
-      html += "</ul>";
+      return;
     }
-    $("unity-result").innerHTML = html || "<p>Không thấy TextAsset nào.</p>";
-  } catch (e) { /* đã báo lỗi */ }
+    $("unity-result").innerHTML = renderUnityResult(parsed);
+  } catch (e) { maybeShowIpaZipHint($("unity-ipa-hint")); }
 });
 
 // ---- Trích xuất ----
 $("btn-extract-run").addEventListener("click", async () => {
   try {
     const { parsed } = await runOp("Trích xuất text", "extract", [inputPath()], inputFileArgs(), true);
-    if (!parsed.ok) { showError("Lỗi: " + parsed.error); return; }
-    let html = "<p>Kết quả: <b>" + esc(parsed.decision) + "</b> · " + parsed.total_entries + " entry · " + parsed.files.length + " file · đã tải về <b>extract.zip</b></p><table><tr><th>File</th><th>Plugin</th><th>Chuỗi</th><th>Locale</th></tr>";
+    let html = "<p>Kết quả: <b>" + esc(parsed.decision) + "</b> · " + parsed.total_entries + " entry · " + parsed.files.length + " file · file <b>extract.zip</b> đã sẵn sàng — bấm “Lưu / Chia sẻ” ở mục 1 để lưu về máy</p><table><tr><th>File</th><th>Plugin</th><th>Chuỗi</th><th>Locale</th></tr>";
     for (const f of parsed.files) {
       html += "<tr><td>" + esc(f.path) + "</td><td>" + esc(f.plugin) + "</td><td>" + f.entries + "</td><td>" + esc(f.locale || "") + "</td></tr>";
     }
@@ -334,6 +480,24 @@ $("btn-extract-run").addEventListener("click", async () => {
 });
 
 // ---- Dịch ----
+// URL proxy dịch (Cloudflare Worker, mục 2): lưu localStorage, để trống =
+// gọi trực tiếp Google như trước. Gửi sang worker ngay khi tải trang
+// (worker nhận được cả trước khi Pyodide boot xong).
+function sendProxyUrlToWorker() {
+  let url = "";
+  try { url = (localStorage.getItem("pb3_translate_proxy") || "").trim(); } catch (e) { /* localStorage không có */ }
+  worker.postMessage({ op: "set_translate_proxy", url });
+}
+sendProxyUrlToWorker();
+try { $("translate-proxy").value = localStorage.getItem("pb3_translate_proxy") || ""; } catch (e) { /* localStorage không có */ }
+$("translate-proxy").addEventListener("change", (ev) => {
+  const url = ev.target.value.trim();
+  try { localStorage.setItem("pb3_translate_proxy", url); } catch (e) { /* localStorage đầy/không có */ }
+  sendProxyUrlToWorker();
+  $("translate-info").textContent = url
+    ? "Đã lưu URL proxy dịch — các lần dịch Google tiếp theo sẽ đi qua proxy (cache + hạn mức cứng 500.000 ký tự/tháng, hết hạn mức tự rơi về MyMemory + từ điển offline)."
+    : "Đã xóa URL proxy — dịch Google sẽ gọi trực tiếp như trước.";
+});
 $("translate-json-file").addEventListener("change", (ev) => {
   const f = ev.target.files && ev.target.files[0];
   if (!f) return;
@@ -353,7 +517,6 @@ $("btn-translate-run").addEventListener("click", async () => {
     const fn = useGoogle ? "translate_json_google" : "translate_json";
     const label = useGoogle ? "Dịch (Google)" : "Dịch offline";
     const { parsed } = await runOp(label, fn, [text, to, credit]);
-    if (!parsed.ok) { showError("Lỗi: " + parsed.error); return; }
     $("translate-output").value = JSON.stringify(parsed.translated, null, 2);
     let info = "";
     if (useGoogle) {
@@ -418,7 +581,7 @@ function modResultHtml(parsed) {
     if ((e.verify || []).length) html += "<tr><td colspan=6>" + esc(e.verify.join("; ")) + "</td></tr>";
   }
   html += "</table>";
-  if ((parsed.outputs || []).length) html += "<p>File đã ghi, đã tải về: <b>" + esc(parsed.outputs.join(", ")) + "</b></p>";
+  if ((parsed.outputs || []).length) html += "<p>File đã ghi, đã sẵn sàng để lưu: <b>" + esc(parsed.outputs.join(", ")) + "</b> — bấm “Lưu / Chia sẻ” ở mục 1 để lưu về máy</p>";
   html += "<p class=note>" + esc(parsed.note || "") + "</p>";
   return html;
 }
@@ -430,7 +593,6 @@ async function runMod(allowWrite) {
   try {
     const label = allowWrite ? "Mod (ghi file)" : "Mod thử (dry-run)";
     const { parsed } = await runOp(label, "mod_patch", [inputPath(), edits, allowWrite], inputFileArgs(), allowWrite);
-    if (!parsed.ok) { showError("Lỗi: " + parsed.error); return; }
     $("mod-result").innerHTML = modResultHtml(parsed);
   } catch (e) { /* đã báo lỗi */ }
 }
@@ -481,7 +643,6 @@ $("btn-batch-run").addEventListener("click", async () => {
   try {
     const { parsed } = await runOp("Chạy batch (tuần tự)", "batch_run",
       [manifest, dryRun, ckpt, resume], state.batchFiles, true);
-    if (!parsed.ok) { showError("Lỗi: " + parsed.error); return; }
     const s = parsed.summary;
     if (parsed.checkpoint) {
       state.lastCheckpoint = parsed.checkpoint;
@@ -491,7 +652,7 @@ $("btn-batch-run").addEventListener("click", async () => {
       " · tuần tự (jobs=1) · " + s.ok + " ok / " + s.failed + " lỗi / " + s.skipped +
       " bỏ qua / " + s.total + " game · " + s.elapsed_s + " giây" +
       (parsed.resumed ? " · đã tiếp tục từ checkpoint" : "") +
-      " · đã tải về <b>batch.zip</b> (summary, checkpoint, index, từng game)</p>";
+      " · file <b>batch.zip</b> đã sẵn sàng — bấm “Lưu / Chia sẻ” ở mục 1 để lưu về máy (summary, checkpoint, index, từng game)</p>";
     html += "<table><tr><th>#</th><th>Game</th><th>Mode</th><th>Kết quả</th><th>Lỗi</th><th>Giây</th><th>Ghi chú</th></tr>";
     for (const g of s.games || []) {
       html += "<tr><td>" + g.index + "</td><td>" + esc(g.path.split("/").pop()) + "</td><td>" + esc(g.mode) +
@@ -511,7 +672,6 @@ $("btn-kb-add").addEventListener("click", async () => {
   if (!state.file) { showError("Chưa chọn file. Hãy chọn file ở trên trước."); return; }
   try {
     const { parsed } = await runOp("Thêm game vào KB", "kb_add", [inputPath()], inputFileArgs());
-    if (!parsed.ok) { showError("Lỗi: " + parsed.error); return; }
     $("kb-result").innerHTML = "<p>Đã thêm game vào KB: id <b>" + parsed.game_id + "</b> · bundle <b>" +
       esc(parsed.bundle_id || "?") + "</b> · version " + esc(parsed.version || "?") + " · engine " +
       esc(parsed.engine || "?") + " · fingerprint " + esc(parsed.fingerprint) + "…</p>" +
@@ -522,7 +682,6 @@ $("btn-kb-query").addEventListener("click", async () => {
   if (!state.file) { showError("Chưa chọn file. Hãy chọn file ở trên trước."); return; }
   try {
     const { parsed } = await runOp("Tra cứu KB", "kb_query", [inputPath()], inputFileArgs());
-    if (!parsed.ok) { showError("Lỗi: " + parsed.error); return; }
     if (!parsed.found) {
       $("kb-result").innerHTML = "<p>Chưa có profile cho game này trong KB. Lý do: " + esc(parsed.reason || "?") + "</p>";
       return;
@@ -537,7 +696,6 @@ $("btn-kb-query").addEventListener("click", async () => {
 $("btn-kb-list").addEventListener("click", async () => {
   try {
     const { parsed } = await runOp("Liệt kê KB", "kb_list", [], null);
-    if (!parsed.ok) { showError("Lỗi: " + parsed.error); return; }
     let html = "<p>" + parsed.games.length + " game trong KB · dung lượng " + fmtBytes(parsed.size_bytes) + " · chỉ trong phiên này.</p>";
     if (parsed.games.length) {
       html += "<table><tr><th>ID</th><th>Bundle</th><th>Version</th><th>Engine</th><th>Lần thấy cuối</th></tr>";
@@ -553,8 +711,7 @@ $("btn-kb-list").addEventListener("click", async () => {
 $("btn-kb-export").addEventListener("click", async () => {
   try {
     const { parsed } = await runOp("Xuất file KB", "kb_export", [], null, true);
-    if (!parsed.ok) { showError("Lỗi: " + parsed.error); return; }
-    $("kb-result").innerHTML = "<p>Đã tải về <b>pb3_kb.sqlite</b> (" + fmtBytes(parsed.size) +
+    $("kb-result").innerHTML = "<p>File <b>pb3_kb.sqlite</b> đã sẵn sàng — bấm “Lưu / Chia sẻ” ở mục 1 để lưu về máy (" + fmtBytes(parsed.size) +
       ", " + parsed.games + " game). Giữ file này — tải lại trang thì KB trong trình duyệt trống lại; nhập lại bằng nút “Nhập KB (.sqlite)” trên tab này.</p>";
   } catch (e) { /* đã báo lỗi */ }
 });
@@ -564,7 +721,6 @@ $("btn-kb-import").addEventListener("click", async () => {
   try {
     const buf = await f.arrayBuffer();
     const { parsed } = await runOp("Nhập KB", "kb_import", ["/tmp/input/" + f.name], [{ name: f.name, data: buf }]);
-    if (!parsed.ok) { showError("Lỗi: " + parsed.error); return; }
     const names = parsed.games.map((g) => esc(g.bundle_id || "?")).join(", ");
     $("kb-result").innerHTML = "<p>Đã nhập <b>" + parsed.imported + "</b> game vào KB: " + (names || "—") + "." +
       (parsed.skipped ? " Bỏ qua <b>" + parsed.skipped + "</b> game (xem cảnh báo dưới)." : "") + "</p>" +
@@ -576,7 +732,6 @@ $("btn-kb-forget").addEventListener("click", async () => {
   if (!id) { showError("Hãy nhập bundle id (hoặc id số) của game cần quên."); return; }
   try {
     const { parsed } = await runOp("Quên game", "kb_forget", [id], null);
-    if (!parsed.ok) { showError("Lỗi: " + parsed.error); return; }
     $("kb-result").innerHTML = "<p>" + (parsed.forgotten ? "Đã quên game '" + esc(id) + "'." : "Không có game '" + esc(id) + "' trong KB.") + "</p>";
   } catch (e) { /* đã báo lỗi */ }
 });
@@ -585,7 +740,6 @@ $("btn-kb-forget").addEventListener("click", async () => {
 $("btn-support-run").addEventListener("click", async () => {
   try {
     const { parsed } = await runOp("Ma trận hỗ trợ", "support_matrix", [], null);
-    if (!parsed.ok) { showError("Lỗi: " + parsed.error); return; }
     const d = parsed.data;
     let html = "<h3>Bảng plugin (" + d.plugins.length + ")</h3><table><tr><th>Plugin</th><th>Loại</th><th>Engine</th><th>Maturity hiệu lực</th><th>Game đã test</th><th>Ngày test</th><th>Giới hạn</th></tr>";
     for (const p of d.plugins) {
@@ -611,28 +765,40 @@ $("btn-support-run").addEventListener("click", async () => {
 });
 
 // ---- Nén / giải nén ----
+// Chặn sai đuôi TRƯỚC khi gọi bridge (trước đây bấm Giải nén khi file đang
+// chọn là .zip thì bridge gọi decompress_archive trên ZIP rồi lỗi E_CORRUPT;
+// bấm Nén khi file đang chọn đã là .tar.xz cũng vô nghĩa).
 $("btn-compress-run").addEventListener("click", async () => {
+  if (!state.file) { showError("Nén lỗi: Chưa chọn file. Hãy chọn file ở trên trước."); return; }
+  if (/\.tar\.xz$/i.test(state.file.name)) {
+    showError("Nén lỗi: File .tar.xz đã là file nén — hãy chọn file .ipa/.zip gốc để nén (hoặc bấm Giải nén để khôi phục file gốc).");
+    return;
+  }
   try {
     const preset = parseInt($("compress-preset").value, 10) || 6;
     const { parsed } = await runOp("Nén IPA", "compress_file", [inputPath(), preset], inputFileArgs(), true);
-    if (!parsed.ok) { showError("Lỗi: " + parsed.error); return; }
     $("compress-result").innerHTML =
       "<p>Gốc: <b>" + fmtBytes(parsed.original_size) + "</b> → nén: <b>" + fmtBytes(parsed.compressed_size) +
       "</b> · tỉ lệ " + parsed.ratio + ":1 (giảm " + parsed.saved_pct + "%) · " + parsed.entries +
       " entry · đích ≤400MB: " + (parsed.target_met ? "ĐẠT" : "KHÔNG ĐẠT — file vẫn xuất kèm ghi chú") +
-      " · đã tải về <b>out.tar.xz</b></p>" +
+      " · file <b>out.tar.xz</b> đã sẵn sàng — bấm “Lưu / Chia sẻ” ở mục 1 để lưu về máy</p>" +
       (parsed.ram_warning ? "<p>Cảnh báo RAM: " + esc(parsed.ram_warning) + "</p>" : "") +
-      "<p>File nén ra là bản lưu trữ, KHÔNG phải IPA cài trực tiếp — dùng tab Giải nén để khôi phục.</p>";
+      "<p>File nén ra là bản lưu trữ, KHÔNG phải IPA cài trực tiếp — dùng nút Giải nén để khôi phục.</p>";
   } catch (e) { /* đã báo lỗi */ }
 });
 $("btn-decompress-run").addEventListener("click", async () => {
+  if (!state.file) { showError("Giải nén lỗi: Chưa chọn file. Hãy chọn file ở trên trước."); return; }
+  if (!/\.tar\.xz$/i.test(state.file.name)) {
+    showError("Giải nén lỗi: File giải nén phải là .tar.xz — hãy chọn file out.tar.xz đã nén ra (nút Nén tạo ra file đó).");
+    return;
+  }
   try {
     const { parsed } = await runOp("Giải nén", "decompress_file", [inputPath()], inputFileArgs(), true);
-    if (!parsed.ok) { showError("Lỗi: " + parsed.error); return; }
+    const fname = parsed.filename || parsed.original_name || "file gốc";
     $("compress-result").innerHTML =
-      "<p>Khôi phục: <b>" + esc(parsed.original_name || "file gốc") + "</b> · " + fmtBytes(parsed.restored_size) +
+      "<p>Khôi phục: <b>" + esc(fname) + "</b> · " + fmtBytes(parsed.restored_size) +
       " · " + parsed.entries + " entry · byte-identical với gốc: <b>" + (parsed.byte_identical ? "ĐÚNG" : "SAI") +
-      "</b> · đã tải về <b>restored.bin</b> (đổi tên thành .ipa để dùng).</p>";
+      "</b> · file gốc <b>" + esc(fname) + "</b> đã sẵn sàng để lưu — bấm “Lưu / Chia sẻ” ở mục 1 để lưu về máy.</p>";
   } catch (e) { /* đã báo lỗi */ }
 });
 
@@ -640,7 +806,6 @@ $("btn-decompress-run").addEventListener("click", async () => {
 $("btn-font-scan").addEventListener("click", async () => {
   try {
     const { parsed } = await runOp("Quét font", "font_scan", [inputPath()], inputFileArgs());
-    if (!parsed.ok) { showError("Lỗi: " + parsed.error); return; }
     $("font-result").innerHTML =
       "<p><b>" + esc(parsed.family || "?") + "</b> (" + esc(parsed.kind) + ") · " + parsed.num_glyphs +
       " glyph · tiếng Việt: <b>" + parsed.covered + "/" + parsed.total + " (" + parsed.pct + "%)</b></p>" +
@@ -653,20 +818,18 @@ $("btn-font-merge").addEventListener("click", async () => {
   try {
     const { parsed } = await runOp("Gộp glyph tiếng Việt", "font_merge",
       [inputPath(), "/pb3web/fonts/BeVietnamPro-Regular.ttf"], inputFileArgs(), true);
-    if (!parsed.ok) { showError("Lỗi: " + parsed.error); return; }
     $("font-result").innerHTML =
       "<p>Đã gộp: thêm <b>" + parsed.added + "</b> ký tự · đã có sẵn " + parsed.already +
       " · font nguồn cũng thiếu " + parsed.donor_missing + " · copy " + parsed.glyphs_copied +
-      " glyph · đã tải về <b>merged.ttf</b></p>" +
+      " glyph · file <b>merged.ttf</b> đã sẵn sàng — bấm “Lưu / Chia sẻ” ở mục 1 để lưu về máy</p>" +
       ((parsed.warnings || []).length ? "<p>Cảnh báo: " + esc(parsed.warnings.join("; ")) + "</p>" : "");
   } catch (e) { /* đã báo lỗi */ }
 });
 $("btn-font-replace").addEventListener("click", async () => {
   try {
     const { parsed } = await runOp("Lấy font Be Vietnam Pro", "font_donor_file", [], null, true);
-    if (!parsed.ok) { showError("Lỗi: " + parsed.error); return; }
     $("font-result").innerHTML =
-      "<p>Đã tải về <b>BeVietnamPro-Regular.ttf</b> (" + fmtBytes(parsed.size) +
+      "<p>File <b>BeVietnamPro-Regular.ttf</b> đã sẵn sàng — bấm “Lưu / Chia sẻ” ở mục 1 để lưu về máy (" + fmtBytes(parsed.size) +
       ") — font đầy đủ tiếng Việt, dùng thay cho font của game.</p>";
   } catch (e) { /* đã báo lỗi */ }
 });
@@ -675,7 +838,6 @@ $("btn-font-replace").addEventListener("click", async () => {
 $("btn-diagnose-run").addEventListener("click", async () => {
   try {
     const { parsed } = await runOp("Chẩn đoán", "diagnose", [inputPath()], inputFileArgs());
-    if (!parsed.ok) { showError("Lỗi: " + parsed.error); return; }
     let html = "<p>Loại: <b>" + esc(parsed.kind) + "</b> · " + fmtBytes(parsed.size) + " · " + parsed.entries.length + " entry</p>";
     html += "<h3>Hex (512 byte đầu)</h3><pre>" + esc(parsed.hex.join("\n")) + "</pre>";
     html += "<h3>Strings (ASCII, tối đa 200)</h3><ul>";

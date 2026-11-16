@@ -22,6 +22,143 @@ const GT_TIMEOUT_MS = 20000;
 const GT_MAX_RETRIES = 3;               // thử lại tối đa 3 lần (như bản iSH)
 const GT_BACKOFF_MS = [1000, 2000, 4000];
 
+// ---- Proxy dịch qua Cloudflare Worker (mục 2) ----
+// URL worker do người dùng dán ở tab Dịch (app.js lưu localStorage
+// "pb3_translate_proxy"). Để trống = gọi trực tiếp Google như trước.
+let proxyUrl = "";
+export function setTranslateProxyUrl(url) {
+  proxyUrl = typeof url === "string" ? url.trim().replace(/\/+$/, "") : "";
+}
+export function getTranslateProxyUrl() { return proxyUrl; }
+
+// MyMemory: dịch miễn phí, không key (giới hạn ~500 ký tự/request ẩn danh,
+// chất lượng thấp hơn Google). Chỉ là tầng fallback giữa Google và từ điển
+// offline — lỗi thì ném để bridge dùng từ điển offline. Endpoint cho phép
+// ghi đè để harness kiểm chứng bằng server giả.
+const MYMEMORY_TIMEOUT_MS = 10000;
+const MYMEMORY_MAX_CHARS = 500;
+let myMemoryEndpoint = "https://api.mymemory.translated.net/get";
+export function setMyMemoryEndpoint(url) { myMemoryEndpoint = url; }
+
+export async function myMemoryTranslateOne(text, src, dst) {
+  if ([...text].length > MYMEMORY_MAX_CHARS) {
+    throw gtError("mymemory", "Chuỗi quá dài cho MyMemory (>500 ký tự).");
+  }
+  const url = myMemoryEndpoint + "?" + new URLSearchParams({
+    q: text, langpair: src + "|" + dst,
+  }).toString();
+  let res;
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), MYMEMORY_TIMEOUT_MS);
+    try {
+      res = await fetch(url, { signal: ctrl.signal });
+    } finally {
+      clearTimeout(timer);
+    }
+  } catch (e) {
+    if (e && e.name === "AbortError") {
+      throw gtError("mymemory", "MyMemory quá thời gian chờ (10 giây).");
+    }
+    throw gtError("mymemory", "Không gọi được MyMemory (mất mạng hoặc chặn CORS).");
+  }
+  if (!res.ok) {
+    throw gtError("mymemory", "MyMemory trả HTTP " + res.status + ".");
+  }
+  let data;
+  try {
+    data = await res.json();
+  } catch (e) {
+    throw gtError("mymemory", "MyMemory trả về dữ liệu không đọc được.");
+  }
+  if (Number(data && data.responseStatus) !== 200 ||
+      !data || !data.responseData || typeof data.responseData.translatedText !== "string") {
+    throw gtError("mymemory",
+      "MyMemory lỗi: " + ((data && data.responseDetails) || ("status " + (data && data.responseStatus))));
+  }
+  return data.responseData.translatedText;
+}
+
+// Dịch 1 chuỗi qua proxy Cloudflare Worker (xem cloudflare/worker.js).
+// Proxy trả {ok:true, translated} hoặc {ok:false, code}:
+//   quota_exceeded -> kind "quota" (hết 500.000 ký tự/tháng, KHÔNG thử
+//                     Google trực tiếp nữa — rơi về MyMemory + offline).
+//   lỗi khác       -> kind "proxy" (gọi thử Google trực tiếp rồi MyMemory).
+export async function proxyTranslateOne(text, src, dst, url) {
+  const target = url || proxyUrl;
+  if (!target) throw gtError("proxy", "Chưa cấu hình URL proxy dịch.");
+  let res;
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), GT_TIMEOUT_MS);
+    try {
+      res = await fetch(target, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ text, source: src, target: dst }),
+        signal: ctrl.signal,
+      });
+    } finally {
+      clearTimeout(timer);
+    }
+  } catch (e) {
+    if (e && e.name === "AbortError") {
+      throw gtError("proxy", "Proxy dịch quá thời gian chờ (20 giây).");
+    }
+    throw gtError("proxy", "Không gọi được proxy dịch (mất mạng hoặc sai URL).");
+  }
+  let data;
+  try {
+    data = await res.json();
+  } catch (e) {
+    throw gtError("proxy", "Proxy dịch trả về dữ liệu không đọc được (HTTP " + res.status + ").");
+  }
+  if (data && data.ok === true && typeof data.translated === "string") {
+    return data.translated;
+  }
+  const code = (data && data.code) || "proxy_error";
+  if (code === "quota_exceeded") {
+    throw gtError("quota",
+      "Proxy dịch: đã hết 500.000 ký tự miễn phí của tháng " +
+      "(đã dùng " + (data.month_used != null ? data.month_used : "?") +
+      "/" + (data.month_limit != null ? data.month_limit : "?") +
+      ") — tự rơi về MyMemory + từ điển offline, không phát sinh phí.");
+  }
+  throw gtError("proxy",
+    "Proxy dịch lỗi (" + code + "): " + ((data && data.error) || ("HTTP " + res.status)) + ".");
+}
+
+// Chuỗi fallback đầy đủ mà worker.js gán cho Python (pb3_google_translate):
+//   proxy (nếu có URL) -> Google trực tiếp -> MyMemory -> ném lỗi để
+//   bridge dùng từ điển offline cho chuỗi đó.
+// Riêng quota_exceeded thì BỎ QUA Google trực tiếp (đúng luật: hết hạn mức
+// tháng thì chỉ còn MyMemory + offline, không vòng lại Google bằng đường khác).
+export async function translateOneWithFallbacks(text, src, dst) {
+  let lastErr = null;
+  let quotaHit = false;
+  if (proxyUrl) {
+    try {
+      return await proxyTranslateOne(text, src, dst, proxyUrl);
+    } catch (e) {
+      if (e && e.kind === "quota") quotaHit = true;
+      lastErr = e;
+    }
+  }
+  if (!quotaHit) {
+    try {
+      return await googleTranslateOne(text, src, dst);
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+  try {
+    return await myMemoryTranslateOne(text, src, dst);
+  } catch (e) {
+    lastErr = e;
+  }
+  throw lastErr || gtError("network", "Dịch lỗi không rõ.");
+}
+
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }

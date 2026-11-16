@@ -61,7 +61,14 @@ function resultFor(fn, args) {
     }
     case "unity_inspect":
       if (!data) return { ok: false, error: "worker chưa có file " + inputName };
-      if (/\.zip$/i.test(inputName)) return { ok: false, error: "không phải bundle Unity (.zip chứa IPA)" };
+      // Mô phỏng bridge thật (hotfix Safari đợt 2): ZIP/IPA không còn lỗi
+      // E_UNSUPPORTED_FORMAT mà trả container + danh sách bundle/.assets để
+      // UI cho user chọn inspect trực tiếp. Fixture ZIP ở đây không chứa
+      // bundle nào nên bundles=[] (UI hiện hướng dẫn trích xuất trước).
+      if (/\.zip$/i.test(inputName)) {
+        const entries = listZipEntries(data);
+        return { ok: true, is_container: true, kind: "zip", bundles: [], bundles_total: 0, total_entries: entries.length };
+      }
       return { ok: true, bundle: false, files: [{ entry: inputName, version: 17, unity_version: "2019.4.40f1", objects: 3, text_assets: [{ path_id: 1001, name: "en", head: "Play" }] }] };
     case "extract":
       if (!data) return { ok: false, error: "worker chưa có file " + inputName };

@@ -320,9 +320,11 @@ let batch1, batch1Ckpt;
   const off = call("translate_json", JSON.stringify({ play: "play", quit: "Quit" }), "vi", false);
   const w = fs.readFileSync(SITE + "/worker.js", "utf8");
   const gt = fs.readFileSync(SITE + "/gt.js", "utf8");
-  const importOk = /import\s*\{\s*googleTranslateOne\s*\}\s*from\s*["']\.\/gt\.js["']/.test(w);
-  const exposeOk = /globalThis\.pb3_google_translate\s*=\s*googleTranslateOne/.test(w);
-  const gtExportOk = /export\s+(async\s+)?function\s+googleTranslateOne|export\s*\{[^}]*googleTranslateOne/.test(gt);
+  // worker.js mục 2: import translateOneWithFallbacks (proxy -> Google -> MyMemory),
+  // vẫn expose globalThis.pb3_google_translate như trước (bridge gọi qua js.).
+  const importOk = /import\s*\{[^}]*translateOneWithFallbacks[^}]*\}\s*from\s*["']\.\/gt\.js["']/.test(w);
+  const exposeOk = /globalThis\.pb3_google_translate\s*=\s*translateOneWithFallbacks/.test(w);
+  const gtExportOk = /export\s+(async\s+)?function\s+translateOneWithFallbacks|export\s*\{[^}]*translateOneWithFallbacks/.test(gt);
   // translate_json_google trong Node: không có js.pb3_google_translate -> rơi về offline, không crash.
   const g = await callAsync("translate_json_google", JSON.stringify({ play: "play" }), "vi", false);
   rec("translate_regression", off.ok === true && off.translated.play === "Chơi" &&

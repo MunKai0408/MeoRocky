@@ -1,0 +1,53 @@
+{
+  "control_old_logic_detaches": {
+    "ok": true,
+    "detail": "sau transfer lần 1 byteLength=0 (kỳ vọng 0); transfer lần 2 ném: \"Cannot transfer object of unsupported type.\"",
+    "seconds": 0.2
+  },
+  "boot_real_appjs": {
+    "ok": true,
+    "detail": "status=\"Sẵn sàng — 20 plugin plugin đang chạy · font đi kèm: đủ 142/142 (134 chữ cái + 8 dấu)\"",
+    "seconds": 0.1
+  },
+  "sequence_list_inspect_extract_diag_font_compress": {
+    "ok": true,
+    "detail": "list=true hint_list=true hint_inspect=true extract=true diagnose=true font=true compress=true buffer_nguyen_sau_moi_op=true (byteLength=339/339) worker_nhan_file=1 lần (kỳ vọng 1): [\"game.zip\"]",
+    "seconds": 0.2
+  },
+  "reselect_resets_flag": {
+    "ok": true,
+    "detail": "list game2=true worker_nhan=2 lần: [\"game.zip\",\"game2.zip\"] buffer2_nguyen=true",
+    "seconds": 0.1
+  },
+  "error_resets_flag_retry_resends": {
+    "ok": true,
+    "detail": "loi_hien=true buffer_nguyen=true thu_lai_thanh_cong=true worker_nhan_truoc=3 sau=4 (kỳ vọng +1)",
+    "seconds": 0
+  },
+  "batch_sent_once_second_run_reuses": {
+    "ok": true,
+    "detail": "batch1=true batch2=true worker_nhan_sau_lan1=6 sau_lan2=6 (kỳ vọng bằng nhau) log=[\"game.zip\",\"game2.zip\",\"game.zip\",\"game.zip\",\"b1.zip\",\"b2.zip\"] buffer_batch_nguyen=true",
+    "seconds": 0.1
+  },
+  "ipa_hint_negative_cases": {
+    "ok": true,
+    "detail": "zip_1_ipa_thang_hint_an=true; zip_thuong_khong_ipa_hint_an=true",
+    "seconds": 0.2
+  },
+  "static_hotfix_markers": {
+    "ok": true,
+    "detail": "fileSentFor/batchSentFor=true slice(0)=true khong_con_transfer_goc=true hint_fn=true hint_els_html=true worker_ghi_chu=true",
+    "seconds": 0
+  },
+  "pyodide_bridge_mojibake": {
+    "ok": true,
+    "detail": "entries=[\"‎ 9 Kings_v1.0.5-AppAssassin.ipa\",\"__MACOSX/._‎ 9 Kings_v1.0.5-AppAssassin.ipa\"] http_fetch=0 (bridge thật trong Pyodide, file site/pb3 đã sửa)",
+    "seconds": 3.5
+  },
+  "python_mojibake_regression": {
+    "ok": true,
+    "detail": "status=0, 4/4 test ok trong output unittest (4 dòng \"... ok\")",
+    "seconds": 0.3
+  },
+  "_failures": 0
+}

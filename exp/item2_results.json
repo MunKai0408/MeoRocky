@@ -1,0 +1,74 @@
+{
+  "when": "2026-11-16T04:33:06.928Z",
+  "failures": 0,
+  "results": {
+    "worker_get_health": {
+      "ok": true,
+      "detail": "GET / -> 200 {\"ok\":true,\"service\":\"beartea-translate-proxy\",\"version\":1,\"monthly_limit\":500000,\"note\":\"POST {text, target, source?} để dịch.\"}"
+    },
+    "worker_translate_ok": {
+      "ok": true,
+      "detail": "POST Hello world -> 200 {\"ok\":true,\"translated\":\"Xin chào thế giới\",\"provider\":\"google\",\"chars\":11,\"cached\":false,\"month_used\":11,\"month_limit\":500000} | KV usage=11 | googleCalls=1"
+    },
+    "worker_cache_hit": {
+      "ok": true,
+      "detail": "lần 2 -> cached=true month_used=11 KV usage=11 googleCalls=1 (phải = 1)"
+    },
+    "worker_quota_hard_cap": {
+      "ok": true,
+      "detail": "usage 499995 + 10 ký tự -> 429 {\"ok\":false,\"code\":\"quota_exceeded\",\"error\":\"Đã hết 500,000 ký tự miễn phí của tháng 2026-11 (đã dùng 499,995). Client tự rơi về MyMemory + từ điển offline, không phát sinh phí.\",\"provider\":\"none\",\"fallback\":\"mymemory+offline\",\"month_used\":499995,\"month_limit\":500000} | googleCalls=0 (phải = 0) | KV usage=499995 (không đổi)"
+    },
+    "worker_quota_boundary": {
+      "ok": true,
+      "detail": "499990+10 -> 200 month_used=500000; +1 ký tự -> 429 quota_exceeded | KV usage=500000 | googleCalls=1 (phải = 1)"
+    },
+    "worker_circuit_breaker": {
+      "ok": true,
+      "detail": "lần 1,2 -> google_rate_limited/google_rate_limited; lần 3 -> breaker_open (không gọi Google nữa) | googleCalls=6 | KV usage=0 (hoàn lại, bằng lúc đầu: null) | breaker={\"failures\":2,\"open_until\":1794803646849}"
+    },
+    "worker_rate_limit_ip": {
+      "ok": true,
+      "detail": "4 request cùng IP (giới hạn 3/phút) -> 200,200,200,429 | lần 4 code=rate_limited | googleCalls=3"
+    },
+    "worker_validation_config": {
+      "ok": true,
+      "detail": "thiếu text -> 400; text 5001 ký tự -> 400; target sai -> 400; PUT -> 405; thiếu key -> 503/not_configured; thiếu KV -> 503/kv_not_configured"
+    },
+    "gt_proxy_path": {
+      "ok": true,
+      "detail": "translateOneWithFallbacks -> \"Xin chào\" | proxyHits=1 (phải = 1) | googleDirectCalls=0 (phải = 0)"
+    },
+    "gt_quota_falls_to_mymemory": {
+      "ok": true,
+      "detail": "proxy quota_exceeded -> \"Xin chào (MyMemory)\" | proxyHits=1 | myMemoryHits=1 | googleDirectCalls=0 (phải = 0: hết hạn mức thì không vòng lại Google)"
+    },
+    "gt_proxy_down_falls_to_direct": {
+      "ok": true,
+      "detail": "proxy chết -> \"Xin chào\" | googleDirectCalls=1 (phải = 1)"
+    },
+    "gt_all_fail_throws_for_offline": {
+      "ok": true,
+      "detail": "Google Sorry + MyMemory 500 -> ném kind=\"mymemory\" (phải = 'mymemory': bridge bắt lỗi này rồi dùng từ điển offline)"
+    },
+    "gt_helpers_direct": {
+      "ok": true,
+      "detail": "proxyTranslateOne -> \"Xin chào\" | myMemoryTranslateOne(local) -> \"Xin chào (MyMemory)\""
+    },
+    "static_cloudflare_files": {
+      "ok": true,
+      "detail": "worker.js + wrangler.toml + README.md có đủ; wrangler.toml giữ placeholder KV id; không chuỗi AIza (key Google) trong 3 file; worker có quota/cache/breaker/Retry-After."
+    },
+    "static_diagnostics_page": {
+      "ok": true,
+      "detail": "diagnostics.html có kiểm tra Google trực tiếp + MyMemory + proxy, nút sao chép, lưu URL proxy vào localStorage, link về index.html; không import translate.js (chưa có trong site/)."
+    },
+    "static_wiring": {
+      "ok": true,
+      "detail": "thiếu: không có | ghi chú item 9 trong index.html: 4 chỗ (Unity + Mod + Chẩn đoán + giới hạn, phải >= 4)."
+    },
+    "static_no_coi_no_key": {
+      "ok": true,
+      "detail": "file chứa COI: không có | file chứa key Google (AIza...): không có"
+    }
+  }
+}

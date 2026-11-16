@@ -1,0 +1,39 @@
+# wrangler.toml — Cấu hình deploy cho BearTea translate proxy.
+#
+# Cách dùng (xem cloudflare/README.md — cần tài khoản Cloudflare của Joseph):
+#   wrangler kv namespace create TRANSLATE_CACHE
+#   wrangler kv namespace create TRANSLATE_USAGE
+#   -> chép 2 id thật vào 2 chỗ REPLACE_WITH_KV_NAMESPACE_ID bên dưới
+#      (cả id và preview_id), rồi:
+#   wrangler secret put GOOGLE_API_KEY
+#   wrangler deploy
+#
+# LƯU Ý: file này KHÔNG chứa key hay id thật. KV id là placeholder — deploy
+# với id giả sẽ lỗi, đó là cố ý (tránh deploy nhầm khi chưa cấu hình).
+
+name = "beartea-translate-proxy"
+main = "worker.js"
+compatibility_date = "2026-11-16"
+
+[[kv_namespaces]]
+binding = "TRANSLATE_CACHE"
+id = "REPLACE_WITH_KV_NAMESPACE_ID"
+preview_id = "REPLACE_WITH_KV_NAMESPACE_ID"
+
+[[kv_namespaces]]
+binding = "TRANSLATE_USAGE"
+id = "REPLACE_WITH_KV_NAMESPACE_ID"
+preview_id = "REPLACE_WITH_KV_NAMESPACE_ID"
+
+[vars]
+# Hạn mức CỨNG: tối đa 500.000 ký tự/tháng = đúng phần miễn phí của Google
+# Cloud Translation. Hết hạn mức worker trả quota_exceeded, client tự rơi
+# về MyMemory + từ điển offline — KHÔNG BAO GIỜ tự phát sinh phí.
+MONTHLY_CHAR_LIMIT = 500000
+# Đổi số này khi từ điển offline đổi phiên bản -> cache cũ tự hết hiệu lực.
+GLOSSARY_VERSION = "1"
+# Giới hạn request/phút cho mỗi IP (chống 1 IP spam hết hạn mức tháng).
+RATE_LIMIT_PER_MINUTE = 60
+# Ngắt mạch: Google lỗi liên tiếp 5 lần thì mở mạch 60 giây.
+BREAKER_THRESHOLD = 5
+BREAKER_COOLDOWN_S = 60

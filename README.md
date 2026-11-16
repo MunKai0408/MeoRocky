@@ -28,9 +28,14 @@ GitHub API không bật được Pages nên bước này cần bấm tay:
    - **Trích xuất**: pipeline trích xuất đầy đủ của PB3, tải về `extract.zip`.
    - **Dịch**: dịch JSON key-value bằng Google Translate thật qua
      `fetch()` (cần mạng; 1 chuỗi/request, cách 0,4 giây) — Google lỗi
-     thì tự dùng từ điển offline và báo rõ lý do; chỉ dịch VALUE, giữ
-     KEY; có gắn credit “Việt Hoá Bởi Bear” nếu bật; nút Hủy dừng giữa
-     chừng và giữ phần đã dịch.
+     thì tự thử MyMemory rồi dùng từ điển offline và báo rõ lý do; chỉ
+     dịch VALUE, giữ KEY; có gắn credit “Việt Hoá Bởi Bear” nếu bật; nút
+     Hủy dừng giữa chừng và giữ phần đã dịch. Có thể dán URL proxy dịch
+     (Cloudflare Worker, xem `cloudflare/README.md`) vào ô “URL proxy
+     dịch” — proxy có cache + hạn mức cứng 500.000 ký tự/tháng, hết hạn
+     mức tự rơi về MyMemory + offline, không phát sinh phí. Trang
+     `diagnostics.html` kiểm tra Google trực tiếp / proxy / MyMemory
+     trên máy thật.
    - **Mod**: patch 1 chuỗi trong 1 TextAsset (menu [1] bản iSH) —
      mặc định dry-run (không ghi file nào); bấm “Patch và ghi file” mới
      tải đơn vị đã patch về (bundle/.assets, không đóng gói lại IPA).
@@ -126,13 +131,28 @@ Hai điều chỉnh ở tầng khởi động (không sửa mã PB3): dựng reg
 - **Dịch Google trên web** (`gt.js` + `bridge.translate_json_google`):
   Python async gọi `fetch()` của JS (endpoint gtx miễn phí, không key),
   1 chuỗi/request, cách 0,4 giây, thử lại tối đa 3 lần với backoff khi
-  429/5xx; lỗi nào (mất mạng, CORS, 429 hết retry, trang Sorry) cũng rơi
-  về từ điển offline và báo rõ trong kết quả (`translated_by`,
-  `network_error`); nút Hủy dừng giữa chừng. **Lưu ý trung thực:** từ IP
-  máy chủ phát triển, Google trả HTTP 429 + trang Sorry (IP datacenter bị
-  giới hạn) nên dịch Google thật chưa kiểm chứng được từ VM này
-  (`exp/translate_web_results.md` ghi rõ); IP mạng di động/dân cư thường
-  dịch được, và CORS trên Safari thật vẫn cần thử bằng tay.
+  429/5xx; lỗi nào (mất mạng, CORS, 429 hết retry, trang Sorry) cũng thử
+  MyMemory rồi rơi về từ điển offline và báo rõ trong kết quả
+  (`translated_by`, `network_error`); nút Hủy dừng giữa chừng. **Lưu ý
+  trung thực:** từ IP máy chủ phát triển, Google trả HTTP 429 + trang
+  Sorry (IP datacenter bị giới hạn) nên dịch Google thật chưa kiểm chứng
+  được từ VM này (`exp/translate_web_results.md` ghi rõ); IP mạng di động/
+  dân cư thường dịch được. Trang `diagnostics.html` kiểm tra Google trực
+  tiếp / proxy / MyMemory ngay trên Safari thật.
+- **Proxy dịch Cloudflare Worker** (`cloudflare/worker.js` + `wrangler.toml`,
+  chưa deploy — cần tài khoản Cloudflare + API key Google của Joseph, xem
+  `cloudflare/README.md`): POST `{text, target}` → Google Cloud Translation
+  API v2 bằng key trong secret (không có key trong repo); cache KV theo
+  hash(text+target+glossary_version); **hạn mức cứng 500.000 ký tự/tháng**
+  (đúng phần miễn phí của Google), hết hạn mức trả `quota_exceeded` để
+  client rơi về MyMemory + offline — không bao giờ tự phát sinh phí; giới
+  hạn 60 request/phút/IP; ngắt mạch sau 5 lỗi Google liên tiếp; tôn trọng
+  Retry-After + backoff. Đã kiểm chứng bằng harness Node với KV + fetch
+  giả (`exp/item2_results.md`).
+- **Asset nhị phân (texture/âm thanh): chỉ đọc, dùng bản iSH.** Bản web
+  xem được tên, kích thước, hex, chuỗi text trong asset, nhưng không giải
+  mã texture (DXT/ASTC/ETC2/PVRTC) hay âm thanh (Vorbis/MP3/AAC) để xem
+  trước (xem đánh giá ở `exp/item9_results.md`).
 - **File đầu vào tối đa 2GB trên web** (bằng bản iSH) — giới hạn vì RAM
   tab trình duyệt. Lưu ý trung thực: file gần 2GB vẫn có thể làm Safari
   trên iPhone văng tab (tab Safari chỉ dùng được khoảng 1–1,5GB RAM);
@@ -158,7 +178,7 @@ stand-in; xem `exp/parity_results.md` và `exp/full_port_results.md`).
 |---|---|---|---|
 | Mod (patch chuỗi Unity) | Có (dry-run mặc định, ghi khi bấm nút) | Có (`--allow-write`) | Web chỉ xuất đơn vị nhỏ nhất đã patch (bundle/.assets), không đóng gói lại IPA; **không có REBUILD_ALL** (cần maturity M4, chưa có) |
 | Extract | Có (pipeline 7 bước, checkpoint/resume) | Có | Web chạy tuần tự; đã sửa crash XML thụt đầu dòng (patch01) |
-| Dịch (Google + offline) | Có (checkbox Google, mặc định bật) | Có | Web: 1 chuỗi/request, 0,4 s, fallback offline khi 429/CORS; dịch Google thật chưa kiểm chứng được từ VM (IP datacenter bị 429) — cần thử trên Safari thật |
+| Dịch (Google + offline) | Có (checkbox Google, mặc định bật) | Có | Web: 1 chuỗi/request, 0,4 s, fallback MyMemory rồi offline khi 429/CORS; có proxy Cloudflare Worker tùy chọn (hạn mức cứng 500.000 ký tự/tháng); dịch Google thật chưa kiểm chứng được từ VM (IP datacenter bị 429) — thử bằng diagnostics.html trên Safari thật |
 | Nén (solid LZMA .tar.xz) | Có (preset 6 mặc định) | Có | Vào >2GB từ chối; ra >500MB xóa + báo không nén được; 5:1 thường không đạt vì IPA đã nén sẵn |
 | Font 142/142 | Có (Be Vietnam Pro đi kèm, đủ 134 chữ + 8 dấu) | Có | Atlas SDF TextMeshPro không tái tạo được (giới hạn gốc); gộp glyph chỉ cho TrueType glyf |
 | Chẩn đoán | Có (inventory + hex + strings) | Có | Chỉ đọc |

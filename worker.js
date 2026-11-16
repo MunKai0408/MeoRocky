@@ -17,7 +17,7 @@
 // supported"). Vì vậy file này dùng import ES module, không dùng cách nạp
 // script của worker classic.
 import { loadPyodide } from "./pyodide/pyodide.mjs";
-import { googleTranslateOne } from "./gt.js";
+import { setTranslateProxyUrl, translateOneWithFallbacks } from "./gt.js";
 
 const PYODIDE_INDEX = new URL("pyodide/", self.location.href).href;
 const PB3_ROOT = "/pb3web";
@@ -87,7 +87,10 @@ async function boot() {
   // chỉ đặt biến toàn cục PYTHON (__main__), module `js` không thấy nó.
   // Python async await được Promise JS nên event loop vẫn chạy, nút Hủy
   // vẫn nhận được giữa đợt dịch.
-  globalThis.pb3_google_translate = googleTranslateOne;
+  // translateOneWithFallbacks: proxy Cloudflare (nếu app.js đã gửi URL) ->
+  // Google trực tiếp -> MyMemory -> ném lỗi để Python dùng từ điển offline.
+  // Riêng proxy báo hết hạn mức tháng (quota) thì bỏ qua Google trực tiếp.
+  globalThis.pb3_google_translate = translateOneWithFallbacks;
   globalThis.pb3_google_cancelled = () => googleCancelled;
   pyodide.runPython(
     "import bridge\n" +
@@ -106,6 +109,14 @@ self.onmessage = async (ev) => {
     if (msg.op === "cancel_translate") {
       googleCancelled = true;
       postMessage({ type: "cancelled" });
+      return;
+    }
+    if (msg.op === "set_translate_proxy") {
+      // URL proxy dịch Cloudflare Worker (app.js gửi từ localStorage).
+      // Để trống = gọi trực tiếp Google như trước. Chỉ đặt biến JS trong
+      // worker, không cần Pyodide đã boot xong.
+      setTranslateProxyUrl(typeof msg.url === "string" ? msg.url : "");
+      postMessage({ id: msg.id, ok: true, result: JSON.stringify({ proxy: !!msg.url }) });
       return;
     }
     if (msg.op === "boot") {
@@ -138,10 +149,14 @@ self.onmessage = async (ev) => {
       let parsed = null;
       try { parsed = JSON.parse(result); } catch (e) { /* không phải JSON */ }
       // Nếu kết quả chỉ tới 1 file output trong FS thì gửi kèm bytes để tải về.
+      // Tên tải về: bridge trả "filename" thì dùng đúng tên đó (vd giải nén
+      // .tar.xz trả tên file gốc 9Kings_v1.0.5.ipa thay vì restored.bin);
+      // không có thì lấy tên file đích trong FS.
       if (parsed && parsed.ok && typeof parsed.dest === "string") {
         try {
           const data = pyodide.FS.readFile(parsed.dest);
-          file = { name: parsed.dest.split("/").pop(), data: data.buffer };
+          file = { name: (typeof parsed.filename === "string" && parsed.filename) ||
+                          parsed.dest.split("/").pop(), data: data.buffer };
         } catch (e) { /* dest không phải file (vd extract dùng zip_path) */ }
       }
       if (parsed && parsed.ok && typeof parsed.zip_path === "string") {

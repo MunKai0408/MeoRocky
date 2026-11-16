@@ -27,9 +27,15 @@
   .tabs { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0; }
   .tabs button { background: #232c36; padding: 8px 10px; font-size: 14px; }
   .tabs button.active { background: #2f81f7; }
-  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px;
+    display: block; overflow-x: auto; }
   th, td { border-bottom: 1px solid #2a343f; padding: 5px 6px; text-align: left;
-    word-break: break-all; }
+    white-space: nowrap; }
+  /* Cột đầu (thường là đường dẫn/file dài) được ngắt chữ; các cột ngắn
+     (Loại, Kích thước, Plugin, Engine…) không bao giờ vỡ chữ nhờ nowrap +
+     bảng cuộn ngang thay vì bị bóp còn 1 ký tự. Lỗi cũ (Joseph 11:37):
+     word-break: break-all trên MỌI ô làm "Loại" thành "L o ạ i" xếp dọc. */
+  td:first-child { white-space: normal; word-break: break-all; }
   pre { background: #0d1117; padding: 10px; border-radius: 8px; overflow-x: auto;
     font-size: 12px; }
   ul { padding-left: 18px; }
@@ -63,6 +69,9 @@
   <h2>1. Chọn file</h2>
   <input type="file" id="file-input">
   <p id="file-info" class="sub" hidden></p>
+  <p id="download-hint" class="note" hidden></p>
+  <button id="btn-share-download" class="secondary" hidden>Lưu / Chia sẻ</button>
+  <button id="btn-blob-download" class="secondary" hidden>Tải về (blob)</button>
   <p class="note">File chỉ được đọc và xử lý trong trình duyệt của bạn. Bản web giới hạn
   file ≤2GB; file lớn hơn hãy dùng bản iSH. Lưu ý: file gần 2GB vẫn có thể
   làm Safari trên iPhone văng tab vì RAM (tab Safari chỉ dùng được khoảng
@@ -96,7 +105,10 @@
 <div id="tab-unity" class="card" hidden>
   <h2>Inspect Unity</h2>
   <p class="note">Đọc bundle .unity3d hoặc file .assets độc lập bằng parser thuần của PB3
-  (UnityFS v8, SerializedFile v23). Không dùng UnityPy trên web.</p>
+  (UnityFS v8, SerializedFile v23). Không dùng UnityPy trên web. Nếu file đang
+  chọn là ZIP/IPA thì trang liệt kê các bundle/.assets bên trong để bạn chọn 1
+  cái inspect trực tiếp.
+  Asset nhị phân (texture/âm thanh): chỉ đọc, dùng bản iSH.</p>
   <button id="btn-unity-run">Inspect</button>
   <p id="unity-ipa-hint" class="warn" hidden></p>
   <div id="unity-result"></div>
@@ -116,8 +128,19 @@
   chuỗi qua Google (cần mạng; 1 chuỗi/request, cách 0,4 giây nên file lớn
   sẽ chậm — file vài nghìn chuỗi có thể mất hàng giờ, dùng bản iSH cho
   nhanh). Nếu Google không dùng được (mất mạng, bị giới hạn tốc độ,
-  trình duyệt chặn CORS) thì tự động dùng từ điển offline (~40 cụm từ
-  game thông dụng) và báo rõ lý do.</p>
+  trình duyệt chặn CORS) thì tự động thử MyMemory rồi dùng từ điển offline
+  (~40 cụm từ game thông dụng) và báo rõ lý do.</p>
+  <div class="row">
+    <label style="flex:1;min-width:220px">URL proxy dịch (Cloudflare Worker, không bắt buộc):
+      <input type="text" id="translate-proxy" placeholder="vd: beartea-translate-proxy.<tên>.workers.dev">
+    </label>
+  </div>
+  <p class="note">Để trống = gọi trực tiếp Google. Có proxy thì dịch qua proxy
+  (cache + giới hạn cứng 500.000 ký tự/tháng, hết hạn mức tự rơi về MyMemory
+  + từ điển offline, không phát sinh phí). Cần tài khoản Cloudflare + API key
+  Google — xem hướng dẫn trong repo (<b>cloudflare/README.md</b>).
+  <a href="diagnostics.html">Mở trang Kiểm tra dịch</a> để thử trực tiếp
+  Google / proxy / MyMemory trên máy này trước khi dịch file lớn.</p>
   <div class="row">
     <label>Tải file JSON: <input type="file" id="translate-json-file" accept=".json"></label>
   </div>
@@ -147,7 +170,8 @@
   dạng <b>a::b</b>). <b>Mặc định chỉ chạy thử (dry-run): không ghi file nào.</b>
   Chỉ khi bạn bấm nút “Patch và ghi file” thì đơn vị đã patch mới được tải
   về — file gốc không bao giờ bị ghi đè. Output là đơn vị nhỏ nhất đã patch
-  (bundle/.assets), <b>không phải</b> IPA đóng gói lại.</p>
+  (bundle/.assets), <b>không phải</b> IPA đóng gói lại.
+  Asset nhị phân (texture/âm thanh): chỉ đọc, dùng bản iSH.</p>
   <div class="row">
     <label style="flex:1;min-width:180px">Entry (vpath, trống nếu file là .assets/bundle độc lập):
       <input type="text" id="mod-entry" placeholder="vd: Payload/9Kings.app/level.unity3d">
@@ -246,7 +270,8 @@
 <div id="tab-compress" class="card" hidden>
   <h2>Nén / giải nén IPA</h2>
   <p class="note">Nén solid LZMA kiểu WinRAR. File nén ra là bản lưu trữ (.tar.xz),
-  <b>không phải</b> IPA cài trực tiếp — dùng nút Giải nén để khôi phục IPA gốc.</p>
+  <b>không phải</b> IPA cài trực tiếp. <b>Giải nén file .tar.xz để khôi phục file
+  gốc (giữ nguyên tên gốc)</b> — chọn đúng file .tar.xz đã nén ra rồi bấm Giải nén.</p>
   <div class="row">
     <label>Preset:
       <select id="compress-preset" style="width:auto">
@@ -275,7 +300,8 @@
 
 <div id="tab-diagnose" class="card" hidden>
   <h2>Chẩn đoán (chỉ đọc)</h2>
-  <p class="note">Inventory + hex dump (512 byte đầu) + quét chuỗi ASCII trong file.</p>
+  <p class="note">Inventory + hex dump (512 byte đầu) + quét chuỗi ASCII trong file.
+  Asset nhị phân (texture/âm thanh): chỉ đọc, dùng bản iSH.</p>
   <button id="btn-diagnose-run">Chẩn đoán</button>
   <div id="diagnose-result"></div>
 </div>
@@ -288,7 +314,8 @@
     <li><b>KB chỉ sống trong phiên</b> — tải lại trang là mất, trừ khi tải file KB về rồi nhập lại bằng nút “Nhập KB (.sqlite)” trên tab KB.</li>
     <li><b>Mod</b> chỉ xuất đơn vị nhỏ nhất đã patch (bundle/.assets), không đóng gói lại IPA; mặc định dry-run, chỉ ghi khi bạn bấm nút ghi rõ ràng.</li>
     <li>Ma trận hỗ trợ: cột “ngày test” hiện “chưa có” vì bản web không kèm file bằng chứng tests/corpus/*.json.</li>
-    <li>Dịch Google cần mạng; Google có thể giới hạn tốc độ (HTTP 429) hoặc trình duyệt chặn CORS — khi đó tự động dùng từ điển offline và báo rõ lý do. Chưa thử dịch Google trên Safari thật.</li>
+    <li>Dịch Google cần mạng; Google có thể giới hạn tốc độ (HTTP 429) hoặc trình duyệt chặn CORS — khi đó tự động thử MyMemory rồi dùng từ điển offline và báo rõ lý do. Chưa thử dịch Google trên Safari thật. Có thể cấu hình proxy Cloudflare Worker (ô URL proxy ở tab Dịch, xem cloudflare/README.md) để tránh CORS/429 — proxy có hạn mức cứng 500.000 ký tự/tháng, hết hạn mức tự rơi về MyMemory + offline, không phát sinh phí.</li>
+    <li><b>Asset nhị phân (texture/âm thanh): chỉ đọc, dùng bản iSH.</b> Bản web xem được tên, kích thước, hex, chuỗi text trong asset, nhưng không giải mã texture (DXT/ASTC/ETC2/PVRTC) hay âm thanh (Vorbis/MP3/AAC) để xem trước — xem texture/nghe âm thanh thì dùng bản iSH.</li>
     <li>File đầu vào tối đa 2GB trên web (bằng bản iSH); file gần 2GB vẫn có thể làm Safari trên iPhone văng tab vì RAM.</li>
     <li>Chưa thử trên iPhone thật — tốc độ và RAM trên Safari di động chưa đo.</li>
   </ul>

@@ -154,46 +154,101 @@ def _sf_summary(name, sf):
             "text_assets": tas}
 
 
+def _parse_unity_bytes(data, name):
+    """Parse 1 đơn vị Unity (bundle .unity3d hoặc file .assets độc lập).
+
+    Trả dict (chưa có "ok"): bundle=True + entries/files nếu là bundle,
+    bundle=False + 1 file nếu là .assets độc lập. Raise khi cả 2 đều
+    không parse được (vd file ZIP đưa thẳng vào — phải đi qua
+    unity_inspect/unity_inspect_entry để chọn entry bên trong trước).
+    """
+    from sdk import unity as u
+
+    backend = u.UnityBackend("NATIVE")
+    out = {"bundle": False, "files": []}
+    try:
+        bf = u.parse_bundle(data, backend, _app.limits, where=name)
+    except Exception:
+        bf = None
+    if bf is not None:
+        out["bundle"] = True
+        out["signature"] = bf.signature
+        out["version"] = int(bf.version)
+        out["unity_version"] = bf.unity_version
+        out["compression"] = bf.compression_name
+        out["entries"] = [{"name": e.name, "size": int(e.size),
+                           "serialized": bool(e.is_serialized)}
+                          for e in bf.entries]
+        for e in bf.entries:
+            if not e.is_serialized:
+                continue
+            try:
+                sf = u.parse_serialized(bf.get_entry(e.name),
+                                        _app.limits, where=e.name)
+                out["files"].append(_sf_summary(e.name, sf))
+            except Exception as ex:  # noqa: BLE001 - ghi lỗi từng entry
+                out["files"].append({"entry": e.name, "error": str(ex)})
+    else:
+        sf = u.parse_serialized(data, _app.limits, where=name)
+        out["files"].append(_sf_summary(name, sf))
+    return out
+
+
 def unity_inspect(path):
     """Inspect Unity: bundle (.unity3d) hoặc file .assets độc lập.
 
     Dùng parser thuần của PB3 (sdk/unity.py) + backend NATIVE (binding lz4
     nếu loadPackage('lz4') đã chạy, nếu không thì lz4pure). Không dùng
     UnityPy (không cài được trên Pyodide).
+
+    File ZIP/IPA thì KHÔNG parse thẳng cả file (trước đây rơi xuống
+    parse_serialized rồi lỗi E_UNSUPPORTED_FORMAT) mà trả danh sách các
+    entry .unity3d/.assets bên trong để UI cho user chọn 1 cái inspect
+    trực tiếp qua unity_inspect_entry. Không có bundle nào thì bundles=[]
+    (UI hiện hướng dẫn trích xuất trước).
     """
     try:
-        from sdk import unity as u
+        from sdk import containers, discovery as disc
 
         _check_size(path)
         name = os.path.basename(path)
         data = open(path, "rb").read()
-        backend = u.UnityBackend("NATIVE")
-        out = {"ok": True, "bundle": False, "files": []}
-        try:
-            bf = u.parse_bundle(data, backend, _app.limits, where=name)
-        except Exception:
-            bf = None
-        if bf is not None:
-            out["bundle"] = True
-            out["signature"] = bf.signature
-            out["version"] = int(bf.version)
-            out["unity_version"] = bf.unity_version
-            out["compression"] = bf.compression_name
-            out["entries"] = [{"name": e.name, "size": int(e.size),
-                               "serialized": bool(e.is_serialized)}
-                              for e in bf.entries]
-            for e in bf.entries:
-                if not e.is_serialized:
-                    continue
-                try:
-                    sf = u.parse_serialized(bf.get_entry(e.name),
-                                            _app.limits, where=e.name)
-                    out["files"].append(_sf_summary(e.name, sf))
-                except Exception as ex:  # noqa: BLE001 - ghi lỗi từng entry
-                    out["files"].append({"entry": e.name, "error": str(ex)})
-        else:
-            sf = u.parse_serialized(data, _app.limits, where=name)
-            out["files"].append(_sf_summary(name, sf))
+        if containers.detect_container_kind(data) == "zip":
+            from core.limits import Limits
+
+            vfs = containers.open_vfs_bytes(data, source_name=name)
+            inv = disc.inventory(vfs, Limits())
+            bundles = [{"path": e.path, "size": int(e.size)}
+                       for e in inv
+                       if not e.path.endswith("/")
+                       and e.path.lower().endswith((".unity3d", ".assets"))]
+            bundles.sort(key=lambda b: b["path"])
+            return json.dumps({
+                "ok": True, "is_container": True, "kind": "zip",
+                "bundles": bundles[:200], "bundles_total": len(bundles),
+                "total_entries": len(inv),
+            }, ensure_ascii=False)
+        out = {"ok": True, "is_container": False}
+        out.update(_parse_unity_bytes(data, name))
+        return json.dumps(out, ensure_ascii=False)
+    except Exception as e:  # noqa: BLE001
+        return _err(e)
+
+
+def unity_inspect_entry(path, entry):
+    """Inspect 1 bundle/.assets BÊN TRONG file ZIP/IPA: đọc entry đó ra
+    rồi parse (không parse cả file ZIP). entry là đường dẫn trong
+    container (vd Payload/9Kings.app/Data/sharedassets0.assets)."""
+    try:
+        from sdk import containers
+
+        _check_size(path)
+        data = open(path, "rb").read()
+        vfs = containers.open_vfs_bytes(
+            data, source_name=os.path.basename(path))
+        raw = vfs.read(entry)
+        out = {"ok": True, "is_container": False, "entry": entry}
+        out.update(_parse_unity_bytes(raw, os.path.basename(entry)))
         return json.dumps(out, ensure_ascii=False)
     except Exception as e:  # noqa: BLE001
         return _err(e)
@@ -487,7 +542,11 @@ def compress_file(path, preset=6):
 
 
 def decompress_file(path):
-    """Giải nén archive .tar.xz do compress_file tạo ra."""
+    """Giải nén archive .tar.xz do compress_file tạo ra.
+
+    Trả thêm "filename": tên file gốc trong tar (vd 9Kings_v1.0.5.ipa)
+    để JS tải về ĐÚNG tên đó thay vì tên cố định restored.bin. Không
+    lấy được tên thì lấy tên input bỏ đuôi .tar.xz."""
     try:
         from sdk.compress import decompress_archive
 
@@ -497,7 +556,13 @@ def decompress_file(path):
             os.remove(dest)
         rep = decompress_archive(path, dest, force=True)
         d = rep.to_dict()
-        d.update({"ok": True, "dest": dest})
+        orig = str(d.get("original_name") or "")
+        fname = os.path.basename(orig)
+        if not fname:
+            base = os.path.basename(path)
+            fname = (base[:-7] if base.lower().endswith(".tar.xz")
+                     else base + ".bin")
+        d.update({"ok": True, "dest": dest, "filename": fname})
         return json.dumps(d, ensure_ascii=False)
     except Exception as e:  # noqa: BLE001
         return _err(e)

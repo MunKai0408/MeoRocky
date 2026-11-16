@@ -1,0 +1,88 @@
+{
+  "no_http_fetch_during_load": {
+    "ok": true,
+    "detail": "http fetch trong lúc loadPyodide: 0",
+    "seconds": 0
+  },
+  "module_worker_static": {
+    "ok": true,
+    "detail": "worker import .mjs=true no importScripts=true app type:module=true no cross-origin=true pyodide.mjs vendored 17758B=true",
+    "seconds": 0
+  },
+  "load_lz4": {
+    "ok": true,
+    "detail": "loadPackage lz4 OK",
+    "seconds": 0.3
+  },
+  "write_site_files": {
+    "ok": true,
+    "detail": "87 file pb3/ + font b64 (132948 byte) ghi vào /pb3web",
+    "seconds": 0.1
+  },
+  "boot": {
+    "ok": true,
+    "detail": "{\"ok\":true,\"plugins\":20,\"plugin_ids\":[\"apple_plist\",\"apple_strings\",\"cocos_detect\",\"csv_table\",\"defold_detect\",\"gamemaker_detect\",\"generic_strings\",\"godot_pck\",\"godot_translation\",\"json_text\",\"po_mo\",\"properties\",\"resx\",\"sqlite_loc\",\"unreal_locres\",\"unreal_pak\",\"xliff\",\"xml_strings\",\"yaml_ini\",\"zip\"],\"problems\":[]}",
+    "seconds": 1
+  },
+  "font_donor_142": {
+    "ok": true,
+    "detail": "{\"ok\":true,\"family\":\"Be Vietnam Pro\",\"kind\":\"ttf\",\"num_glyphs\":527,\"total\":142,\"covered\":142,\"pct\":100,\"is_full\":true,\"summary\":\"Be Vietnam Pro: đủ tiếng Việt (142/142 ký tự, 527 glyph)\"}",
+    "seconds": 0
+  },
+  "list_entries": {
+    "ok": true,
+    "detail": "kind=zip total=11 sample=[{\"path\":\"data/font.ttf\",\"size\":0,\"kind\":\"excluded\"},{\"path\":\"inner.zip\",\"size\":161,\"kind\":\"container\"},{\"path\":\"inner.zip::en.json\",\"size\":57,\"kind\":\"file\"}]",
+    "seconds": 0
+  },
+  "unity_inspect_assets": {
+    "ok": true,
+    "detail": "{\"ok\":true,\"is_container\":false,\"bundle\":false,\"files\":[{\"entry\":\"resources.assets\",\"version\":17,\"unity_version\":\"2019.4.40f1\",\"objects\":3,\"text_assets\":[{\"path_id\":1001,\"name\":\"greeting\",\"head\":\"Xin chao 9 Kings!\"},{\"path_id\":1002,\"name\":\"longtext\",\"head\":\"Dòng dài để thử chuỗi dài: xin chào thế giới! xin chào thế giới! xin chào thế giới! xin chào thế giới! xin chào thế giới! xin chào thế giới! xin chào thế giới! xin chào thế giới! xin chào thế giới! xi\"}]}]}",
+    "seconds": 0.3
+  },
+  "unity_inspect_bundle": {
+    "ok": true,
+    "detail": "{\"ok\":true,\"is_container\":false,\"bundle\":true,\"files\":[{\"entry\":\"CAB-0123456789abcdef0123456789abcdef\",\"version\":17,\"unity_version\":\"2019.4.40f1\",\"objects\":3,\"text_assets\":[{\"path_id\":1001,\"name\":\"greeting\",\"head\":\"Xin chao 9 Kings!\"},{\"path_id\":1002,\"name\":\"longtext\",\"head\":\"Dòng dài để thử chuỗi dài: xin chào thế giới! xin chào thế giới! xin chào thế giới! xin chào thế giới! xin chào thế giới! xin chào thế giới! xin chào thế giới! xin chào thế giới! xin chào thế giới! xi\"}]},{\"entry\":\"CAB-0123",
+    "seconds": 0
+  },
+  "extract": {
+    "ok": true,
+    "detail": "decision=done total=21 files=6 zip=3484B phases=extract:inventory,extract:layers,extract:candidates,extract:sniff,extract:probe,extract:export progress_events=74",
+    "seconds": 0.1
+  },
+  "translate_offline": {
+    "ok": true,
+    "detail": "translated={\"play\":\"Chơi\",\"quit\":\"Thoát\"} untranslated=0 progress_events=2",
+    "seconds": 0.1
+  },
+  "translate_credit": {
+    "ok": true,
+    "detail": "credit_key=title title=\"9 Kings — Việt Hoá Bởi Bear\"",
+    "seconds": 0
+  },
+  "compress_roundtrip": {
+    "ok": true,
+    "detail": "orig=672 comp=976 ratio=0.69 restored_sha=ef27b9cf2258432c byte_identical=true progress_events=7",
+    "seconds": 0.1
+  },
+  "font_scan_merge": {
+    "ok": true,
+    "detail": "scan=Be Vietnam Pro: đủ tiếng Việt (142/142 ký tự, 527 glyph) merge_added=0 already=142 glyphs_copied=0 merged_bytes=132920",
+    "seconds": 0.1
+  },
+  "font_donor_file": {
+    "ok": true,
+    "detail": "dest=/tmp/BeVietnamPro-Regular.ttf bytes=132948",
+    "seconds": 0
+  },
+  "diagnose": {
+    "ok": true,
+    "detail": "kind=zip entries=3 hex_lines=32 strings=15 first_str=\"l]o]n\"",
+    "seconds": 0
+  },
+  "file_sha256": {
+    "ok": true,
+    "detail": "{\"ok\":true,\"sha256\":\"ef27b9cf2258432c8c91966140d4fc46decd105b2fff5fd4e4bccc7e09e366f8\",\"size\":672}",
+    "seconds": 0
+  },
+  "_failures": 0
+}

@@ -1,0 +1,90 @@
+{
+  "failures": 0,
+  "results": {
+    "download_blob_no_share": {
+      "ok": true,
+      "detail": "blob bấm ngay; revoke 5s/60s/599s = 0, 600s = 1; hint: Đang tải về out.tar.xz (4 B) — trình duyệt sẽ hỏi thì bấm Tả…",
+      "seconds": 0
+    },
+    "download_share_primary": {
+      "ok": true,
+      "detail": "blob không tự bấm; Share+blob hiện; share đúng tên extract.zip; hint: File extract.zip (3 B) đã sẵn sàng — bấm “Lưu / Chia sẻ” để …",
+      "seconds": 0
+    },
+    "download_share_errors": {
+      "ok": true,
+      "detail": "AbortError im lặng; lỗi thật báo 'Chia sẻ lỗi: …'",
+      "seconds": 0
+    },
+    "download_revoke_old_on_new": {
+      "ok": true,
+      "detail": "lần mới hủy URL cũ ngay; timer cũ không chạm URL mới; mỗi URL sống đúng 10 phút",
+      "seconds": 0
+    },
+    "download_blob_after_revoke": {
+      "ok": true,
+      "detail": "quá 10 phút: tạo lại URL từ blob đang giữ rồi bấm",
+      "seconds": 0
+    },
+    "static_checks": {
+      "ok": true,
+      "detail": "no_5s_revoke=true · revoke_10min=true · pagehide_revoke=true · share_primary=true · no_unlabeled_error=true · runop_throws_labeled=true · decompress_guard=true · compress_guard=true · unity_picker=true · bridge_inspect_entry=true · bridge_container=true · bridge_filename=true · worker_filename=true · index_share_btn=true · index_blob_btn=true · index_compress_wording=true · css_no_global_breakall=true · css_nowrap=true · css_firstcol_break=true · css_table_scroll=true",
+      "seconds": 0
+    },
+    "no_http_fetch_during_load": {
+      "ok": true,
+      "detail": "http fetch trong lúc loadPyodide: 0",
+      "seconds": 0
+    },
+    "pyodide_boot_bridge": {
+      "ok": true,
+      "detail": "87 file pb3/ + font ghi vào /pb3web, bridge import OK",
+      "seconds": 0.3
+    },
+    "bridge_boot": {
+      "ok": true,
+      "detail": "boot ok=true plugins=20",
+      "seconds": 1
+    },
+    "unity_inspect_zip_lists_bundles": {
+      "ok": true,
+      "detail": "is_container, bundles=[\"Payload/Game.app/Data/resources.assets\",\"Payload/Game.app/Data/sample.unity3d\"], total_entries=15",
+      "seconds": 0
+    },
+    "unity_inspect_entry": {
+      "ok": true,
+      "detail": "bundle files=2; assets version=17 2019.4.40f1",
+      "seconds": 0.3
+    },
+    "unity_inspect_zip_no_bundles": {
+      "ok": true,
+      "detail": "game1.zip: is_container, bundles=[] (UI hiện hướng dẫn trích xuất trước)",
+      "seconds": 0
+    },
+    "unity_inspect_direct_assets": {
+      "ok": true,
+      "detail": "version=17 2019.4.40f1 (không đổi so với trước)",
+      "seconds": 0
+    },
+    "decompress_original_filename": {
+      "ok": true,
+      "detail": "filename=sample.ipa (không còn restored.bin), byte_identical=true",
+      "seconds": 0.1
+    },
+    "decompress_zip_clean_error": {
+      "ok": true,
+      "detail": "ok=false, error=E_BAD_ARCHIVE: Archive hỏng (CRC sai hoặc cấu trúc lỗi).",
+      "seconds": 0
+    },
+    "table_old_css_broken_control": {
+      "ok": true,
+      "detail": "CSS cũ: chữ trong ô tiêu đề/Loại tối đa 2 dòng (vỡ chữ nếu >1) — th=[{\"text\":\"Đường dẫn\",\"lines\":1},{\"text\":\"Loại\",\"lines\":2},{\"text\":\"Kích thước\",\"lines\":2}]",
+      "seconds": 0.8
+    },
+    "table_390px_new_css": {
+      "ok": true,
+      "detail": "390px: tiêu đề/Loại/Kích thước đúng 1 dòng (không vỡ chữ); cột đường dẫn [3,2,1,1] dòng (được ngắt); bảng block+overflow-x:auto, plugin scrollW=354 > clientW=340",
+      "seconds": 0.2
+    }
+  }
+}

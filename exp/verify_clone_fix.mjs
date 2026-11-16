@@ -146,6 +146,8 @@ const sandbox = {
   confirm: () => true,
   Blob, URL, TextEncoder,
 };
+sandbox.window = sandbox;   // app.js dùng window.addEventListener("pagehide", ...) ở top-level
+sandbox.addEventListener = () => {};
 vm.createContext(sandbox);
 vm.runInContext(fs.readFileSync(SITE + "/app.js", "utf8"), sandbox, { filename: "app.js" });
 const nodeWorker = fakeWorkers[0].nodeWorker;

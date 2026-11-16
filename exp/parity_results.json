@@ -7,7 +7,7 @@
   "boot_20_plugins": {
     "ok": true,
     "detail": "{\"ok\":true,\"plugins\":20,\"plugin_ids\":[\"apple_plist\",\"apple_strings\",\"cocos_detect\",\"csv_table\",\"defold_detect\",\"gamemaker_detect\",\"generic_strings\",\"godot_pck\",\"godot_translation\",\"json_text\",\"po_mo\",\"properties\",\"resx\",\"sqlite_loc\",\"unreal_locres\",\"unreal_pak\",\"xliff\",\"xml_strings\",\"yaml_ini\",\"zip\"],\"problems\":[]}",
-    "seconds": 1.1
+    "seconds": 1
   },
   "bridge_new_fns": {
     "ok": true,
@@ -53,7 +53,7 @@
   "batch_sequential_2jobs": {
     "ok": true,
     "detail": "total=2 ok=2 failed=0 jobs=1 ckpt_games=2 zip=2077B progress_batch_2_2=true games=[ok:game_01_game1,ok:game_02_resources]",
-    "seconds": 0.1
+    "seconds": 0.2
   },
   "batch_resume_checkpoint": {
     "ok": true,
@@ -68,7 +68,7 @@
   "translate_regression": {
     "ok": true,
     "detail": "offline play->Chơi; worker import gt.js=true expose globalThis=true gt.js export=true; google_fn fallback offline=offline play->Chơi",
-    "seconds": 0.2
+    "seconds": 0.1
   },
   "_failures": 0,
   "_standin_used": false
