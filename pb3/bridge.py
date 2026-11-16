@@ -14,12 +14,20 @@ Hai điều chỉnh bắt buộc trên Pyodide (đã thử thật ở giai đo�
      (compress_ipa đã tự kiểm tra E_OUTPUT_EXISTS trước nên tương đương).
 
 Không dùng được trên web (ghi rõ, đừng gọi): UnityPy (micropip fail vì
-thiếu wheel etcpak), mọi tính năng cần threading (batch song song),
-Google Translate qua urllib (urllib không gọi mạng được trong Pyodide).
+thiếu wheel etcpak), mọi tính năng cần threading (batch CHỈ chạy tuần tự,
+jobs=1 — không có chế độ song song trên web), Google Translate qua urllib
+(urllib không gọi mạng được trong Pyodide).
 Dịch Google trên web đi đường khác: `gt.js` dùng fetch() trong Worker,
 Python gọi hàm JS đó qua module `js` từ hàm async `translate_json_google`
 (xem dưới) — Python async await được Promise JS nên event loop vẫn chạy
 và nút Hủy vẫn nhận được giữa đợt dịch.
+
+Mod (menu [1] iSH) / Batch (menu [4]) / KB (menu [3]) / ma trận hỗ trợ:
+xem mod_patch / batch_run / kb_* / support_matrix ở cuối file — đều gọi
+API tầng sdk (sdk.unity.apply_patch, sdk.batch.BatchRunner, sdk.kb.KB,
+sdk.support_matrix.generate), không dùng services/ (gắn với menu chữ).
+KB sống trong phiên (file SQLite ở /tmp/kb trong RAM của Worker — tải lại
+trang là mất, trừ khi tải file KB về bằng kb_export).
 """
 
 import asyncio
@@ -29,6 +37,7 @@ import json
 import os
 import shutil
 import sys
+import time
 import zipfile
 
 WEB_ROOT = "/pb3web"
@@ -632,5 +641,420 @@ def file_sha256(path):
                 h.update(chunk)
         return json.dumps({"ok": True, "sha256": h.hexdigest(),
                            "size": os.path.getsize(path)}, ensure_ascii=False)
+    except Exception as e:  # noqa: BLE001
+        return _err(e)
+
+
+# ======================================================================
+# MOD — menu [1] iSH (lệnh `mod` / `unity patch`).
+# ======================================================================
+def _mod_output_name(input_path, kind, label):
+    """Tên file output cho 1 đơn vị đã patch (như
+    sdk.batch._sdk_default_output_rel): <Game>/<tên đơn vị nhỏ nhất>.
+    Không bao giờ là cả IPA — đơn vị trong container/IPA chỉ xuất ra
+    bundle/assets đó, người dùng tự đóng gói lại nếu cần (giới hạn 6.6)."""
+    from sdk.batch import _sdk_default_output_rel
+
+    rel = _sdk_default_output_rel(input_path, kind, label)
+    return os.path.basename(rel)
+
+
+def mod_patch(path, edits_json, allow_write=False):
+    """Patch TextAsset trong file Unity (bundle .unity3d, .assets độc lập,
+    hoặc entry trong container/IPA qua vpath 'a::b').
+
+    edits_json: JSON list [{"object": path_id, "old": "...", "new": "...",
+    "entry": vpath (tùy chọn), "mode": "PATCH_INPLACE"|"REBUILD_SECTION"}].
+    Nhiều edit trên cùng một đơn vị được áp nối tiếp trên bytes đã patch.
+
+    MẶC ĐỊNH dry-run (allow_write=False): chỉ tính toán + verify, KHÔNG
+    ghi file nào. allow_write=True (người dùng bấm nút ghi rõ ràng, tương
+    đương --allow-write) thì ghi từng đơn vị đã patch ra /tmp/mod_out/
+    (không ghi đè file gốc); 1 file -> dest, nhiều file -> /tmp/mod.zip.
+    REBUILD_ALL không hỗ trợ trên web (cần maturity M4 + xác nhận).
+    """
+    try:
+        from sdk import unity as u
+        from sdk.batch import _sdk_resolve_vpath
+
+        _check_size(path)
+        edits = json.loads(edits_json)
+        if not isinstance(edits, list) or not edits:
+            raise ValueError("edits phải là JSON list không rỗng.")
+        data = open(path, "rb").read()
+        orig_sha = hashlib.sha256(data).hexdigest()
+        backend = u.UnityBackend("NATIVE")
+        limits = _app.limits
+        from_container = u.detect_bundle(data) is None
+        # Đơn vị đã patch theo khóa entry (nhiều edit cùng đơn vị nối tiếp).
+        units = {}   # key -> {"kind", "req_entry", "label", "bytes"}
+        results = []
+        for idx, edit in enumerate(edits):
+            if not isinstance(edit, dict):
+                raise ValueError("edit #%d phải là object." % (idx + 1))
+            try:
+                obj_id = int(edit["object"])
+            except (KeyError, TypeError, ValueError):
+                raise ValueError("edit #%d thiếu object (path_id số)."
+                                 % (idx + 1))
+            old = edit.get("old")
+            new = edit.get("new")
+            if old is None or new is None:
+                raise ValueError("edit #%d thiếu old/new." % (idx + 1))
+            mode = (edit.get("mode") or "PATCH_INPLACE").upper()
+            if mode not in ("PATCH_INPLACE", "REBUILD_SECTION"):
+                raise ValueError(
+                    "edit #%d: mode %r không hỗ trợ trên web "
+                    "(chỉ PATCH_INPLACE/REBUILD_SECTION; REBUILD_ALL cần "
+                    "maturity M4, chưa có)." % (idx + 1, mode))
+            entry = edit.get("entry") or None
+            key = entry or "<file>"
+            if key not in units:
+                kind, unit_data, req_entry, label = _sdk_resolve_vpath(
+                    data, entry, backend, limits)
+                units[key] = {"kind": kind, "req_entry": req_entry,
+                              "label": label, "bytes": unit_data}
+            unit = units[key]
+            req = u.PatchRequest(
+                data=unit["bytes"], kind=unit["kind"],
+                entry=unit["req_entry"], path_id=obj_id,
+                old_text=str(old), new_text=str(new), write_mode=mode,
+                backend=backend, temp_dir=str(_app.paths.temp),
+                from_container=bool(entry) and from_container)
+            res = u.apply_patch(req)
+            unit["bytes"] = res.output_bytes
+            rep = res.report
+            results.append({
+                "entry": entry, "object": obj_id,
+                "target": rep.target, "unit": res.unit,
+                "write_mode": rep.write_mode_used,
+                "occurrences": int(rep.occurrences),
+                "old_script_len": int(rep.old_script_len),
+                "new_script_len": int(rep.new_script_len),
+                "size_before": int(rep.size_before),
+                "size_after": int(rep.size_after),
+                "verified": bool(res.verified),
+                "verify": list(res.verify_details or []),
+                "warnings": list(rep.warnings or []) + list(rep.backend_decisions or []),
+            })
+            _emit("mod", idx + 1, len(edits))
+        out = {"ok": True, "dry_run": not bool(allow_write),
+               "patched": len(results), "edits": results,
+               "source_sha256": orig_sha,
+               "outputs": [], "dest": None, "zip_path": None,
+               "note": "Output là đơn vị nhỏ nhất đã patch (bundle/.assets), "
+                       "KHÔNG phải IPA đóng gói lại — bản web không đóng gói "
+                       "lại IPA (giới hạn 6.6 của PB3)."}
+        if allow_write:
+            out_dir = "/tmp/mod_out"
+            shutil.rmtree(out_dir, ignore_errors=True)
+            os.makedirs(out_dir, exist_ok=True)
+            names = []
+            for key, unit in units.items():
+                name = _mod_output_name(path, unit["kind"], unit["label"])
+                dest = os.path.join(out_dir, name)
+                # Tránh ghi đè lẫn nhau khi 2 đơn vị trùng tên file.
+                n = 1
+                base, ext = os.path.splitext(name)
+                while os.path.exists(dest):
+                    n += 1
+                    dest = os.path.join(out_dir, "%s_%d%s" % (base, n, ext))
+                open(dest, "wb").write(unit["bytes"])
+                names.append(os.path.basename(dest))
+            out["outputs"] = names
+            if len(names) == 1:
+                out["dest"] = os.path.join(out_dir, names[0])
+            else:
+                zpath = "/tmp/mod.zip"
+                if os.path.exists(zpath):
+                    os.remove(zpath)
+                with zipfile.ZipFile(zpath, "w", zipfile.ZIP_DEFLATED) as zf:
+                    for name in names:
+                        zf.write(os.path.join(out_dir, name), name)
+                out["zip_path"] = zpath
+                out["zip_bytes"] = os.path.getsize(zpath)
+        return json.dumps(out, ensure_ascii=False)
+    except Exception as e:  # noqa: BLE001
+        return _err(e)
+
+
+# ======================================================================
+# BATCH — menu [4] iSH (sdk/batch.py).
+# ======================================================================
+_BATCH_ROOT = "/tmp/batch"
+
+
+def _resolve_batch_path(p):
+    """Đường dẫn game trong manifest: dùng nguyên nếu có trong FS ảo,
+    nếu không thì tìm theo tên file trong /tmp/input/ (nơi worker ghi
+    file người dùng tải lên). Không tìm thấy thì giữ nguyên — BatchRunner
+    sẽ ghi lỗi E_INPUT_NOT_FOUND cho riêng game đó, không dừng cả lô."""
+    if os.path.isfile(p):
+        return p
+    cand = os.path.join("/tmp/input", os.path.basename(str(p)))
+    if os.path.isfile(cand):
+        return cand
+    return p
+
+
+def batch_run(manifest_text, dry_run=True, checkpoint_json=None, resume=False):
+    """Chạy một lô game theo manifest (JSON list hoặc CSV text, cùng dạng
+    bản iSH: path/mode/locale/old/new/file/object/profile_override).
+
+    CHẠY TUẦN TỰ (jobs=1) — Pyodide trên GitHub Pages không có threading,
+    không có chế độ song song trên web. Mỗi game cô lập: lỗi một game
+    không dừng cả lô. dry_run=True mặc định (chạy thử trước, chưa ghi).
+    checkpoint_json: chuỗi checkpoint lần chạy trước (UI lưu ở localStorage
+    hoặc file) + resume=True để bỏ qua game đã xong. Trả summary +
+    checkpoint mới (UI lưu lại) + zip kết quả (/tmp/batch.zip: summary.json,
+    checkpoint.json, index.csv, failures.txt, từng thư mục game).
+    """
+    try:
+        from sdk.batch import BatchRunner, parse_manifest
+
+        items = parse_manifest(manifest_text)
+        for it in items:
+            it.path = _resolve_batch_path(it.path)
+        out_dir = os.path.join(
+            _BATCH_ROOT, time.strftime("%Y%m%d-%H%M%S"))
+        os.makedirs(out_dir, exist_ok=True)
+        if resume and checkpoint_json:
+            with open(os.path.join(out_dir, "checkpoint.json"),
+                      "w", encoding="utf-8") as fh:
+                fh.write(checkpoint_json)
+        runner = BatchRunner(registry=_reg, app=_app,
+                             stream=io.StringIO())
+        kb = None
+        try:
+            kb = _get_kb()
+        except Exception:
+            kb = None  # KB lỗi thì batch vẫn chạy (như bản iSH: kb=None chạy được)
+        summary = runner.run(
+            items, out_dir=out_dir, jobs=1, resume=bool(resume),
+            dry_run=bool(dry_run), kb=kb,
+            progress_cb=lambda d, t, name: _emit("batch", d, t))
+        ck_path = os.path.join(out_dir, "checkpoint.json")
+        checkpoint = None
+        if os.path.isfile(ck_path):
+            with open(ck_path, "r", encoding="utf-8") as fh:
+                checkpoint = fh.read()
+        zpath = "/tmp/batch.zip"
+        if os.path.exists(zpath):
+            os.remove(zpath)
+        with zipfile.ZipFile(zpath, "w", zipfile.ZIP_DEFLATED) as zf:
+            for root, dirs, fns in os.walk(out_dir):
+                dirs[:] = [d for d in dirs if d != ".staging"]
+                for fn in sorted(fns):
+                    fp = os.path.join(root, fn)
+                    zf.write(fp, os.path.relpath(fp, out_dir))
+        return json.dumps({
+            "ok": True, "jobs": 1, "sequential": True,
+            "dry_run": bool(dry_run), "resumed": bool(resume),
+            "summary": summary.to_dict(), "checkpoint": checkpoint,
+            "zip_path": zpath, "zip_bytes": os.path.getsize(zpath),
+            "note": "Batch web chạy TUẦN TỰ từng game (không có threading "
+                    "trên GitHub Pages, không có chế độ song song).",
+        }, ensure_ascii=False)
+    except Exception as e:  # noqa: BLE001
+        return _err(e)
+
+
+# ======================================================================
+# KB — menu [3] iSH (sdk/kb.py). SQLite TRONG PHIÊN.
+# ======================================================================
+_KB_PATH = "/tmp/kb/pb3_kb.sqlite"
+_kb = None
+
+
+def _get_kb():
+    """KB của phiên: file SQLite trong RAM của Worker (/tmp/kb, MEMFS).
+    Tải lại trang là mất — chỉ giữ được khi tải file KB về (kb_export)
+    rồi nhập lại bằng kb_import trong phiên mới."""
+    global _kb
+    if _kb is None:
+        from sdk.kb import KB
+
+        _kb = KB(_KB_PATH)
+    return _kb
+
+
+def kb_add(path):
+    """Thêm game đã chọn vào KB: fingerprint + nhớ profile (chỉ lưu
+    hash/kích thước/vai trò — KHÔNG lưu nội dung game hay bản dịch)."""
+    try:
+        from sdk.kb import fingerprint_game
+
+        _check_size(path)
+        kb = _get_kb()
+        fp = fingerprint_game(path)
+        gid = kb.remember(fp, list(fp.get("files") or []), [], {})
+        return json.dumps({
+            "ok": True, "game_id": int(gid),
+            "bundle_id": fp.get("bundle_id"), "version": fp.get("version"),
+            "engine": fp.get("engine"),
+            "engine_conf": fp.get("engine_conf"),
+            "fingerprint": (fp.get("fingerprint") or "")[:16],
+            "size": int(fp.get("size") or 0),
+        }, ensure_ascii=False)
+    except Exception as e:  # noqa: BLE001
+        return _err(e)
+
+
+def kb_query(path):
+    """Tra cứu profile game đã chọn trong KB (fingerprint khớp mới tái
+    dùng; lệch hash thì trả found=False + lý do, không tái dùng im lặng)."""
+    try:
+        _check_size(path)
+        kb = _get_kb()
+        prof = kb.lookup(path)
+        if prof is None:
+            return json.dumps({
+                "ok": True, "found": False,
+                "reason": kb.last_lookup_reason,
+            }, ensure_ascii=False)
+        return json.dumps({"ok": True, "found": True, "profile": prof},
+                          ensure_ascii=False)
+    except Exception as e:  # noqa: BLE001
+        return _err(e)
+
+
+def kb_list():
+    """Danh sách game đã biết trong KB của phiên."""
+    try:
+        kb = _get_kb()
+        return json.dumps({
+            "ok": True, "games": kb.list_games(),
+            "size_bytes": int(kb.size_bytes()),
+            "session_only": True,
+        }, ensure_ascii=False)
+    except Exception as e:  # noqa: BLE001
+        return _err(e)
+
+
+def kb_forget(bundle_id):
+    """Quên tri thức một game (theo bundle id hoặc id số)."""
+    try:
+        kb = _get_kb()
+        return json.dumps({"ok": True,
+                           "forgotten": bool(kb.forget(bundle_id))},
+                          ensure_ascii=False)
+    except Exception as e:  # noqa: BLE001
+        return _err(e)
+
+
+def kb_export():
+    """Xuất file KB của phiên ra /tmp/pb3_kb.sqlite để tải về.
+
+    Đóng kết nối trước khi copy (SQLite checkpoint WAL vào file chính khi
+    đóng kết nối cuối — file tải về mới đầy đủ, tự chứa). File này chỉ
+    lưu được tri thức TRONG PHIÊN: tải lại trang thì KB trống lại, trừ
+    khi nhập lại file đã tải về bằng kb_import (nút 'Nhập KB' trên tab
+    KB)."""
+    global _kb
+    try:
+        kb = _get_kb()
+        n = len(kb.list_games())
+        kb.close()
+        _kb = None
+        dest = "/tmp/pb3_kb.sqlite"
+        if os.path.exists(dest):
+            os.remove(dest)
+        shutil.copyfile(_KB_PATH, dest)
+        return json.dumps({
+            "ok": True, "dest": dest, "size": os.path.getsize(dest),
+            "games": int(n),
+        }, ensure_ascii=False)
+    except Exception as e:  # noqa: BLE001
+        return _err(e)
+
+
+def kb_import(path):
+    """Nhập file KB (.sqlite) đã xuất trước đó (kb_export) vào KB của
+    phiên hiện tại: mở bản sao của file tải lên làm KB nguồn, xuất từng
+    profile (export_profile) rồi nhập vào KB phiên (import_profile,
+    không có file game để đối chiếu hash nên mỗi profile kèm cảnh báo
+    'chưa kiểm hash' — profile chỉ là gợi ý cho tới khi dò lại). Game
+    đã có trong KB phiên (cùng bundle_id) sẽ được ghi đè bằng dữ liệu
+    nhập (hành vi của import_profile). File tải lên không bị sửa (mở
+    trên bản sao; KB nguồn dùng WAL/migrate nên phải mở bản sao, không
+    mở trực tiếp file người dùng). Game không có bundle id thì không
+    nhập được (import_profile lấy bundle id làm khóa) — game đó bị bỏ
+    qua, ghi vào 'skipped' + cảnh báo, các game khác vẫn nhập bình
+    thường; một profile lỗi cũng không làm hỏng cả lần nhập."""
+    try:
+        from sdk.kb import KB
+
+        _check_size(path)
+        src_path = "/tmp/kb_import.sqlite"
+        if os.path.exists(src_path):
+            os.remove(src_path)
+        shutil.copyfile(path, src_path)
+        src = KB(src_path)
+        try:
+            games = src.list_games()
+            kb = _get_kb()
+            imported = []
+            skipped = 0
+            warnings = []
+            for g in games:
+                bundle_id = g.get("bundle_id")
+                if not bundle_id:
+                    skipped += 1
+                    warnings.append(
+                        "bỏ qua game id %s: không có bundle id nên "
+                        "không nhập được (cần bundle id làm khóa)"
+                        % (g.get("id"),))
+                    continue
+                try:
+                    profile = src.export_profile(g["id"])
+                    gid, warns = kb.import_profile(profile)
+                except Exception as e:  # noqa: BLE001 - 1 game lỗi, nhập tiếp
+                    skipped += 1
+                    warnings.append("bỏ qua game %r: %s"
+                                    % (bundle_id, e))
+                    continue
+                imported.append({
+                    "game_id": int(gid), "bundle_id": bundle_id,
+                    "version": g.get("version"),
+                    "engine": g.get("engine")})
+                warnings.extend(warns or [])
+            return json.dumps({
+                "ok": True, "imported": len(imported),
+                "skipped": skipped, "games": imported,
+                "warnings": warnings,
+            }, ensure_ascii=False)
+        finally:
+            src.close()
+            if os.path.exists(src_path):
+                os.remove(src_path)
+    except Exception as e:  # noqa: BLE001
+        return _err(e)
+
+
+# ======================================================================
+# MA TRẬN HỖ TRỢ — lệnh `support` iSH (sdk/support_matrix.py).
+# ======================================================================
+def support_matrix():
+    """Ma trận hỗ trợ sinh từ dữ liệu thật của PB3: hàng registry.rows()
+    (maturity hiệu lực), sdk.containers.support_matrix(),
+    sdk.unity.support_matrix(), cột 'số game đã test' từ KB của phiên.
+    Không hardcode bảng. Lưu ý: ngày test hiện 'chưa có' vì bản web
+    không vendor tests/corpus/*.json (chỉ có trên cây iSH)."""
+    try:
+        from sdk import support_matrix as sm
+
+        rows = _reg.rows()
+        manifests = {}
+        for rec in _reg.records():
+            manifests[rec.plugin_id] = getattr(rec, "manifest", None)
+        kb_stats = {}
+        try:
+            kb_stats = _get_kb().plugin_stats()
+        except Exception:
+            kb_stats = {}
+        markdown, data = sm.generate(
+            WEB_ROOT, rows=rows, manifests=manifests, kb_stats=kb_stats)
+        return json.dumps({"ok": True, "markdown": markdown, "data": data},
+                          ensure_ascii=False)
     except Exception as e:  # noqa: BLE001
         return _err(e)
