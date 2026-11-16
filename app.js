@@ -403,16 +403,64 @@ async function restoreKbFromIdb() {
   }
 }
 
-// Xin quyền lưu trữ bền vững rồi hiện trạng thái (đã cấp/chưa cấp).
+// Xin quyền lưu trữ bền vững rồi hiện trạng thái (đã cấp/chưa cấp) +
+// dung lượng ước tính (Mục C3: estimate()). Gọi sớm (sau first paint /
+// lần tương tác đầu — xem requestStorageEarly ở cuối file), không đợi
+// tới lúc boot, để KB có cơ hội được giữ bền ngay từ đầu. persist() bị
+// từ chối thì hiện rõ CHƯA CẤP, không ghi PASS giả; estimate() lỗi thì
+// ghi rõ không đọc được, không bịa số.
+let lastStorageState = null;
 async function refreshKbPersistStatus() {
   const el = $("kb-persist");
-  if (!el || !kbStore) return;
-  let granted = false, persisted = false;
-  try { granted = await kbStore.requestPersistence(); } catch (e) { granted = false; }
+  let granted = false, persisted = false, usage = null, quota = null, estError = null;
+  try {
+    granted = kbStore ? await kbStore.requestPersistence()
+      : (typeof navigator !== "undefined" && navigator.storage
+        ? await navigator.storage.persist() : false);
+  } catch (e) { granted = false; }
   try { persisted = await navigator.storage.persisted(); } catch (e) { persisted = granted; }
+  try {
+    const est = await navigator.storage.estimate();
+    usage = typeof est.usage === "number" ? est.usage : null;
+    quota = typeof est.quota === "number" ? est.quota : null;
+  } catch (e) { estError = e && e.message ? e.message : String(e); }
+  lastStorageState = { persisted: !!(persisted || granted), granted: !!granted,
+    usage, quota, estError, at: Date.now() };
+  if (typeof window !== "undefined") window.__PB3_STORAGE_STATE = () => ({ ...lastStorageState });
+  if (!el) return;
   el.textContent = (persisted || granted)
     ? "Lưu trữ bền vững: ĐÃ CẤP — trình duyệt sẽ không tự xóa KB."
     : "Lưu trữ bền vững: CHƯA CẤP — Safari có thể xóa KB sau ~7 ngày không mở trang; hãy cài BearTea vào Màn hình chính (mục dưới) để giữ KB bền hơn.";
+  el.textContent += (usage != null && quota != null)
+    ? " Đã dùng " + fmtBytes(usage) + " / hạn mức " + fmtBytes(quota) + "."
+    : " Không đọc được dung lượng ước tính" + (estError ? " (" + estError + ")" : "") + ".";
+}
+
+// Xin persist() sớm (Mục C3): sau first paint (requestIdleCallback /
+// setTimeout khi trang đã tải xong) hoặc ngay lần tương tác đầu tiên của
+// user — cái nào tới trước. Chỉ gọi 1 lần; không boot Pyodide, không
+// chặn vẽ trang. Hook window.__PB3_NO_EARLY_PERSIST để harness tắt.
+let earlyPersistDone = false;
+function requestStorageEarly() {
+  if (earlyPersistDone) return;
+  earlyPersistDone = true;
+  if (typeof window !== "undefined" && window.__PB3_NO_EARLY_PERSIST) return;
+  refreshKbPersistStatus();
+  checkKbExportReminderEarly();
+}
+if (typeof window !== "undefined" && typeof navigator !== "undefined") {
+  const scheduleEarlyPersist = () => {
+    if (typeof window.requestIdleCallback === "function") {
+      window.requestIdleCallback(() => requestStorageEarly(), { timeout: 5000 });
+    } else {
+      setTimeout(requestStorageEarly, 1500);
+    }
+  };
+  if (document.readyState === "complete") scheduleEarlyPersist();
+  else window.addEventListener("load", scheduleEarlyPersist);
+  const onceInteract = () => { requestStorageEarly(); };
+  window.addEventListener("pointerdown", onceInteract, { once: true });
+  window.addEventListener("keydown", onceInteract, { once: true });
 }
 
 // Dòng trạng thái KB: số game, dung lượng, lần tự lưu gần nhất + nhắc export.
@@ -441,16 +489,30 @@ function kbLastExportAt() {
 function kbRecordExportNow() {
   try { localStorage.setItem(KB_LAST_EXPORT_KEY, String(Date.now())); } catch (e) { /* localStorage không có */ }
 }
+// Mốc "tắt nhắc lần này": user bấm thì không nhắc lại trong 7 ngày
+// (lưu localStorage; hết hạn thì nhắc lại như thường nếu vẫn quá hạn xuất).
+const KB_EXPORT_SNOOZE_KEY = "pb3_kb_export_snooze_until";
+const KB_EXPORT_SNOOZE_DAYS = 7;
+function kbExportSnoozedUntil() {
+  try {
+    const v = localStorage.getItem(KB_EXPORT_SNOOZE_KEY);
+    return v ? parseInt(v, 10) : 0;
+  } catch (e) { return 0; }
+}
 // Nhắc sao lưu: lần xuất cuối > 7 ngày, hoặc chưa từng xuất mà KB đã có
-// dữ liệu. Ghi rõ trong UI; không tự tải file về thay user.
+// dữ liệu. Ghi rõ trong UI; không tự tải file về thay user. Có 2 nút:
+// "Đã xuất" (ghi mốc vừa xuất xong, ẩn nhắc) và "Tắt nhắc lần này"
+// (im 7 ngày rồi nhắc lại nếu vẫn quá hạn).
 function updateKbExportReminder(gameCount) {
   const el = $("kb-export-reminder");
   if (!el) return;
+  const txt = $("kb-export-reminder-text");
   const last = kbLastExportAt();
+  if (Date.now() < kbExportSnoozedUntil()) { el.hidden = true; return; }
   const over7d = last > 0 && (Date.now() - last > KB_EXPORT_REMINDER_DAYS * 86400000);
   const neverWithData = last === 0 && gameCount > 0;
   if (over7d || neverWithData) {
-    el.textContent = last === 0
+    if (txt) txt.textContent = last === 0
       ? "Nhắc sao lưu: KB đã có dữ liệu nhưng bạn chưa từng xuất file .sqlite — hãy bấm “Tải KB về (.sqlite)” để sao lưu, phòng khi trình duyệt xóa IndexedDB."
       : "Nhắc sao lưu: lần xuất KB cuối đã hơn 7 ngày trước (" +
         new Date(last).toLocaleDateString("vi-VN") +
@@ -458,24 +520,85 @@ function updateKbExportReminder(gameCount) {
     el.hidden = false;
   } else el.hidden = true;
 }
+// Kiểm tra nhắc export sớm (Mục C3): không cần boot Pyodide — đọc thẳng
+// kích thước KB trong IndexedDB; có dữ liệu mà quá hạn xuất thì nhắc ngay
+// từ lúc mở trang. Gọi cùng lúc với requestStorageEarly.
+async function checkKbExportReminderEarly() {
+  if (!kbStore) return;
+  try {
+    const saved = await kbStore.load();
+    if (saved && saved.length) updateKbExportReminder(1);
+  } catch (e) { /* IndexedDB lỗi: nhắc export là phụ, bỏ qua */ }
+}
+$("btn-kb-exported").addEventListener("click", () => {
+  kbRecordExportNow();
+  const el = $("kb-export-reminder");
+  if (el) el.hidden = true;
+});
+$("btn-kb-reminder-snooze").addEventListener("click", () => {
+  try { localStorage.setItem(KB_EXPORT_SNOOZE_KEY, String(Date.now() + KB_EXPORT_SNOOZE_DAYS * 86400000)); } catch (e) { /* localStorage không có */ }
+  const el = $("kb-export-reminder");
+  if (el) el.hidden = true;
+});
 
-// ---- PWA: cài vào Màn hình chính (Mục 3) ----
+// ---- PWA: cài vào Màn hình chính (Mục 3 + C3) ----
 // beforeinstallprompt chỉ có trên Chrome/Android/desktop — Safari iPhone
 // KHÔNG bao giờ bắn sự kiện này, nên hướng dẫn tay cho iOS (Chia sẻ →
 // Thêm vào Màn hình chính) luôn hiện sẵn ở tab KB; nút “Cài…” chỉ hiện
 // khi trình duyệt bắn beforeinstallprompt (có prompt thật để bấm).
+// C3 thêm: (a) đã cài/standalone thì ẩn nút, hiện ghi chú đã cài;
+// (b) sự kiện appinstalled (cài xong thật) thì ẩn nút + hiện ghi chú;
+// (c) user đóng bảng cài thì ghi rõ, không giả vờ nút còn bấm được
+// (prompt thật chỉ dùng được 1 lần — tải lại trang mới có lại).
 let deferredPwaPrompt = null;
+let pwaInstalled = false;
+function pwaIsStandalone() {
+  try {
+    if (typeof window !== "undefined" && window.matchMedia &&
+      window.matchMedia("(display-mode: standalone)").matches) return true;
+    if (typeof navigator !== "undefined" && navigator.standalone) return true;
+  } catch (e) { /* không đọc được: coi như chưa cài */ }
+  return false;
+}
+function refreshPwaInstallUi() {
+  const b = $("btn-pwa-install");
+  const note = $("pwa-installed-note");
+  if (pwaInstalled || pwaIsStandalone()) {
+    if (b) b.hidden = true;
+    if (note) note.hidden = false;
+  }
+}
+if (typeof window !== "undefined") {
+  window.__PB3_PWA_STATE = () => ({ hasPrompt: !!deferredPwaPrompt,
+    installed: pwaInstalled || pwaIsStandalone(), standalone: pwaIsStandalone() });
+  refreshPwaInstallUi();
+}
 window.addEventListener("beforeinstallprompt", (ev) => {
   ev.preventDefault();
   deferredPwaPrompt = ev;
+  if (pwaInstalled || pwaIsStandalone()) return;
   const b = $("btn-pwa-install");
   if (b) b.hidden = false;
 });
+window.addEventListener("appinstalled", () => {
+  pwaInstalled = true;
+  deferredPwaPrompt = null;
+  refreshPwaInstallUi();
+});
 $("btn-pwa-install").addEventListener("click", async () => {
   if (deferredPwaPrompt && typeof deferredPwaPrompt.prompt === "function") {
-    try { await deferredPwaPrompt.prompt(); } catch (e) { /* user hủy bảng cài */ }
+    const promptEv = deferredPwaPrompt;
     deferredPwaPrompt = null;
     $("btn-pwa-install").hidden = true;
+    try {
+      await promptEv.prompt();
+      const choice = promptEv.userChoice ? await promptEv.userChoice : null;
+      if (choice && choice.outcome === "accepted") { pwaInstalled = true; refreshPwaInstallUi(); }
+      else if (choice && choice.outcome === "dismissed") {
+        const note = $("pwa-note");
+        if (note) note.textContent = "Bạn đã đóng bảng cài đặt — tải lại trang để thử lại, hoặc cài bằng tay theo hướng dẫn trên (Safari: Chia sẻ → Thêm vào Màn hình chính).";
+      }
+    } catch (e) { /* user hủy bảng cài */ }
   }
   // Không có prompt thật (vd Safari): hướng dẫn tay đã hiện sẵn ở tab KB.
 });
@@ -3205,3 +3328,190 @@ function registerServiceWorker() {
   } catch (e) { /* im lặng: không SW vẫn chạy */ }
 }
 registerServiceWorker();
+
+// ---- Tải trước Pyodide sau first paint (Mục C3) ----
+// Sau khi vỏ trang đã hiện (first paint + load), tải trước các file
+// Pyodide nặng ở chế độ nền, KHÔNG chặn boot, KHÔNG tạo worker:
+// % thật theo byte đã tải/tổng (đọc stream từng file). File đã có trong
+// Cache Storage (SW precache lúc install đã tải) thì bỏ qua, không tải
+// đúp. File tải xong ghi vào cache của SW (hỏi qua GET_VERSION) hoặc
+// cache prefetch riêng — SW dùng làm dự phòng khi cache chính trượt
+// (xem sw.js), nên lần user bấm dùng tool thì boot đọc từ cache.
+// Không chạy khi: trình duyệt bật tiết kiệm dữ liệu, đang offline,
+// không có Cache Storage, hoặc hook window.__PB3_NO_PREFETCH được đặt
+// (harness tắt để đo boot lạnh). Trì hoãn ~4 giây sau load để không
+// tranh băng thông với SW precache + không phá kiểm chứng lazy boot
+// (mục 6: 2 giây đầu sau tải trang không có request Pyodide nào).
+const PYODIDE_PREFETCH_URLS = [
+  "pyodide/pyodide.mjs",
+  "pyodide/pyodide.asm.mjs",
+  "pyodide/pyodide.asm.wasm",
+  "pyodide/python_stdlib.zip",
+  "pyodide/pyodide-lock.json",
+  "pyodide/lz4-4.4.5-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+];
+const PREFETCH_CACHE_FALLBACK = "beartea-prefetch-v1";
+const prefetchState = { started: false, done: false, loadedBytes: 0,
+  totalBytes: 0, filesDone: 0, filesTotal: PYODIDE_PREFETCH_URLS.length,
+  cachedFiles: 0, fetchedFiles: 0,
+  failedFiles: [], status: "idle" };
+if (typeof window !== "undefined") {
+  window.__PB3_PREFETCH_STATE = () => ({ ...prefetchState,
+    pct: prefetchState.totalBytes > 0
+      ? Math.round(prefetchState.loadedBytes / prefetchState.totalBytes * 100)
+      : Math.round(prefetchState.filesDone / prefetchState.filesTotal * 100) });
+}
+function prefetchUpdateUi() {
+  const box = $("pyodide-prefetch");
+  const txt = $("pyodide-prefetch-text");
+  const bar = $("pyodide-prefetch-bar");
+  if (!box || !txt) return;
+  const pct = prefetchState.totalBytes > 0
+    ? Math.round(prefetchState.loadedBytes / prefetchState.totalBytes * 100)
+    : Math.round(prefetchState.filesDone / prefetchState.filesTotal * 100);
+  if (prefetchState.status === "done") {
+    txt.textContent = "Pyodide đã tải trước xong (" + fmtBytes(prefetchState.totalBytes) +
+      ", " + prefetchState.filesDone + "/" + prefetchState.filesTotal + " file — " +
+      prefetchState.cachedFiles + " file đã có sẵn trong cache, " +
+      prefetchState.fetchedFiles + " file tải mới) — lần dùng sau sẽ khởi động nhanh hơn.";
+  } else if (prefetchState.status === "partial") {
+    txt.textContent = "Tải trước Pyodide chưa xong hẳn (" + prefetchState.failedFiles.length +
+      " file lỗi: " + prefetchState.failedFiles.join(", ") +
+      ") — vẫn khởi động bình thường khi bạn chọn file.";
+  } else if (prefetchState.status === "skipped") {
+    txt.textContent = "Không tải trước Pyodide (" + (prefetchState.error || "trình duyệt không hỗ trợ") +
+      ") — vẫn khởi động bình thường khi bạn chọn file.";
+  } else {
+    txt.textContent = "Đang tải trước Pyodide… " + pct + "% (" +
+      fmtBytes(prefetchState.loadedBytes) + "/" +
+      (prefetchState.totalBytes > 0 ? fmtBytes(prefetchState.totalBytes) : "?") +
+      ") — chạy nền, không chặn khởi động.";
+  }
+  if (bar) { bar.value = pct; bar.hidden = prefetchState.status !== "running"; }
+  box.hidden = false;
+}
+async function swCacheNameForPrefetch() {
+  try {
+    if (typeof navigator === "undefined" || !navigator.serviceWorker) return null;
+    const reg = await navigator.serviceWorker.getRegistration();
+    if (!reg || !reg.active) return null;
+    const ver = await new Promise((resolve) => {
+      const ch = new MessageChannel();
+      const timer = setTimeout(() => resolve(null), 1000);
+      ch.port1.onmessage = (ev) => { clearTimeout(timer); resolve(ev.data); };
+      try { reg.active.postMessage({ type: "GET_VERSION" }, [ch.port2]); }
+      catch (e) { clearTimeout(timer); resolve(null); }
+    });
+    return ver && ver.cache ? ver.cache : null;
+  } catch (e) { return null; }
+}
+async function prefetchPyodide() {
+  if (prefetchState.started) return { ...prefetchState };
+  prefetchState.started = true;
+  prefetchState.status = "running";
+  if (typeof window !== "undefined" && window.__PB3_NO_PREFETCH) {
+    prefetchState.status = "skipped"; prefetchState.error = "đã tắt bằng hook kiểm chứng";
+    return { ...prefetchState };
+  }
+  if (typeof caches === "undefined" || typeof fetch === "undefined") {
+    prefetchState.status = "skipped"; prefetchState.error = "trình duyệt không có Cache Storage";
+    prefetchUpdateUi(); return { ...prefetchState };
+  }
+  try {
+    if (typeof navigator !== "undefined" && navigator.onLine === false) {
+      prefetchState.status = "skipped"; prefetchState.error = "đang offline";
+      prefetchUpdateUi(); return { ...prefetchState };
+    }
+    if (typeof navigator !== "undefined" && navigator.connection && navigator.connection.saveData) {
+      prefetchState.status = "skipped"; prefetchState.error = "đang bật tiết kiệm dữ liệu";
+      prefetchUpdateUi(); return { ...prefetchState };
+    }
+  } catch (e) { /* không đọc được trạng thái mạng: cứ thử tải */ }
+  prefetchUpdateUi();
+  const cacheName = (await swCacheNameForPrefetch()) || PREFETCH_CACHE_FALLBACK;
+  let cache = null;
+  try { cache = await caches.open(cacheName); } catch (e) { cache = null; }
+  for (const rel of PYODIDE_PREFETCH_URLS) {
+    const url = new URL(rel, location.href).href;
+    try {
+      const cached = await caches.match(url);
+      if (cached) {
+        // Máy chủ có thể trả chunked (không có Content-Length — cả server
+        // thử local lẫn GitHub Pages đều có thể như vậy): đếm byte thật
+        // qua blob().size thay vì tin header.
+        let len = parseInt(cached.headers.get("content-length") || "0", 10);
+        if (!len) {
+          try { len = (await cached.clone().blob()).size; } catch (e) { len = 0; }
+        }
+        if (len > 0) { prefetchState.loadedBytes += len; prefetchState.totalBytes += len; }
+        prefetchState.filesDone++;
+        prefetchState.cachedFiles++;
+        prefetchUpdateUi();
+        continue;
+      }
+      const res = await fetch(url);
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      const total = parseInt(res.headers.get("content-length") || "0", 10);
+      if (total > 0) prefetchState.totalBytes += total;
+      const chunks = [];
+      let got = 0;
+      if (res.body && typeof res.body.getReader === "function") {
+        const reader = res.body.getReader();
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          chunks.push(value);
+          got += value.byteLength;
+          prefetchState.loadedBytes += value.byteLength;
+          prefetchUpdateUi();
+        }
+      } else {
+        const buf = new Uint8Array(await res.arrayBuffer());
+        chunks.push(buf);
+        got += buf.byteLength;
+        prefetchState.loadedBytes += buf.byteLength;
+      }
+      if (total > 0 && got !== total) {
+        // Máy chủ trả thiếu so với Content-Length: vẫn ghi những gì đã có,
+        // nhưng không tính là đủ file (để lần sau tải lại).
+        prefetchState.totalBytes -= total;
+        prefetchState.failedFiles.push(rel + " (thiếu byte)");
+        prefetchUpdateUi();
+        continue;
+      }
+      if (cache) {
+        try {
+          await cache.put(url, new Response(new Blob(chunks), {
+            headers: { "Content-Type": res.headers.get("Content-Type") || "application/octet-stream" },
+          }));
+        } catch (e) { /* cache đầy: boot vẫn tải lại từ mạng được */ }
+      }
+      prefetchState.filesDone++;
+      prefetchState.fetchedFiles++;
+      prefetchUpdateUi();
+    } catch (e) {
+      prefetchState.failedFiles.push(rel);
+      prefetchUpdateUi();
+    }
+  }
+  prefetchState.done = prefetchState.failedFiles.length === 0;
+  prefetchState.status = prefetchState.done ? "done" : "partial";
+  // Máy chủ trả chunked thì totalBytes có thể vẫn 0 dù đã đếm đủ byte
+  // thật qua stream: chốt tổng bằng số byte đã tải để UI hiện đúng MB.
+  if (prefetchState.totalBytes === 0 && prefetchState.loadedBytes > 0) {
+    prefetchState.totalBytes = prefetchState.loadedBytes;
+  }
+  prefetchUpdateUi();
+  return { ...prefetchState };
+}
+if (typeof window !== "undefined") {
+  window.__PB3_START_PREFETCH = prefetchPyodide;
+  const schedulePrefetch = () => {
+    const start = () => setTimeout(() => { prefetchPyodide().catch(() => {}); }, 4000);
+    if (typeof window.requestIdleCallback === "function") {
+      window.requestIdleCallback(start, { timeout: 8000 });
+    } else start();
+  };
+  if (document.readyState === "complete") schedulePrefetch();
+  else window.addEventListener("load", schedulePrefetch);
+}

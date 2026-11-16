@@ -107,6 +107,7 @@ for (const f of SHELL_FILES) {
   const listMatch = swSrc.match(/const PRECACHE_URLS = \[([\s\S]*?)\];/);
   const listed = listMatch ? [...listMatch[1].matchAll(/"([^"]+)"/g)].map((m) => m[1]) : [];
   const expected = ["./", ...SHELL_FILES, "worker.js", "manifest.webmanifest", "diagnostics.html",
+    "fixtures/selftest.zip",
     "icons/icon-192.png", "icons/icon-512.png", "icons/apple-touch-icon.png",
     "fonts/BeVietnamPro-Regular.ttf.b64",
     ...fs.readdirSync(SITE + "/pyodide").sort().map((f) => "pyodide/" + f),

@@ -21,13 +21,19 @@
 
 // ĐỔI SỐ NÀY MỖI KHI DEPLOY BẢN MỚI (bất kỳ file nào trong PRECACHE_URLS
 // đổi nội dung). Bản cũ sẽ bị xóa ở activate.
-const CACHE_VERSION = "v8-20261116";
+const CACHE_VERSION = "v9-20261116";
 const CACHE_NAME = "beartea-" + CACHE_VERSION;
+// Cache riêng cho prefetch Pyodide sau first paint (Mục C3): app.js ghi
+// file đã tải trước vào đây; SW dùng làm dự phòng khi cache chính trượt
+// (vd precache lúc install thiếu file) rồi mới ra mạng.
+const PREFETCH_CACHE = "beartea-prefetch-v1";
 
 // Danh sách precache: shell tĩnh + Pyodide vendored + mã PB3 (khớp đúng
-// pb3/files.json mà worker.js tải lúc boot) + font đi kèm. Sinh từ đĩa
-// lúc viết file này (126 mục); thêm/bớt file vendored thì cập nhật cả
-// danh sách này, không thì lần thăm 2 offline sẽ thiếu file đó.
+// pb3/files.json mà worker.js tải lúc boot) + font đi kèm + fixture tự
+// kiểm tra (C2/C3: fixtures/selftest.zip để lần thăm 2 offline vẫn chạy
+// được "Tự kiểm tra"). Sinh từ đĩa lúc viết file này (127 mục); thêm/bớt
+// file vendored thì cập nhật cả danh sách này, không thì lần thăm 2
+// offline sẽ thiếu file đó.
 const PRECACHE_URLS = [
   "./",
   "index.html",
@@ -39,6 +45,7 @@ const PRECACHE_URLS = [
   "gt.js",
   "manifest.webmanifest",
   "diagnostics.html",
+  "fixtures/selftest.zip",
   "icons/icon-192.png",
   "icons/icon-512.png",
   "icons/apple-touch-icon.png",
@@ -231,6 +238,17 @@ self.addEventListener("fetch", (event) => {
     const cache = await caches.open(CACHE_NAME);
     const hit = await cache.match(req);
     if (hit) return hit;
+    // Dự phòng C3: file prefetch sau first paint ghi vào PREFETCH_CACHE
+    // (app.js) — dùng được ngay cả khi precache lúc install thiếu file;
+    // đồng thời ghi bù vào cache chính để lần sau khỏi tra 2 chỗ.
+    try {
+      const pre = await caches.open(PREFETCH_CACHE);
+      const preHit = await pre.match(req);
+      if (preHit) {
+        try { await cache.put(req, preHit.clone()); } catch (e) { /* cache đầy: bỏ qua */ }
+        return preHit;
+      }
+    } catch (e) { /* không có cache prefetch: ra mạng như thường */ }
     const res = await fetch(req);
     if (res && res.ok) {
       try { await cache.put(req, res.clone()); } catch (e) { /* cache đầy: bỏ qua */ }
@@ -244,6 +262,7 @@ self.addEventListener("message", (event) => {
   const data = event.data || {};
   if (data.type === "SKIP_WAITING") { self.skipWaiting(); return; }
   if (data.type === "GET_VERSION" && event.ports && event.ports[0]) {
-    event.ports[0].postMessage({ version: CACHE_VERSION, cache: CACHE_NAME });
+    event.ports[0].postMessage({ version: CACHE_VERSION, cache: CACHE_NAME,
+      prefetchCache: PREFETCH_CACHE });
   }
 });

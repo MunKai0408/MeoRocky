@@ -8,7 +8,7 @@
   (C7, lam sau); KHONG dung msdf-atlas-gen; dau ngoac can bang; co ghi
   "chay trong Unity Editor".
 - Manifest: files.json / tests.json / sw.js PRECACHE_URLS co file moi;
-  CACHE_VERSION da tang len v8 (muc 8 them sdk/plan.py vao precache,
+  CACHE_VERSION da tang len v9 (muc C3 them fixtures/selftest.zip vao precache,
   2026-11-16; theo dung luat trong sw.js: doi precache thi phai doi
   version).
 In JSON ra stdout, exit 0 neu dat het.
@@ -119,8 +119,8 @@ chk("pb3/tests/test_tmp_font.py" in tests_json["files"],
     "tests.json thieu pb3/tests/test_tmp_font.py")
 sw = open(os.path.join(SITE, "sw.js"), encoding="utf-8").read()
 m = re.search(r'const CACHE_VERSION = "([^"]+)"', sw)
-chk(m is not None and m.group(1) == "v8-20261116",
-    "sw.js CACHE_VERSION %r != v8-20261116" % (m.group(1) if m else None))
+chk(m is not None and m.group(1) == "v9-20261116",
+    "sw.js CACHE_VERSION %r != v9-20261116" % (m.group(1) if m else None))
 listed = re.findall(r'"([^"]+)"', re.search(
     r"const PRECACHE_URLS = \[(.*?)\];", sw, re.S).group(1))
 chk("pb3/sdk/tmp_font.py" in listed, "sw.js precache thieu pb3/sdk/tmp_font.py")
@@ -129,6 +129,7 @@ chk(set(listed) == set(files_json["files"]) | {
     "kb-store.js", "gt.js", "manifest.webmanifest", "diagnostics.html",
     "icons/icon-192.png", "icons/icon-512.png", "icons/apple-touch-icon.png",
     "fonts/BeVietnamPro-Regular.ttf.b64",
+    "fixtures/selftest.zip",
     "pb3/files.json",
 } | {"pyodide/" + f for f in os.listdir(os.path.join(SITE, "pyodide"))},
     "sw.js precache lech files.json/dia")

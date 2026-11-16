@@ -214,6 +214,10 @@
 <main>
 <p id="status">Chưa khởi động — chọn file để bắt đầu.</p>
 <p id="boot-problems" class="warn" hidden></p>
+<div id="pyodide-prefetch" class="note" hidden>
+  <span id="pyodide-prefetch-text">Đang tải trước Pyodide…</span>
+  <progress id="pyodide-prefetch-bar" max="100" value="0" style="width:100%"></progress>
+</div>
 
 <div id="progress-wrap" hidden>
   <div id="progress-track"><div id="progress-bar"></div></div>
@@ -687,13 +691,18 @@
     khi trình duyệt xóa dữ liệu web.</p>
     <p id="kb-status" class="sub">KB: chưa tải xong — mở tab này sau khi trang khởi động xong.</p>
     <p id="kb-persist" class="sub"></p>
-    <p id="kb-export-reminder" class="warn" hidden></p>
+    <div id="kb-export-reminder" class="warn" hidden>
+      <span id="kb-export-reminder-text"></span>
+      <button id="btn-kb-exported" class="secondary">Đã xuất</button>
+      <button id="btn-kb-reminder-snooze" class="secondary" title="Không nhắc lại trong 7 ngày">Tắt nhắc lần này</button>
+    </div>
     <h3>Cài vào Màn hình chính (giữ KB bền hơn)</h3>
     <p class="note">Safari có thể xóa dữ liệu web (gồm KB trong IndexedDB) sau
     ~7 ngày không mở trang, nếu BearTea <b>không</b> được cài vào Màn hình
     chính. Đã cài thì trình duyệt ít xóa hơn — không đảm bảo tuyệt đối, nên
     vẫn xuất file .sqlite sao lưu định kỳ (nhắc ở trên).</p>
     <button id="btn-pwa-install" class="secondary" hidden>Cài BearTea vào Màn hình chính</button>
+    <p id="pwa-installed-note" class="note" hidden>BearTea đã được cài vào Màn hình chính — trình duyệt sẽ ít xóa dữ liệu web (KB) hơn.</p>
     <p id="pwa-note" class="note">Trên iPhone (Safari): bấm nút <b>Chia sẻ</b> ở thanh công cụ Safari → <b>Thêm vào Màn hình chính</b> → <b>Thêm</b>. Trên Android/Chrome: bấm nút “Cài…” ở trên (hoặc menu ⋮ → Cài đặt ứng dụng).</p>
     <button id="btn-kb-add">Thêm game đã chọn vào KB</button>
     <button id="btn-kb-query">Tra cứu game đã chọn</button>
