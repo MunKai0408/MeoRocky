@@ -1,0 +1,30 @@
+{
+  "when": "2026-11-16T14:01:13.956Z",
+  "signature_google": "(json_text, to='vi', credit=True)",
+  "calls": [
+    {
+      "kind": "batch",
+      "src": "en",
+      "dst": "vi",
+      "texts": [
+        "Wie Extraordinär!",
+        "Extraordinário!",
+        "Необыкновенно!",
+        "丹青妙手，神來之筆啊！",
+        "丹青妙手，神来之笔啊！",
+        "Extraordinary!",
+        "すばらしいわ！",
+        "엄청나구만！"
+      ]
+    }
+  ],
+  "result_summary": {
+    "total": 10,
+    "untranslated": 0,
+    "google_count": 8,
+    "glossary_count": 2,
+    "translated_by": "mixed",
+    "batch_mode": "mock"
+  },
+  "bug_reproduced": true
+}
