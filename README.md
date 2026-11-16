@@ -37,8 +37,10 @@ GitHub API không bật được Pages nên bước này cần bấm tay:
 ## Kiến trúc
 
 - `index.html` + `app.js`: giao diện tiếng Việt, dùng được trên điện thoại.
-- `worker.js`: chạy Pyodide trong Web Worker (giao diện không bị đơ khi
-  xử lý), báo tiến độ % + ETA thật về main thread (luật PB3 #152–153).
+- `worker.js`: chạy Pyodide trong Web Worker **dạng module** (`new Worker("worker.js", { type: "module" })`
+  trong `app.js`) — Pyodide bắt buộc module worker vì `pyodide.asm.mjs` là ES module; worker classic
+  bị Safari từ chối với lỗi “Classic web workers are not supported”. Worker báo tiến độ % + ETA thật
+  về main thread (luật PB3 #152–153).
 - `pb3/`: mã nguồn PB3 được vendor (core, sdk, registry, plugins, config)
   — bản web chỉ gọi API tầng sdk qua `pb3/bridge.py`, không dùng menu chữ.
   Không vendor: batch, KB, support matrix, test suite (không có trên web).

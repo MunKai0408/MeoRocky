@@ -11,7 +11,12 @@
 
 // Pyodide được vendor ngay trong repo (thư mục pyodide/) để tránh lỗi CORS
 // của Safari khi tải cross-origin từ CDN trong Worker.
-importScripts("pyodide/pyodide.js");
+// Worker này PHẢI là module worker (app.js tạo bằng { type: "module" }):
+// Pyodide yêu cầu module worker vì pyodide.asm.mjs là ES module — worker
+// classic (nạp script kiểu cũ) bị từ chối ("Classic web workers are not
+// supported"). Vì vậy file này dùng import ES module, không dùng cách nạp
+// script của worker classic.
+import { loadPyodide } from "./pyodide/pyodide.mjs";
 
 const PYODIDE_INDEX = new URL("pyodide/", self.location.href).href;
 const PB3_ROOT = "/pb3web";

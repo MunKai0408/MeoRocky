@@ -6,7 +6,7 @@
 // Khi tổng chưa biết (vd bước inventory của extract) thì chỉ hiện số đã xong
 // và thời gian đã chạy, không bịa ETA.
 
-const worker = new Worker("worker.js");
+const worker = new Worker("worker.js", { type: "module" });
 const $ = (id) => document.getElementById(id);
 
 const state = {
