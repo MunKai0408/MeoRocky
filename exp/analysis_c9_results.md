@@ -1,8 +1,7 @@
 # Mục phân tích C9 — Worker pool batch cấu hình được + sửa câu sai về song song (BearTea web)
 
 Ngày: 2026-11-16. Repo MunKai0408/MeoRocky, head main trước C9 là 3c7c789
-(sau C8 0a27bf3 + follow-up cập nhật harness). Commit đẩy C9: (điền sau khi
-đẩy — xem cuối báo cáo). Harness: `exp/verify_analysis_c9.mjs` —
+(sau C8 0a27bf3 + follow-up cập nhật harness). Commit đẩy C9: 465e862ed157285660045319e6d279b5a834fe48. Harness: `exp/verify_analysis_c9.mjs` —
 **16/16 PASS**. Full suite Python: **1657 test, OK (skipped=2)**. Hồi quy:
 module-worker 17/17, C2 13/13, item8 static 0 fails, C6/C7/C8 static
 0 fails.
@@ -173,7 +172,7 @@ serve site qua HTTP local; fixture game thật `game1.zip`
 
 ## 7. Link kiểm chứng
 
-- Commit đẩy C9: (điền sau khi đẩy)
+- Commit đẩy C9: 465e862ed157285660045319e6d279b5a834fe48 (https://github.com/MunKai0408/MeoRocky/commit/465e862ed157285660045319e6d279b5a834fe48)
 - Kiểm chứng trên main (raw, không có `site/`):
   `https://raw.githubusercontent.com/MunKai0408/MeoRocky/main/app.js`
 - Trang live: https://munkai0408.github.io/MeoRocky/
