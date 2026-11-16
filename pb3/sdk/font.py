@@ -31,6 +31,7 @@ from __future__ import annotations
 import math
 import os
 import struct
+import unicodedata
 from dataclasses import dataclass, field
 from typing import Callable, Dict, Iterable, List, Optional, Tuple
 
@@ -48,13 +49,44 @@ UNITY_FONT_CLASS_ID = 128
 #: Chữ cái tiếng Việt cơ bản (thường + hoa): ă â đ ê ô ơ ư.
 _VI_BASE = (0x103, 0xE2, 0x111, 0xEA, 0xF4, 0x1A1, 0x1B0,
             0x102, 0xC2, 0x110, 0xCA, 0xD4, 0x1A0, 0x1AF)
-#: Dải chữ ghép sẵn tiếng Việt: U+1EA0–U+1EF9.
-_VI_PRECOMPOSED = range(0x1EA0, 0x1EFA)
+#: 12 nguyên âm gốc làm nền cho chữ có dấu: a ă â e ê i o ô ơ u ư y.
+_VI_TONE_BASES = ("a", "ă", "â", "e", "ê", "i", "o", "ô", "ơ", "u", "ư", "y")
+#: 5 dấu thanh tiếng Việt (dạng kết hợp): huyền/sắc/hỏi/ngã/nặng.
+_VI_TONES = ("\u0300", "\u0301", "\u0309", "\u0303", "\u0323")
 #: Dấu kết hợp tiếng Việt: huyền/sắc/mũ/ngã/breve/móc/dấu sừng/chấm dưới.
 _VI_MARKS = (0x300, 0x301, 0x302, 0x303, 0x306, 0x309, 0x31B, 0x323)
 
-#: Tập ký tự tiếng Việt bắt buộc phải có để hiển thị đúng (112 ký tự).
-REQUIRED_VIETNAMESE = frozenset(_VI_BASE) | frozenset(_VI_PRECOMPOSED) | frozenset(_VI_MARKS)
+
+def _accented_vietnamese() -> frozenset:
+    """120 chữ có dấu tiếng Việt: 12 gốc × 5 dấu thanh × 2 case.
+
+    Mỗi gốc + dấu được chuẩn hóa NFC thành 1 ký tự ghép sẵn (vd a + U+0300
+    -> à); hoa của ký tự đó cũng được thêm. Mọi tổ hợp đều có dạng ghép
+    sẵn trong Unicode nên len(ch) == 1 luôn đúng — tổ hợp nào không ghép
+    được (không xảy ra với tiếng Việt) thì bị bỏ qua, không làm vỡ import.
+    """
+    out = set()
+    for base in _VI_TONE_BASES:
+        for tone in _VI_TONES:
+            ch = unicodedata.normalize("NFC", base + tone)
+            if len(ch) != 1:
+                continue
+            up = ch.upper()
+            if len(up) != 1:
+                continue
+            out.add(ord(ch))
+            out.add(ord(up))
+    return frozenset(out)
+
+
+#: 120 chữ có dấu tiếng Việt (12 gốc × 5 dấu × 2 case).
+_VI_ACCENTED = _accented_vietnamese()
+
+#: Tập ký tự tiếng Việt bắt buộc phải có để hiển thị đúng — 142 mục =
+#: 134 chữ cái (120 chữ có dấu + 14 gốc đặc biệt) + 8 dấu kết hợp.
+#: (Trước patch02 chỉ có 112: dải U+1EA0–U+1EF9 bỏ sót 30 chữ Latin-1
+#: à á ã è é ì í ò ó õ ù ú ý ĩ ũ — xem decisions.md #206.)
+REQUIRED_VIETNAMESE = frozenset(_VI_BASE) | _VI_ACCENTED | frozenset(_VI_MARKS)
 
 #: Hằng số checksum toàn font (đặc tả TrueType).
 _CHECKSUM_MAGIC = 0xB1B0AFBA

@@ -349,7 +349,7 @@ callWorker("boot", {}).then((msg) => {
   state.bootInfo = r.boot;
   state.donor = r.donor;
   setStatus("Sẵn sàng — " + r.boot.plugins + " plugin đang chạy · font đi kèm: " +
-    (r.donor && r.donor.is_full ? "đủ 112/112 ký tự Việt" : "xem chi tiết ở tab Font"));
+    (r.donor && r.donor.is_full ? "đủ 142/142 (134 chữ cái + 8 dấu)" : "xem chi tiết ở tab Font"));
   if ((r.boot.problems || []).length) {
     $("boot-problems").textContent = "Lưu ý khởi động: " + r.boot.problems.join("; ");
     $("boot-problems").hidden = false;

@@ -320,7 +320,7 @@ def font_scan(path):
 
 
 def font_donor_info(donor_path):
-    """Kiểm chứng font đi kèm (Be Vietnam Pro): phải đủ 112/112 ký tự Việt."""
+    """Kiểm chứng font đi kèm (Be Vietnam Pro): phải đủ 142/142 mục (134 chữ cái + 8 dấu)."""
     try:
         from sdk import font as f
 

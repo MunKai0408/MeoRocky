@@ -29,7 +29,7 @@ GitHub API không bật được Pages nên bước này cần bấm tay:
    - **Dịch**: dịch JSON key-value bằng từ điển offline (chỉ dịch VALUE,
      giữ KEY; có gắn credit “Việt Hoá Bởi Bear” nếu bật).
    - **Nén**: nén IPA solid LZMA (.tar.xz); **Giải nén** khôi phục IPA gốc.
-   - **Font**: quét font TTF (độ phủ 112 ký tự tiếng Việt), gộp glyph từ
+   - **Font**: quét font TTF (độ phủ 142 mục: 134 chữ cái + 8 dấu), gộp glyph từ
      font Be Vietnam Pro đi kèm, hoặc lấy font đi kèm về dùng.
    - **Chẩn đoán**: inventory + hex dump + quét chuỗi ASCII (chỉ đọc).
 4. Kết quả tải về bằng nút tải xuống của trình duyệt.
@@ -105,7 +105,7 @@ bằng Pyodide npm — 15/15 mục PASS, 0 FAIL (`exp/verify_site.mjs`,
 | Mục | Kết quả |
 |---|---|
 | Khởi động (20/20 plugin, không lỗi) | PASS, 1,0 s |
-| Font đi kèm đủ 112/112 ký tự Việt | PASS |
+| Font đi kèm đủ 142/142 (134 chữ cái + 8 dấu) | PASS |
 | Liệt kê entry `game1.zip` (11 entry) | PASS |
 | Unity inspect `resources.assets` (v17, 2019.4.40f1, pid1001 “Xin chao 9 Kings!”) | PASS, 0,3 s |
 | Unity inspect bundle `sample.unity3d` | PASS |
