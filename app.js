@@ -199,6 +199,156 @@ async function runOp(label, fn, args, files, fileOut) {
   }
 }
 
+// ---- KB bền vững: IndexedDB + autosave (Mục 3) ----
+// KB trước đây mất khi tải lại trang (file SQLite /tmp/kb trong RAM worker).
+// Nay bytes KB được lưu vào IndexedDB sau MỖI lần KB thay đổi (thêm/quên/
+// nhập/batch ghi), và nạp lại lúc boot. Nút xuất/nhập .sqlite vẫn giữ
+// nguyên làm đường sao lưu/khôi phục chính. KHÔNG dùng OPFS/SAH.
+const kbStore = (typeof KBStore !== "undefined")
+  ? new KBStore("kb.sqlite", { debounceMs: 0 }) : null;
+const KB_LAST_EXPORT_KEY = "pb3_kb_last_export";
+const KB_EXPORT_REMINDER_DAYS = 7;
+
+function kbBytesFromB64(b64) {
+  const bin = atob(b64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+function kbB64FromBytes(bytes) {
+  let s = "";
+  const CH = 8192;
+  for (let i = 0; i < bytes.length; i += CH) {
+    s += String.fromCharCode.apply(null, bytes.subarray(i, i + CH));
+  }
+  return btoa(s);
+}
+if (kbStore) {
+  kbStore.attach(async () => {
+    const msg = await callWorker("run", { fn: "kb_snapshot", args: [] });
+    const p = JSON.parse(msg.result);
+    if (!p.ok) throw new Error(p.error || p.code || "kb_snapshot lỗi");
+    if (!p.b64) return new Uint8Array(0);
+    return kbBytesFromB64(p.b64);
+  });
+  kbStore.onStatus = (st, detail) => {
+    const el = $("kb-status");
+    if (!el) return;
+    if (st === "saving") el.textContent = "KB: đang lưu tự động…";
+    else if (st === "saved") refreshKbStatus();
+    else if (st === "error") {
+      el.textContent = "KB: lưu tự động LỖI (" +
+        (detail && detail.message ? detail.message : detail) +
+        ") — hãy xuất KB ra file .sqlite để sao lưu.";
+    }
+  };
+}
+
+// Lưu KB vào IndexedDB NGAY sau 1 lần thay đổi (không đợi user bấm export).
+// Lỗi lưu không làm hỏng thao tác chính — chỉ hiện ở dòng trạng thái KB.
+async function persistKbNow() {
+  if (!kbStore) return;
+  try {
+    kbStore.markDirty();
+    await kbStore.flush();
+  } catch (e) { /* onStatus('error') đã báo */ }
+}
+
+// Nạp KB đã lưu từ IndexedDB vào worker (gọi 1 lần sau khi boot xong,
+// trước khi user dùng KB). Trả {restored, games?, size?, reason?}.
+async function restoreKbFromIdb() {
+  if (!kbStore) return { restored: false, reason: "Trình duyệt này không có IndexedDB" };
+  let saved = null;
+  try { saved = await kbStore.load(); }
+  catch (e) { return { restored: false, reason: "không đọc được IndexedDB: " + e.message }; }
+  if (!saved || !saved.length) return { restored: false, reason: "empty" };
+  try {
+    const msg = await callWorker("run", { fn: "kb_restore", args: [kbB64FromBytes(saved)] });
+    const p = JSON.parse(msg.result);
+    if (!p.ok) throw new Error(p.error || p.code || "kb_restore lỗi");
+    return { restored: true, games: p.games, size: p.size };
+  } catch (e) {
+    return { restored: false, reason: e.message };
+  }
+}
+
+// Xin quyền lưu trữ bền vững rồi hiện trạng thái (đã cấp/chưa cấp).
+async function refreshKbPersistStatus() {
+  const el = $("kb-persist");
+  if (!el || !kbStore) return;
+  let granted = false, persisted = false;
+  try { granted = await kbStore.requestPersistence(); } catch (e) { granted = false; }
+  try { persisted = await navigator.storage.persisted(); } catch (e) { persisted = granted; }
+  el.textContent = (persisted || granted)
+    ? "Lưu trữ bền vững: ĐÃ CẤP — trình duyệt sẽ không tự xóa KB."
+    : "Lưu trữ bền vững: CHƯA CẤP — Safari có thể xóa KB sau ~7 ngày không mở trang; hãy cài BearTea vào Màn hình chính (mục dưới) để giữ KB bền hơn.";
+}
+
+// Dòng trạng thái KB: số game, dung lượng, lần tự lưu gần nhất + nhắc export.
+async function refreshKbStatus(note) {
+  const el = $("kb-status");
+  if (!el || !state.booted) return;
+  try {
+    const msg = await callWorker("run", { fn: "kb_list", args: [] });
+    const p = JSON.parse(msg.result);
+    if (!p.ok) return;
+    const savedAt = kbStore && kbStore.lastSavedAt
+      ? new Date(kbStore.lastSavedAt).toLocaleString("vi-VN") : "chưa lưu lần nào";
+    el.textContent = "KB: " + p.games.length + " game · " + fmtBytes(p.size_bytes) +
+      " · tự lưu vào IndexedDB sau mỗi thay đổi (lần lưu gần nhất: " + savedAt + ")." +
+      (note ? " " + note : "");
+    updateKbExportReminder(p.games.length);
+  } catch (e) { /* trạng thái KB chỉ là phụ: lỗi thì thôi */ }
+}
+
+function kbLastExportAt() {
+  try {
+    const v = localStorage.getItem(KB_LAST_EXPORT_KEY);
+    return v ? parseInt(v, 10) : 0;
+  } catch (e) { return 0; }
+}
+function kbRecordExportNow() {
+  try { localStorage.setItem(KB_LAST_EXPORT_KEY, String(Date.now())); } catch (e) { /* localStorage không có */ }
+}
+// Nhắc sao lưu: lần xuất cuối > 7 ngày, hoặc chưa từng xuất mà KB đã có
+// dữ liệu. Ghi rõ trong UI; không tự tải file về thay user.
+function updateKbExportReminder(gameCount) {
+  const el = $("kb-export-reminder");
+  if (!el) return;
+  const last = kbLastExportAt();
+  const over7d = last > 0 && (Date.now() - last > KB_EXPORT_REMINDER_DAYS * 86400000);
+  const neverWithData = last === 0 && gameCount > 0;
+  if (over7d || neverWithData) {
+    el.textContent = last === 0
+      ? "Nhắc sao lưu: KB đã có dữ liệu nhưng bạn chưa từng xuất file .sqlite — hãy bấm “Tải KB về (.sqlite)” để sao lưu, phòng khi trình duyệt xóa IndexedDB."
+      : "Nhắc sao lưu: lần xuất KB cuối đã hơn 7 ngày trước (" +
+        new Date(last).toLocaleDateString("vi-VN") +
+        ") — hãy bấm “Tải KB về (.sqlite)” để sao lưu bản mới nhất.";
+    el.hidden = false;
+  } else el.hidden = true;
+}
+
+// ---- PWA: cài vào Màn hình chính (Mục 3) ----
+// beforeinstallprompt chỉ có trên Chrome/Android/desktop — Safari iPhone
+// KHÔNG bao giờ bắn sự kiện này, nên hướng dẫn tay cho iOS (Chia sẻ →
+// Thêm vào Màn hình chính) luôn hiện sẵn ở tab KB; nút “Cài…” chỉ hiện
+// khi trình duyệt bắn beforeinstallprompt (có prompt thật để bấm).
+let deferredPwaPrompt = null;
+window.addEventListener("beforeinstallprompt", (ev) => {
+  ev.preventDefault();
+  deferredPwaPrompt = ev;
+  const b = $("btn-pwa-install");
+  if (b) b.hidden = false;
+});
+$("btn-pwa-install").addEventListener("click", async () => {
+  if (deferredPwaPrompt && typeof deferredPwaPrompt.prompt === "function") {
+    try { await deferredPwaPrompt.prompt(); } catch (e) { /* user hủy bảng cài */ }
+    deferredPwaPrompt = null;
+    $("btn-pwa-install").hidden = true;
+  }
+  // Không có prompt thật (vd Safari): hướng dẫn tay đã hiện sẵn ở tab KB.
+});
+
 // ---- Tải file về (Safari) ----
 // NGUYÊN NHÂN GỐC download kẹt trên Safari thật (Joseph 11:32–11:36):
 // file CÓ nằm trong Files > Tải về nhưng là file dở dang, kẹt mãi không bao
@@ -643,6 +793,8 @@ $("btn-batch-run").addEventListener("click", async () => {
   try {
     const { parsed } = await runOp("Chạy batch (tuần tự)", "batch_run",
       [manifest, dryRun, ckpt, resume], state.batchFiles, true);
+    // Batch ghi kết quả chạy vào KB (record_run) nên cũng phải tự lưu KB.
+    persistKbNow();
     const s = parsed.summary;
     if (parsed.checkpoint) {
       state.lastCheckpoint = parsed.checkpoint;
@@ -672,10 +824,12 @@ $("btn-kb-add").addEventListener("click", async () => {
   if (!state.file) { showError("Chưa chọn file. Hãy chọn file ở trên trước."); return; }
   try {
     const { parsed } = await runOp("Thêm game vào KB", "kb_add", [inputPath()], inputFileArgs());
+    await persistKbNow();
+    refreshKbStatus();
     $("kb-result").innerHTML = "<p>Đã thêm game vào KB: id <b>" + parsed.game_id + "</b> · bundle <b>" +
       esc(parsed.bundle_id || "?") + "</b> · version " + esc(parsed.version || "?") + " · engine " +
       esc(parsed.engine || "?") + " · fingerprint " + esc(parsed.fingerprint) + "…</p>" +
-      "<p class=note>KB chỉ sống trong phiên này — tải lại trang là mất, trừ khi tải file KB về.</p>";
+      "<p class=note>KB đã tự lưu vào IndexedDB — tải lại trang vẫn còn. Nút “Tải KB về (.sqlite)” dưới đây để sao lưu ra file.</p>";
   } catch (e) { /* đã báo lỗi */ }
 });
 $("btn-kb-query").addEventListener("click", async () => {
@@ -696,7 +850,7 @@ $("btn-kb-query").addEventListener("click", async () => {
 $("btn-kb-list").addEventListener("click", async () => {
   try {
     const { parsed } = await runOp("Liệt kê KB", "kb_list", [], null);
-    let html = "<p>" + parsed.games.length + " game trong KB · dung lượng " + fmtBytes(parsed.size_bytes) + " · chỉ trong phiên này.</p>";
+    let html = "<p>" + parsed.games.length + " game trong KB · dung lượng " + fmtBytes(parsed.size_bytes) + " · tự lưu vào IndexedDB.</p>";
     if (parsed.games.length) {
       html += "<table><tr><th>ID</th><th>Bundle</th><th>Version</th><th>Engine</th><th>Lần thấy cuối</th></tr>";
       for (const g of parsed.games) {
@@ -711,8 +865,10 @@ $("btn-kb-list").addEventListener("click", async () => {
 $("btn-kb-export").addEventListener("click", async () => {
   try {
     const { parsed } = await runOp("Xuất file KB", "kb_export", [], null, true);
+    kbRecordExportNow();
+    refreshKbStatus();
     $("kb-result").innerHTML = "<p>File <b>pb3_kb.sqlite</b> đã sẵn sàng — bấm “Lưu / Chia sẻ” ở mục 1 để lưu về máy (" + fmtBytes(parsed.size) +
-      ", " + parsed.games + " game). Giữ file này — tải lại trang thì KB trong trình duyệt trống lại; nhập lại bằng nút “Nhập KB (.sqlite)” trên tab này.</p>";
+      ", " + parsed.games + " game). Giữ file này làm bản sao lưu — KB trong trình duyệt đã tự lưu vào IndexedDB, nhưng file .sqlite vẫn là bản sao lưu chắc chắn nhất (phòng khi trình duyệt xóa dữ liệu web).</p>";
   } catch (e) { /* đã báo lỗi */ }
 });
 $("btn-kb-import").addEventListener("click", async () => {
@@ -721,6 +877,8 @@ $("btn-kb-import").addEventListener("click", async () => {
   try {
     const buf = await f.arrayBuffer();
     const { parsed } = await runOp("Nhập KB", "kb_import", ["/tmp/input/" + f.name], [{ name: f.name, data: buf }]);
+    await persistKbNow();
+    refreshKbStatus();
     const names = parsed.games.map((g) => esc(g.bundle_id || "?")).join(", ");
     $("kb-result").innerHTML = "<p>Đã nhập <b>" + parsed.imported + "</b> game vào KB: " + (names || "—") + "." +
       (parsed.skipped ? " Bỏ qua <b>" + parsed.skipped + "</b> game (xem cảnh báo dưới)." : "") + "</p>" +
@@ -732,6 +890,8 @@ $("btn-kb-forget").addEventListener("click", async () => {
   if (!id) { showError("Hãy nhập bundle id (hoặc id số) của game cần quên."); return; }
   try {
     const { parsed } = await runOp("Quên game", "kb_forget", [id], null);
+    await persistKbNow();
+    refreshKbStatus();
     $("kb-result").innerHTML = "<p>" + (parsed.forgotten ? "Đã quên game '" + esc(id) + "'." : "Không có game '" + esc(id) + "' trong KB.") + "</p>";
   } catch (e) { /* đã báo lỗi */ }
 });
@@ -864,6 +1024,16 @@ callWorker("boot", {}).then((msg) => {
   state.donor = r.donor;
   setStatus("Sẵn sàng — " + r.boot.plugins + " plugin đang chạy · font đi kèm: " +
     (r.donor && r.donor.is_full ? "đủ 142/142 (134 chữ cái + 8 dấu)" : "xem chi tiết ở tab Font"));
+  // Mục 3: nạp KB đã lưu từ IndexedDB (nếu có), xin lưu trữ bền vững,
+  // rồi cập nhật dòng trạng thái KB + nhắc sao lưu.
+  restoreKbFromIdb().then((kb) => {
+    refreshKbPersistStatus();
+    refreshKbStatus(kb.restored
+      ? "Đã khôi phục " + kb.games + " game từ lần dùng trước."
+      : (kb.reason && kb.reason !== "empty"
+        ? "Không khôi phục được KB đã lưu (" + kb.reason + ") — bắt đầu với KB trống; nút “Nhập KB (.sqlite)” vẫn khôi phục được từ file sao lưu."
+        : null));
+  });
   if ((r.boot.problems || []).length) {
     $("boot-problems").textContent = "Lưu ý khởi động: " + r.boot.problems.join("; ");
     $("boot-problems").hidden = false;

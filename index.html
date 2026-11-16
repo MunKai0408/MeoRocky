@@ -3,6 +3,12 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#101418">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="BearTea">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 <title>BearTea — PB3 bản web</title>
 <style>
   * { box-sizing: border-box; }
@@ -231,9 +237,20 @@
   <h2>Kho tri thức game — KB (menu [3] bản iSH)</h2>
   <p class="note">KB lưu fingerprint + lựa chọn đã dò của game để lần sau
   tái dùng (chỉ lưu hash/kích thước/vai trò — <b>không</b> lưu nội dung game
-  hay bản dịch). <b>Giới hạn thật: KB chỉ sống trong phiên này</b> — tải lại
-  trang là mất hết, trừ khi bạn tải file KB về (nút dưới) rồi nhập lại
-  bằng nút “Nhập KB” trong phiên mới.</p>
+  hay bản dịch). <b>KB tự lưu vào IndexedDB sau mỗi thay đổi</b> (thêm/quên/
+  nhập/batch) và khôi phục lại khi mở trang — không cần bấm xuất để giữ.
+  File .sqlite dưới đây vẫn là bản sao lưu chính: xuất định kỳ để phòng
+  khi trình duyệt xóa dữ liệu web.</p>
+  <p id="kb-status" class="sub">KB: chưa tải xong — mở tab này sau khi trang khởi động xong.</p>
+  <p id="kb-persist" class="sub"></p>
+  <p id="kb-export-reminder" class="warn" hidden></p>
+  <h3>Cài vào Màn hình chính (giữ KB bền hơn)</h3>
+  <p class="note">Safari có thể xóa dữ liệu web (gồm KB trong IndexedDB) sau
+  ~7 ngày không mở trang, nếu BearTea <b>không</b> được cài vào Màn hình
+  chính. Đã cài thì trình duyệt ít xóa hơn — không đảm bảo tuyệt đối, nên
+  vẫn xuất file .sqlite sao lưu định kỳ (nhắc ở trên).</p>
+  <button id="btn-pwa-install" class="secondary" hidden>Cài BearTea vào Màn hình chính</button>
+  <p id="pwa-note" class="note">Trên iPhone (Safari): bấm nút <b>Chia sẻ</b> ở thanh công cụ Safari → <b>Thêm vào Màn hình chính</b> → <b>Thêm</b>. Trên Android/Chrome: bấm nút “Cài…” ở trên (hoặc menu ⋮ → Cài đặt ứng dụng).</p>
   <button id="btn-kb-add">Thêm game đã chọn vào KB</button>
   <button id="btn-kb-query">Tra cứu game đã chọn</button>
   <button id="btn-kb-list" class="secondary">Liệt kê game trong KB</button>
@@ -311,7 +328,7 @@
   <ul>
     <li>Không dùng UnityPy (không cài được trên Pyodide — thiếu wheel etcpak). Inspect Unity dùng parser thuần của PB3.</li>
     <li><b>Batch chỉ chạy tuần tự</b> (không có threading trên web, không có chế độ song song như bản iSH); extract cũng chạy tuần tự.</li>
-    <li><b>KB chỉ sống trong phiên</b> — tải lại trang là mất, trừ khi tải file KB về rồi nhập lại bằng nút “Nhập KB (.sqlite)” trên tab KB.</li>
+    <li><b>KB tự lưu vào IndexedDB</b> sau mỗi thay đổi và khôi phục khi mở lại trang; Safari vẫn có thể xóa dữ liệu web sau ~7 ngày không mở trang nếu chưa cài vào Màn hình chính — xuất file .sqlite sao lưu định kỳ (tab KB nhắc khi quá 7 ngày hoặc chưa từng xuất).</li>
     <li><b>Mod</b> chỉ xuất đơn vị nhỏ nhất đã patch (bundle/.assets), không đóng gói lại IPA; mặc định dry-run, chỉ ghi khi bạn bấm nút ghi rõ ràng.</li>
     <li>Ma trận hỗ trợ: cột “ngày test” hiện “chưa có” vì bản web không kèm file bằng chứng tests/corpus/*.json.</li>
     <li>Dịch Google cần mạng; Google có thể giới hạn tốc độ (HTTP 429) hoặc trình duyệt chặn CORS — khi đó tự động thử MyMemory rồi dùng từ điển offline và báo rõ lý do. Chưa thử dịch Google trên Safari thật. Có thể cấu hình proxy Cloudflare Worker (ô URL proxy ở tab Dịch, xem cloudflare/README.md) để tránh CORS/429 — proxy có hạn mức cứng 500.000 ký tự/tháng, hết hạn mức tự rơi về MyMemory + offline, không phát sinh phí.</li>
@@ -322,6 +339,7 @@
   <p class="note">Mã nguồn PB3 (BearTea) — xem README.md trong repo.</p>
 </div>
 
+<script src="kb-store.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

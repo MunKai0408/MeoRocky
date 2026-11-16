@@ -26,11 +26,13 @@ Mod (menu [1] iSH) / Batch (menu [4]) / KB (menu [3]) / ma trận hỗ trợ:
 xem mod_patch / batch_run / kb_* / support_matrix ở cuối file — đều gọi
 API tầng sdk (sdk.unity.apply_patch, sdk.batch.BatchRunner, sdk.kb.KB,
 sdk.support_matrix.generate), không dùng services/ (gắn với menu chữ).
-KB sống trong phiên (file SQLite ở /tmp/kb trong RAM của Worker — tải lại
-trang là mất, trừ khi tải file KB về bằng kb_export).
+KB tự lưu vào IndexedDB sau mỗi thay đổi (app.js gọi kb_snapshot sau
+mỗi lần KB đổi, kb_restore nạp lại lúc boot); tải lại trang thì khôi
+phục lại. Nút xuất .sqlite (kb_export) vẫn là đường sao lưu chính.
 """
 
 import asyncio
+import base64
 import hashlib
 import io
 import json
@@ -932,9 +934,12 @@ _kb = None
 
 
 def _get_kb():
-    """KB của phiên: file SQLite trong RAM của Worker (/tmp/kb, MEMFS).
-    Tải lại trang là mất — chỉ giữ được khi tải file KB về (kb_export)
-    rồi nhập lại bằng kb_import trong phiên mới."""
+    """KB của web: file SQLite trong RAM của Worker (/tmp/kb, MEMFS).
+
+    Mất khi tải lại trang NẾU không có bản lưu — nhưng app.js đã tự lưu
+    bytes KB vào IndexedDB sau mỗi thay đổi (kb_snapshot) và nạp lại
+    lúc boot (kb_restore), nên thực tế KB còn qua lần tải lại trang.
+    Nút xuất .sqlite (kb_export) vẫn là đường sao lưu chính."""
     global _kb
     if _kb is None:
         from sdk.kb import KB
@@ -984,13 +989,18 @@ def kb_query(path):
 
 
 def kb_list():
-    """Danh sách game đã biết trong KB của phiên."""
+    """Danh sách game đã biết trong KB (đã tự lưu vào IndexedDB)."""
     try:
         kb = _get_kb()
         return json.dumps({
             "ok": True, "games": kb.list_games(),
             "size_bytes": int(kb.size_bytes()),
-            "session_only": True,
+            # Đổi ở Mục 3: KB không còn chỉ sống trong phiên nữa — app.js
+            # tự lưu bytes KB vào IndexedDB sau mỗi thay đổi (kb_snapshot)
+            # và nạp lại lúc boot (kb_restore). Giữ khóa session_only
+            # (giờ False) để code cũ đọc vẫn hiểu, thêm persisted: True.
+            "session_only": False,
+            "persisted": True,
         }, ensure_ascii=False)
     except Exception as e:  # noqa: BLE001
         return _err(e)
@@ -1011,10 +1021,11 @@ def kb_export():
     """Xuất file KB của phiên ra /tmp/pb3_kb.sqlite để tải về.
 
     Đóng kết nối trước khi copy (SQLite checkpoint WAL vào file chính khi
-    đóng kết nối cuối — file tải về mới đầy đủ, tự chứa). File này chỉ
-    lưu được tri thức TRONG PHIÊN: tải lại trang thì KB trống lại, trừ
-    khi nhập lại file đã tải về bằng kb_import (nút 'Nhập KB' trên tab
-    KB)."""
+    đóng kết nối cuối — file tải về mới đầy đủ, tự chứa). File này là
+    bản sao lưu chính của KB: KB trong trình duyệt đã tự lưu vào
+    IndexedDB (kb_snapshot), nhưng file .sqlite vẫn là bản sao lưu chắc
+    chắn nhất — phòng khi trình duyệt xóa dữ liệu web. Nhập lại bằng
+    kb_import trong phiên mới nếu cần."""
     global _kb
     try:
         kb = _get_kb()
@@ -1029,6 +1040,67 @@ def kb_export():
             "ok": True, "dest": dest, "size": os.path.getsize(dest),
             "games": int(n),
         }, ensure_ascii=False)
+    except Exception as e:  # noqa: BLE001
+        return _err(e)
+
+
+def kb_snapshot():
+    """Bytes hiện tại của file KB (base64) để app.js lưu vào IndexedDB.
+
+    Đóng kết nối trước khi đọc (như kb_export: checkpoint WAL vào file
+    chính để bytes đọc được là đầy đủ, tự chứa), rồi mở lại ngay để KB
+    tiếp tục dùng được. KB chỉ chứa fingerprint/profile (nhỏ) nên
+    base64 qua postMessage là đủ, không cần đường file."""
+    global _kb
+    try:
+        kb = _get_kb()
+        n = len(kb.list_games())
+        kb.close()
+        _kb = None
+        if not os.path.exists(_KB_PATH):
+            return json.dumps({"ok": True, "b64": None, "size": 0,
+                               "games": 0}, ensure_ascii=False)
+        with open(_KB_PATH, "rb") as f:
+            data = f.read()
+        _get_kb()  # mở lại để các thao tác KB sau vẫn dùng được
+        return json.dumps({
+            "ok": True, "b64": base64.b64encode(data).decode("ascii"),
+            "size": len(data), "games": int(n),
+        }, ensure_ascii=False)
+    except Exception as e:  # noqa: BLE001
+        return _err(e)
+
+
+def kb_restore(b64):
+    """Khôi phục KB từ bytes base64 (app.js đọc từ IndexedDB lúc boot).
+
+    Kiểm tra magic SQLite TRƯỚC khi chạm vào KB hiện tại; chỉ khi magic
+    đúng mới đóng KB, ghi đè file (xóa -wal/-shm cũ để không lẫn dữ liệu
+    cũ) rồi mở lại và đếm game. Bytes sai/không phải SQLite thì trả lỗi
+    JSON, KB cũ giữ nguyên."""
+    global _kb
+    try:
+        if not isinstance(b64, str) or not b64:
+            raise ValueError("Không có dữ liệu KB để khôi phục.")
+        try:
+            data = base64.b64decode(b64, validate=True)
+        except Exception:
+            raise ValueError("Dữ liệu KB không phải base64 hợp lệ.")
+        if data[:16] != b"SQLite format 3\x00":
+            raise ValueError("Dữ liệu KB không phải file SQLite hợp lệ.")
+        kb = _get_kb()
+        kb.close()
+        _kb = None
+        os.makedirs(os.path.dirname(_KB_PATH), exist_ok=True)
+        for suffix in ("", "-wal", "-shm"):
+            p = _KB_PATH + suffix
+            if os.path.exists(p):
+                os.remove(p)
+        with open(_KB_PATH, "wb") as f:
+            f.write(data)
+        kb = _get_kb()
+        return json.dumps({"ok": True, "games": len(kb.list_games()),
+                           "size": len(data)}, ensure_ascii=False)
     except Exception as e:  # noqa: BLE001
         return _err(e)
 
