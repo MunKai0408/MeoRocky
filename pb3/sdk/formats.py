@@ -228,6 +228,8 @@ class FormatPluginBase(Plugin):
                     "conflicts": len(res.get("conflicts", []))}
         except PB3Error as e:
             return {"ok": False, "reason": "%s: %s" % (e.code, e.detail or e.message_vi)}
+        except Exception as e:  # noqa: BLE001 - probe không bao giờ được làm crash extract
+            return {"ok": False, "reason": "E_INTERNAL: %s" % type(e).__name__}
 
     def parse(self, ctx: PluginContext, cand: Candidate) -> LocTable:
         data = ctx.vfs.read(cand.path, max_bytes=ctx.limits.max_entry_bytes)

@@ -170,11 +170,22 @@ def _parse_ini_struct(text: str, path: str):
         sectionless = True
         try:
             cp.read_string("[%s]\n%s" % (_ROOT_SECTION, text))
+        except PB3Error:
+            raise
         except configparser.Error:
             raise PB3Error("E_CORRUPT", "INI sai cú pháp", where=path)
+        except Exception:  # noqa: BLE001 - configparser có bug (xem dưới)
+            # Dòng nối tiếp sau option không giá trị (allow_no_value) gọi
+            # .append trên None -> AttributeError (vd file XML thụt đầu dòng
+            # lọt vào đây). Mọi lỗi lạ đều thành E_CORRUPT, không lọt ra ngoài.
+            raise PB3Error("E_CORRUPT", "INI sai cú pháp", where=path)
+    except PB3Error:
+        raise
     except configparser.Error:
         raise PB3Error("E_CORRUPT", "INI sai cú pháp (key/section trùng hoặc sai định dạng)",
                        where=path)
+    except Exception:  # noqa: BLE001 - mọi lỗi lạ từ configparser thành E_CORRUPT
+        raise PB3Error("E_CORRUPT", "INI sai cú pháp", where=path)
     sections: List[Tuple[Optional[str], List[Tuple[str, str]]]] = []
     if sectionless:
         opts = cp._sections.get(_ROOT_SECTION, {})
@@ -189,6 +200,10 @@ def _parse_ini_struct(text: str, path: str):
 
 
 def _parse_ini(data: bytes, path: str, locale: Optional[str], doc) -> Dict[str, Any]:
+    # Từ chối sớm nội dung đánh dấu (XML/HTML): không phải INI. Trước đây
+    # file XML lọt vào configparser rồi crash (AttributeError) ở probe.
+    if doc.text.lstrip("\ufeff \t\r\n").startswith("<"):
+        raise PB3Error("E_CORRUPT", "không phải INI (nội dung XML/HTML)", where=path)
     sections, sectionless = _parse_ini_struct(doc.text, path)
     pairs: List[Tuple[str, str, str, List[str]]] = []
     for name, opts in sections:
@@ -1054,6 +1069,13 @@ class YamlIniPlugin(FormatPluginBase):
         try:
             text = head.decode("utf-8", errors="ignore")
         except Exception:  # noqa: BLE001 - sniff không được làm hỏng detect
+            return 0.0
+        # XML/HTML không phải INI/YAML: dòng đầu (không tính dòng trống)
+        # bắt đầu bằng "<" thì không tính điểm. Trước đây dòng
+        # <?xml version="1.0" ...="..."?> bị chấm 0.7 như cặp key=value INI,
+        # đưa file XML thành ứng viên rồi crash ở probe.
+        stripped = text.lstrip("\ufeff \t\r\n")
+        if stripped.startswith("<"):
             return 0.0
         for ln in text.splitlines():
             s = ln.strip()

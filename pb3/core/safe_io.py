@@ -54,9 +54,26 @@ def ensure_free_space(path, needed_bytes: int, *, factor: float = 1.0,
 
 
 # ---------------------------------------------------------------------- đọc
+def normalize_typed_path(path) -> str:
+    """Bỏ dấu '.' thừa ở cuối đường dẫn người dùng gõ tay.
+
+    Bàn phím iOS hay tự chèn dấu chấm (gõ "game.ipa" thành "game.ipa.").
+    Chỉ bỏ khi: đường dẫn có dấu chấm KHÔNG tồn tại nhưng bỏ dấu chấm đi
+    thì TỒN TẠI. Đường dẫn đã tồn tại (kể cả tên thật kết thúc bằng '.')
+    không bao giờ bị đổi; đường dẫn chưa tồn tại cũng giữ nguyên.
+    """
+    s = str(path)
+    if s.endswith("."):
+        stripped = s.rstrip(".")
+        if stripped and not os.path.exists(os.path.expanduser(s)) \
+                and os.path.exists(os.path.expanduser(stripped)):
+            return stripped
+    return s
+
+
 def check_readable_input(path, limits=None, *, allow_dir: bool = True) -> Path:
     """Kiểm tra đầu vào: tồn tại, đọc được, không quá lớn. Trả về Path đã resolve."""
-    s = str(path)
+    s = normalize_typed_path(str(path))
     if "\x00" in s:
         raise PB3Error("E_UNSAFE_PATH", "đường dẫn chứa byte NUL")
     p = Path(os.path.expanduser(s))

@@ -566,6 +566,11 @@ def run_extraction(req: ExtractionRequest) -> ExtractionResult:
             result.skipped.append({"path": item["full"],
                                    "reason": "probe %s lỗi [%s]" % (rec.plugin_id, exc.code)})
             continue
+        except Exception as exc:  # noqa: BLE001 - probe (kể cả plugin ghi đè) không được crash extract
+            result.skipped.append({"path": item["full"],
+                                   "reason": "probe %s lỗi [E_INTERNAL: %s]"
+                                             % (rec.plugin_id, type(exc).__name__)})
+            continue
         if not probe.get("ok"):
             result.skipped.append({"path": item["full"],
                                    "reason": "probe %s: %s" % (rec.plugin_id, probe.get("reason", "?"))})
