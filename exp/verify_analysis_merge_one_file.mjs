@@ -7,7 +7,7 @@
 //
 // Section:
 //  1. Unit Python (tests.test_merge_one_file, 10 test) + tinh:
-//     files.json=92 / tests.json=163 / sw.js CACHE_VERSION v18, node --check.
+//     files.json=93 / tests.json=164 / sw.js CACHE_VERSION v18, node --check.
 //  2. Fixture acceptance (CPython bridge, file resources.assets that cua
 //     Joseph): en -> dung 1 file en.json (9.753 key), zh -> dung 1 file
 //     zh.json (3.380 key); doi chieu mau 2.086 key (thu tu, so key co);
@@ -78,11 +78,11 @@ if (want(1)) {
     if (f !== "verify_analysis_reselect.mjs" && (c.includes("v17-20261116") || c.includes("== 162") || c.includes("=== 162") || c.includes("ky vong 162") || c.includes("tests.json=162"))) noV17.push(f);
   }
   rec("static_counts_and_cache",
-    filesJson.files.length === 92 && testsJson.files.length === 163 &&
-    swJs.includes('CACHE_VERSION = "v18-20261116"') && !swJs.includes("v17-20261116") &&
+    filesJson.files.length === 93 && testsJson.files.length === 164 &&
+    swJs.includes('CACHE_VERSION = "v19-20261116"') && !swJs.includes("v17-20261116") &&
     noV17.length === 0,
-    "files.json=" + filesJson.files.length + " (ky vong 92) · tests.json=" + testsJson.files.length +
-    " (ky vong 163) · sw.js v18-20261116: " + swJs.includes('CACHE_VERSION = "v18-20261116"') +
+    "files.json=" + filesJson.files.length + " (ky vong 93) · tests.json=" + testsJson.files.length +
+    " (ky vong 164) · sw.js v19-20261116: " + swJs.includes('CACHE_VERSION = "v19-20261116"') +
     " · file exp con sot v17/162: " + (noV17.join(",") || "khong"), performance.now() - t);
   t = performance.now();
   const c = sh("node --check " + SITE + "/app.js && node --check " + SITE + "/worker.js && node --check " + SITE + "/sw.js && python3 -m py_compile " + SITE + "/pb3/bridge.py " + SITE + "/pb3/sdk/extraction.py " + SITE + "/pb3/sdk/exporters.py " + SITE + "/pb3/tests/test_merge_one_file.py", EXP);

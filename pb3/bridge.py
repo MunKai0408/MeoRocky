@@ -1356,6 +1356,109 @@ def tmp_font_fallback(path):
         return _err(e)
 
 
+# Cache lần liệt kê font gần nhất (phần D): nút "Dùng chung 1 font"
+# dùng lại kết quả của nút "Liệt kê font của game" thay vì quét lại cả
+# file/IPA. Khóa = (đường dẫn, kích thước, mtime); khác file thì quét lại.
+_LAST_FONT_SCAN = {"path": None, "size": None, "mtime": None, "res": None}
+
+
+def _font_scan_cached(path):
+    """Liệt kê font, dùng lại kết quả lần trước nếu đúng cùng file."""
+    from sdk import font_list as fl
+
+    try:
+        st = os.stat(path)
+        key = (path, st.st_size, st.st_mtime_ns)
+    except OSError:
+        key = None
+    if (key is not None and _LAST_FONT_SCAN["res"] is not None
+            and (_LAST_FONT_SCAN["path"], _LAST_FONT_SCAN["size"],
+                 _LAST_FONT_SCAN["mtime"]) == key):
+        return _LAST_FONT_SCAN["res"], True
+    res = fl.scan_source(path)
+    if key is not None:
+        _LAST_FONT_SCAN.update({"path": key[0], "size": key[1],
+                               "mtime": key[2], "res": res})
+    return res, False
+
+
+def _font_scan_public(res):
+    """Bản scan lược bỏ bytes font (không JSON được) để trả về JS."""
+    return {k: v for k, v in res.items() if k not in ("font_bytes",)}
+
+
+def font_list(path):
+    """Liệt kê font của game + kiểm từng font đủ/thiếu dấu tiếng Việt (phần D).
+
+    Quét TTF/OTF/TTC rời, Font object nhúng (class 128) và TMP_FontAsset
+    trong file/IPA/.assets/.unity3d đã chọn; mỗi font báo đủ bao nhiêu
+    trên 142 mục + chữ/dấu nào thiếu. Chỉ đọc; ghi danh sách ra
+    /tmp/font_list.json để JS tải về.
+    """
+    try:
+        from sdk import font_list as fl  # noqa: F401 - giữ import rõ ràng
+
+        _check_size(path)
+        res, reused = _font_scan_cached(path)
+        out = "/tmp/font_list.json"
+        with open(out, "w", encoding="utf-8") as fh:
+            json.dump(_font_scan_public(res), fh, ensure_ascii=False, indent=1)
+        pub = _font_scan_public(res)
+        pub.update({"ok": True, "dest": out, "filename": "font_list.json",
+                    "scan_reused": reused})
+        return json.dumps(pub, ensure_ascii=False)
+    except Exception as e:  # noqa: BLE001
+        return _err(e)
+
+
+def font_unify(path, donor_path):
+    """"Dùng chung 1 font": gom mọi font game về Be Vietnam Pro (phần D).
+
+    Dùng lại kết quả liệt kê (cache) rồi lập kế hoạch + làm thật phần
+    web làm được: gộp glyph tiếng Việt còn thiếu vào từng font TTF rời
+    (sdk/font.merge_vietnamese). Trả file font_unified.zip để JS tải về:
+    các *.vi.ttf đã gộp + font_unify_plan.json + tmp_fallback_plan.json
+    (nếu có TMP) + BeVietnamPro-Regular.ttf (đủ 142/142, OFL).
+    TMP atlas SDF, font OTF/TTC/nhúng: chỉ có kế hoạch + đường Editor
+    trong plan (xem LIMITS của sdk/font_list).
+    """
+    try:
+        from sdk import font_list as fl
+
+        _check_size(path)
+        res, reused = _font_scan_cached(path)
+        plan = fl.build_unify_plan(res)
+        donor = open(donor_path, "rb").read()
+        merged = fl.merge_standalone_ttfs(res, donor)
+        plan_out = "/tmp/font_unify_plan.json"
+        with open(plan_out, "w", encoding="utf-8") as fh:
+            json.dump(plan, fh, ensure_ascii=False, indent=1)
+        zpath = "/tmp/font_unified.zip"
+        with zipfile.ZipFile(zpath, "w", zipfile.ZIP_DEFLATED) as zf:
+            zf.writestr("font_unify_plan.json",
+                        json.dumps(plan, ensure_ascii=False, indent=1))
+            if plan.get("fallback_plan"):
+                zf.writestr("tmp_fallback_plan.json",
+                            json.dumps(plan["fallback_plan"],
+                                     ensure_ascii=False, indent=1))
+            for m in merged:
+                zf.writestr(m["output"], m["data"])
+            zf.writestr(fl.DONOR_FILE, donor)
+        return json.dumps({
+            "ok": True, "dest": zpath, "filename": "font_unified.zip",
+            "plan_dest": plan_out, "scan_reused": reused,
+            "plan": plan,
+            "merged": [{k: v for k, v in m.items() if k != "data"}
+                       for m in merged],
+            "summary": res["summary"],
+            "warnings": list(res["warnings"] or []),
+            "files_scanned": list(res["files_scanned"] or []),
+            "bundle_nodes": int(res["bundle_nodes"]),
+        }, ensure_ascii=False)
+    except Exception as e:  # noqa: BLE001
+        return _err(e)
+
+
 def diagnose(path):
     """Chẩn đoán chỉ đọc: inventory + hex dump + quét strings (ASCII, v1).
 

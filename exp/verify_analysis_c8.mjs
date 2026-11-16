@@ -7,7 +7,7 @@
 //  A. Tĩnh: node --check; py_compile; check_analysis_c8_static.py
 //     (format_probe.py stdlib-only + Python 3.9, không gọi mạng, không chuỗi
 //     cấm; ENGINE_SUPPORT trung thực — mọi engine đều có unsupported, unknown
-//     có supported rỗng; manifest files.json=92 / tests.json=163; sw.js
+//     có supported rỗng; manifest files.json=93 / tests.json=164; sw.js
 //     precache + CACHE_VERSION v15; bridge có op format_probe; UI đủ nút
 //     probe + input file riêng + nút tải JSON; tiếng Việt đủ dấu).
 //  B. Unit test Python: tests.test_format_probe (22) + tests.test_engine_detect
@@ -83,8 +83,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     if (j.fails && j.fails.length) { ok = false; detail = j.fails.join(" | "); }
     else detail = "format_probe.py stdlib-only + Python 3.9 + không gọi mạng " +
       "+ ENGINE_SUPPORT trung thực (mọi engine có unsupported, unknown " +
-      "supported rỗng) + files.json=92 / tests.json=163 + sw.js precache " +
-      "sdk/format_probe.py + CACHE_VERSION v18-20261116 + bridge format_probe " +
+      "supported rỗng) + files.json=93 / tests.json=164 + sw.js precache " +
+      "sdk/format_probe.py + CACHE_VERSION v19-20261116 + bridge format_probe " +
       "+ UI đủ nút probe/input riêng/tải JSON + gợi ý probe khi lỗi " +
       "E_UNSUPPORTED_FORMAT + tiếng Việt đủ dấu";
   } catch (e) { ok = false; detail = "không đọc được JSON: " + (r.stdout || "") + (r.stderr || ""); }

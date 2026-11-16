@@ -741,6 +741,12 @@
     fallback: tạo TMP_FontAsset MỚI chỉ chứa chữ Việt thiếu rồi đăng ký vào
     danh sách fallback của TMP_Settings — asset gốc không đổi gì, kèm script
     C# để tải về.
+    Nút “Liệt kê font của game” (phần D) liệt kê MỌI font trong file đã chọn
+    (TTF/OTF rời, Font object nhúng, TMP_FontAsset) và kiểm từng font đủ
+    bao nhiêu trên 142 mục. Nút “Dùng chung 1 font Be Vietnam Pro” gom mọi
+    font về font Be Vietnam Pro đủ 142/142: TTF rời được gộp thật trên web,
+    TMP chỉ có kế hoạch fallback, còn OTF/TTC/font nhúng chỉ thay được trong
+    Unity Editor — kết quả tải về dạng font_unified.zip.
     Giới hạn thật: atlas SDF của TextMeshPro không tái tạo được trên web —
     chỉ tái tạo được trong Unity Editor (script kèm theo).</p>
     <button id="btn-font-scan">Quét font đã chọn</button>
@@ -748,6 +754,8 @@
     <button id="btn-font-replace" class="secondary">Lấy font Be Vietnam Pro về</button>
     <button id="btn-font-tmp">Đọc TMP_FontAsset (atlas SDF)</button>
     <button id="btn-font-fallback">Tạo font fallback (mục C6)</button>
+    <button id="btn-font-list">Liệt kê font của game</button>
+    <button id="btn-font-unify">Dùng chung 1 font Be Vietnam Pro</button>
     <div id="font-result"></div>
   </div>
 

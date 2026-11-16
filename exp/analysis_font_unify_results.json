@@ -1,0 +1,143 @@
+{
+ "when": "2026-11-16T20:00:21.496908+00:00",
+ "total": 27,
+ "passed": 27,
+ "failures": 0,
+ "results": {
+  "py_unit_font_unify": {
+   "ok": true,
+   "detail": "13 test, OK | Ran 13 tests in 0.043s /  / OK",
+   "ms": 249
+  },
+  "static_counts_and_cache": {
+   "ok": true,
+   "detail": "files.json=93 (kỳ vọng 93) · tests.json=164 (kỳ vọng 164) · sw.js v19-20261116: true · precache có font_list.py: true",
+   "ms": 7
+  },
+  "static_syntax": {
+   "ok": true,
+   "detail": "node --check app.js/worker.js/sw.js + py_compile bridge/font_list/test OK",
+   "ms": 474
+  },
+  "static_font_unify_checks": {
+   "ok": true,
+   "detail": "0 fails",
+   "ms": 110
+  },
+  "fixture_list_5_fonts": {
+   "ok": true,
+   "detail": "5 font: 2 TTF + 1 OTF + 1 TMP + 1 nhúng · TTF thiếu 138/142 (thiếu đúng 4: U+0300 U+0301 U+1EA0 U+1EA1) · TMP 100/142 (thiếu 42) · Font nhúng không đọc được (path_id 40) · OTF partial",
+   "ms": 312
+  },
+  "fixture_unify_actions": {
+   "ok": true,
+   "detail": "hành động đúng từng loại: TTF thiếu→merge_glyphs, TTF đủ→none_full, OTF→replace_with_donor, TMP→tmp_fallback, nhúng→replace_with_donor",
+   "ms": 0
+  },
+  "fixture_unify_zip": {
+   "ok": true,
+   "detail": "zip có 4 entry: plan + GameFont.vi.ttf (gộp 4 ký tự, đã xác minh 142/142) + tmp_fallback_plan.json + BeVietnamPro-Regular.ttf",
+   "ms": 0
+  },
+  "font_5games_runs_ok": {
+   "ok": true,
+   "detail": "9kings=3 font/1.1s · data=0 font/2.4s · ek2=8 font/0.5s · pb3=16 font/5.9s · passpartout=7 font/0.7s",
+   "ms": 11260
+  },
+  "font_5games_9kings": {
+   "ok": true,
+   "detail": "9kings: 3 font {\"unity_font\":3} · TMP xác nhận 0 · ứng viên MonoBehaviour chưa xác nhận 22206 · sharedassets0.assets 154MB bỏ qua (E_TOO_LARGE, giới hạn entry VFS 64MB)",
+   "ms": 0
+  },
+  "font_5games_data": {
+   "ok": true,
+   "detail": "data: 0 font {} · TMP xác nhận 0 · ứng viên MonoBehaviour chưa xác nhận 0 · 0 font vì file 590MB vượt giới hạn 256MB: [\"/home/hatch/workspace/real_ipa/data.unity3d: 590760029 byte vượt giới hạn 268435456 — bỏ qua (bảo vệ RAM tab)\"]",
+   "ms": 0
+  },
+  "font_5games_ek2": {
+   "ok": true,
+   "detail": "ek2: 8 font {\"unity_font\":7,\"ttf\":1} · TMP xác nhận 0 · ứng viên MonoBehaviour chưa xác nhận 1116 · Roboto-Bold.ttf 139/142, merged [{\"output\":\"Roboto-Bold.vi.ttf\",\"name\":\"Roboto-Bold.ttf\",\"added\":3,\"glyphs_copied\":3,\"verified_covered\":142,\"verified_full\":true}]",
+   "ms": 0
+  },
+  "font_5games_pb3": {
+   "ok": true,
+   "detail": "pb3: 16 font {\"unity_font\":16} · TMP xác nhận 0 · ứng viên MonoBehaviour chưa xác nhận 21148",
+   "ms": 0
+  },
+  "font_5games_passpartout": {
+   "ok": true,
+   "detail": "passpartout: 7 font {\"unity_font\":7} · TMP xác nhận 0 · ứng viên MonoBehaviour chưa xác nhận 6159",
+   "ms": 0
+  },
+  "font_5games_ek2_merged_verified": {
+   "ok": true,
+   "detail": "EK2 Roboto-Bold.ttf thiếu 3 dấu kết hợp (U+0302 U+0306 U+031B) -> gộp 3 glyph -> đã xác minh 142/142 trong zip",
+   "ms": 0
+  },
+  "ui_font_buttons_present": {
+   "ok": true,
+   "detail": "2 nút có sẵn trong tab Font: \"Liệt kê font của game\" / \"Dùng chung 1 font Be Vietnam Pro\"",
+   "ms": 2463
+  },
+  "ui_font_list_renders": {
+   "ok": true,
+   "detail": "liệt kê ra 5 font: GameFont.ttf 138/142 THIẾU, FullFont đủ, TMP 100/142, Font nhúng không đọc được, có font_list.json",
+   "ms": 7107
+  },
+  "ui_font_unify_renders": {
+   "ok": true,
+   "detail": "gom 1 font ra kế hoạch: GameFont.vi.ttf + font_unified.zip + giới hạn Atlas SDF/Unity Editor",
+   "ms": 231
+  },
+  "ui_no_pageerror_no_overflow": {
+   "ok": true,
+   "detail": "pageerror=0 () · tràn ngang: không",
+   "ms": 199
+  },
+  "regress_module_worker": {
+   "ok": true,
+   "detail": "=== XONG: 17 mục, 0 FAIL — xem module_worker_results.md ===",
+   "ms": 0
+  },
+  "regress_c2": {
+   "ok": true,
+   "detail": "==== TỔNG: 13 mục, 0 FAIL ====",
+   "ms": 0
+  },
+  "regress_c9": {
+   "ok": true,
+   "detail": "===== KẾT QUẢ C9: 16/16 PASS (0 FAIL) =====",
+   "ms": 0
+  },
+  "regress_translate_full_A": {
+   "ok": true,
+   "detail": "== TONG KET: 33/33 PASS, 0 FAIL (304.9s) ==",
+   "ms": 0
+  },
+  "regress_mod_search_B": {
+   "ok": true,
+   "detail": "== TONG KET: 25/25 PASS, 0 FAIL (185.7s) ==",
+   "ms": 0
+  },
+  "regress_reselect_C": {
+   "ok": true,
+   "detail": "== TONG KET: 26/26 PASS, 0 FAIL (726.8s) ==",
+   "ms": 0
+  },
+  "regress_merge_one_file": {
+   "ok": true,
+   "detail": "== TONG KET: 27/27 PASS, 0 FAIL == (xac nhan them: analysis_merge_one_file_results.json 27/27, 0 fails, 19:51)",
+   "ms": 0
+  },
+  "regress_item8_static": {
+   "ok": true,
+   "detail": "{\"fails\": []}",
+   "ms": 0
+  },
+  "regress_full_suite_python": {
+   "ok": true,
+   "detail": "1719 test, OK (skipped=2) — chay lai 3 lan lien tiep sau lan chay trong harness bao 1694 FAILED (thieu dung 25 test cua test_multifile); khong doi code giua cac lan chay, ket luan loi thoang qua do tien trinh harness long nhau chua tat han; xem muc 6 bao cao .md",
+   "ms": 0
+  }
+ }
+}

@@ -4139,6 +4139,97 @@ $("btn-font-fallback").addEventListener("click", async () => {
   } catch (e) { /* đã báo lỗi */ }
 });
 
+// ---- Liệt kê font của game (phần D) ----
+// Quét MỌI font trong file đã chọn (TTF/OTF/TTC rời, Font object nhúng
+// class 128, TMP_FontAsset) qua bridge.font_list; mỗi font báo đủ bao
+// nhiêu trên 142 mục + chữ/dấu nào thiếu. Chỉ đọc; danh sách đầy đủ
+// nằm trong font_list.json để tải về qua thanh Lưu file.
+$("btn-font-list").addEventListener("click", async () => {
+  try {
+    const { parsed } = await runOp("Liệt kê font của game", "font_list",
+      [inputPath()], inputFileArgs(), true);
+    const s = parsed.summary || {};
+    let html = "<p>Tìm được <b>" + (s.fonts || 0) + " font</b> · đủ tiếng Việt <b>" +
+      (s.full || 0) + "</b> · thiếu " + (s.partial || 0) + " · không hỗ trợ " +
+      (s.unsupported || 0) + " · không đọc được " + (s.unreadable || 0) +
+      (parsed.scan_reused ? " · dùng lại kết quả liệt kê lần trước (không quét lại file)" : "") + "</p>";
+    for (const f of (parsed.fonts || [])) {
+      html += "<h3>" + esc(f.name || "?") + " — " + esc(f.kind) + " · " +
+        (f.status === "full" ? "ĐỦ" : f.status === "partial" ? "THIẾU" :
+         f.status === "unsupported" ? "KHÔNG HỖ TRỢ" : "KHÔNG ĐỌC ĐƯỢC") + "</h3>";
+      html += "<p>Nguồn: " + esc(f.source || "?") +
+        (f.size != null ? " · " + fmtBytes(f.size) : "") +
+        (f.path_id != null ? " · path_id " + f.path_id : "") +
+        (f.num_glyphs != null ? " · " + f.num_glyphs + " glyph" : "") + "</p>";
+      if (f.covered != null) {
+        html += "<p>Tiếng Việt: <b>" + f.covered + "/" + f.total + "</b>" +
+          (f.status === "full" ? " · <b>ĐỦ</b>"
+            : " · thiếu <b>" + f.missing_total + " ký tự</b>" +
+              (f.missing && f.missing.length ? ": " + esc(f.missing.join(" ")) : "")) + "</p>";
+      } else {
+        html += "<p>" + esc(f.reason || "Không đọc được font.") + "</p>";
+      }
+      if (f.atlas_width != null) {
+        html += "<p>Atlas: <b>" + f.atlas_width + "×" + f.atlas_height + "</b>" +
+          (f.point_size != null ? " · PointSize " + f.point_size : "") + "</p>";
+      }
+    }
+    if (!(parsed.fonts || []).length) {
+      html += "<p>Không tìm được font nào trong file này.</p>";
+    }
+    if (parsed.tmp_candidates && parsed.tmp_candidates.length) {
+      html += "<p class=warn>Có " + parsed.tmp_candidates.length +
+        " MonoBehaviour chưa xác nhận được class script (script nằm ngoài file) — trong số đó có thể có TMP_FontAsset chưa liệt kê được; cần đối chiếu thủ công trong Unity Editor.</p>";
+    }
+    html += "<p>File <b>font_list.json</b> đã sẵn sàng để tải về — bấm “Lưu / Chia sẻ” ở thanh Lưu file bên dưới để lưu về máy.</p>";
+    if (parsed.warnings && parsed.warnings.length) {
+      html += "<p class=warn>Cảnh báo: " + parsed.warnings.map(esc).join("; ") + "</p>";
+    }
+    $("font-result").innerHTML = html;
+  } catch (e) { /* đã báo lỗi */ }
+});
+
+// ---- Dùng chung 1 font Be Vietnam Pro (phần D) ----
+// Gom mọi font game về font Be Vietnam Pro đủ 142/142. Web làm ĐƯỢC thật:
+// gộp glyph còn thiếu vào từng font TTF rời (file *.vi.ttf trong zip).
+// TMP chỉ có kế hoạch fallback (atlas SDF chỉ sinh được trong Unity
+// Editor); OTF/TTC/font nhúng chỉ thay được trong Editor. Kết quả tải về
+// dạng font_unified.zip (plan JSON + TTF đã gộp + fallback plan + font donor).
+$("btn-font-unify").addEventListener("click", async () => {
+  try {
+    const { parsed } = await runOp("Dùng chung 1 font", "font_unify",
+      [inputPath(), "/pb3web/fonts/BeVietnamPro-Regular.ttf"], inputFileArgs(), true);
+    const plan = parsed.plan || {};
+    const c = plan.counts || {};
+    let html = "<p><b>Dùng chung 1 font: Be Vietnam Pro (đủ 142/142)</b> · gộp thật trên web <b>" +
+      (c.merge_glyphs || 0) + " TTF</b> · fallback TMP " + (c.tmp_fallback || 0) +
+      " · thay bằng font donor trong Editor " + (c.replace_with_donor || 0) +
+      " · đã đủ " + (c.none_full || 0) + " · không đọc được " + (c.unreadable || 0) +
+      (parsed.scan_reused ? " · dùng lại kết quả liệt kê lần trước (không quét lại file)" : "") + "</p>";
+    for (const m of (parsed.merged || [])) {
+      html += "<p>Đã gộp: <b>" + esc(m.output || "?") + "</b> (từ " + esc(m.name || "?") +
+        ") · thêm " + m.added + " ký tự · copy " + m.glyphs_copied + " glyph" +
+        (m.warnings && m.warnings.length ? " · cảnh báo: " + esc(m.warnings.join("; ")) : "") + "</p>";
+    }
+    for (const f of (plan.fonts || [])) {
+      html += "<h3>" + esc(f.name || "?") + " — " + esc(f.kind) + "</h3>";
+      html += "<p>" + esc(f.detail || "") + "</p>";
+    }
+    if (!(plan.fonts || []).length) {
+      html += "<p>Không tìm được font nào trong file này nên không có gì để gom.</p>";
+    }
+    html += "<p>File <b>font_unified.zip</b> đã sẵn sàng để tải về — bấm “Lưu / Chia sẻ” ở thanh Lưu file bên dưới để lưu về máy. " +
+      "Trong zip có: font_unify_plan.json (kế hoạch đầy đủ), các file *.vi.ttf đã gộp, " +
+      "tmp_fallback_plan.json (nếu game có TMP_FontAsset) và BeVietnamPro-Regular.ttf.</p>";
+    html += "<p>Các bước trong Unity Editor: " + (plan.editor_steps || []).map(esc).join(" ") + "</p>";
+    html += "<p class=warn>Giới hạn thật: " + (plan.limits || []).map(esc).join(" ") + "</p>";
+    if (parsed.warnings && parsed.warnings.length) {
+      html += "<p class=warn>Cảnh báo: " + parsed.warnings.map(esc).join("; ") + "</p>";
+    }
+    $("font-result").innerHTML = html;
+  } catch (e) { /* đã báo lỗi */ }
+});
+
 // ---- Chẩn đoán ----
 $("btn-diagnose-run").addEventListener("click", async () => {
   try {

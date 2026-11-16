@@ -6,11 +6,11 @@
     "static_node_check": {
       "ok": true,
       "detail": "node --check OK: app.js, sw.js, worker-pool.js",
-      "seconds": 0.3
+      "seconds": 0.4
     },
     "static_c9_checks": {
       "ok": true,
-      "detail": "check_analysis_c9_static.py xanh: N cấu hình được 1–2 (mặc định 2, tự động 1 khi deviceMemory ≤ 4, localStorage pb3_pool_size, pool tôn trọng N, chuỗi cũ đã hết) + files.json=91 / tests.json=160 không đổi + CACHE_VERSION v14-20261116 + tiếng Việt đủ dấu",
+      "detail": "check_analysis_c9_static.py xanh: N cấu hình được 1–2 (mặc định 2, tự động 1 khi deviceMemory ≤ 4, localStorage pb3_pool_size, pool tôn trọng N, chuỗi cũ đã hết) + files.json=93 / tests.json=164 + CACHE_VERSION v19-20261116 + tiếng Việt đủ dấu",
       "seconds": 0.1
     },
     "pool_size1_one_worker_sequential": {
@@ -36,7 +36,7 @@
     "browser_boot_ready": {
       "ok": true,
       "detail": "status: \"Sẵn sàng — 20 plugin đang chạy · font đi kèm: đủ 142/142 (134 chữ cái + 8 dấu)\"; navigator.deviceMemory thật trong headless shell: 8 (> 4 GB nên mặc định 2, không ép về 1)",
-      "seconds": 5.9
+      "seconds": 7
     },
     "browser_default_pool_size_2": {
       "ok": true,
@@ -46,22 +46,22 @@
     "browser_batch_n2_both_workers": {
       "ok": true,
       "detail": "kết quả: 2 ok qua pool 2 worker, phân công worker 0: 1 game · worker 1: 1 game; #batch-pool-info hiện cả Worker 0 và Worker 1; download batch.zip: batch.zip",
-      "seconds": 8
+      "seconds": 8.8
     },
     "browser_switch_to_n1_idle": {
       "ok": true,
       "detail": "đổi sang 1: ghi chú \"Mặc định 2 worker, song song thật (mỗi worker 1 thread hệ điều hành thật). Thiết\"…; pool-info về \"Pool chưa khởi động (bấm “Chạy batch” để khởi động pool 1 worker).\"…; batch sau: pool 1 worker, worker 0: 2 game, không có worker 1; pageerror mới: 0",
-      "seconds": 4.8
+      "seconds": 5.7
     },
     "browser_pool_size_persists_reload": {
       "ok": true,
       "detail": "sau reload (đã lưu 1): ô chọn=\"1\"; đổi 2 rồi reload: ô chọn=\"2\", __PB3_POOL_SIZE=2",
-      "seconds": 9.6
+      "seconds": 11
     },
     "browser_switch_n_mid_batch_safe": {
       "ok": true,
       "detail": "đổi sang 1 giữa đợt đang chạy: ghi chú \"Mặc định 2 worker, song song thật (mỗi worker 1 thread hệ điều hành thật). Thiết bị này bá\"…; đợt đang chạy giữ nguyên pool 2 worker: true; đợt sau: pool 1 worker, worker 0: 2 game; pageerror mới: 0",
-      "seconds": 18.6
+      "seconds": 22.5
     },
     "browser_390_no_overflow_main": {
       "ok": true,
@@ -71,7 +71,7 @@
     "browser_low_memory_auto_n1": {
       "ok": true,
       "detail": "__PB3_DEVICE_MEMORY=4, chưa có lựa chọn lưu (localStorage pb3_pool_size=null) -> ô chọn=\"1\", hook=1; ghi chú: \"Mặc định 2 worker, song song thật (mỗi worker 1 thread hệ điều hành thật). Thiết bị này báo RAM 4 GB nên tự độ\"…; batch 2 game: pool 1 worker, worker 0: 2 game; 390px scrollWidth=390 clientWidth=390; pageerror thật: không có",
-      "seconds": 11.2
+      "seconds": 13.3
     },
     "browser_no_errors_main_session": {
       "ok": true,
@@ -80,43 +80,8 @@
     },
     "shell_size_after_c9": {
       "ok": true,
-      "detail": "shell lần tải đầu sau C9: index.html raw=58498B gzip=16669B; kb-store.js raw=8192B gzip=3212B; worker-pool.js raw=14840B gzip=5227B; stream.js raw=18358B gzip=6141B; opfs.js raw=12753B gzip=4045B; app.js raw=216652B gzip=60724B; gt.js raw=34379B gzip=9599B | TỔNG raw=363672B (355.1KB), gzip=105617B (103.1KB). Ngưỡng raw 100KB vẫn chưa đạt như mục 6 đã ghi (app.js monolith) — C9 không đổi kết luận.",
-      "seconds": 0.1
+      "detail": "shell lần tải đầu sau C9: index.html raw=64153B gzip=18267B; kb-store.js raw=8192B gzip=3212B; worker-pool.js raw=14840B gzip=5227B; stream.js raw=18358B gzip=6141B; opfs.js raw=12753B gzip=4045B; app.js raw=260475B gzip=72264B; gt.js raw=34379B gzip=9599B | TỔNG raw=413150B (403.5KB), gzip=118755B (116.0KB). Ngưỡng raw 100KB vẫn chưa đạt như mục 6 đã ghi (app.js monolith) — C9 không đổi kết luận.",
+      "seconds": 0
     }
-  },
-  "summary": {
-    "item": "C9 — worker pool batch cau hinh duoc + sua cau sai ve song song",
-    "date": "2026-11-16",
-    "repo": "MunKai0408/MeoRocky",
-    "head_before": "3c7c789",
-    "push_commit": "465e862ed157285660045319e6d279b5a834fe48",
-    "default_pool_size": 2,
-    "auto_pool_size_low_memory": 1,
-    "low_memory_threshold_gb": 4,
-    "localstorage_key": "pb3_pool_size",
-    "user_range": [
-      1,
-      2
-    ],
-    "device_memory_headless_shell": 8,
-    "harness": "exp/verify_analysis_c9.mjs",
-    "harness_pass": "16/16",
-    "regression": {
-      "module_worker": "17/17",
-      "analysis_c2": "13/13",
-      "item8_static": "0 fails",
-      "c6_c7_c8_static": "0 fails",
-      "full_suite_python": "1657 passed, skipped=2"
-    },
-    "files_json": 91,
-    "tests_json": 160,
-    "cache_version": "v14-20261116",
-    "shell_raw_bytes": 363672,
-    "shell_gzip_bytes": 105617,
-    "known_fail_remaining": "item6: vo trang raw 363672B > 100KB (da biet, khong phai do C9)",
-    "remaining": [
-      "Tu dong ve 1 chua kiem chung tren thiet bi that (Safari khong co navigator.deviceMemory nen mac dinh van 2; can thu tren Android RAM <= 4GB)",
-      "Chua do lai song song N=1 vs N=2 tren Safari that"
-    ]
   }
 }

@@ -1,5 +1,5 @@
 {
-  "when": "2026-11-16T18:30:19.293Z",
+  "when": "2026-11-16T19:51:34.741Z",
   "total": 27,
   "passed": 27,
   "failures": 0,
@@ -7,22 +7,22 @@
     "py_unit_merge_one_file": {
       "ok": true,
       "detail": "10 test, OK | Ran 10 tests in 0.003s /  / OK",
-      "ms": 311
+      "ms": 222
     },
     "static_counts_and_cache": {
       "ok": true,
-      "detail": "files.json=92 (ky vong 92) · tests.json=163 (ky vong 163) · sw.js v18-20261116: true · file exp con sot v17/162: khong",
-      "ms": 43
+      "detail": "files.json=93 (ky vong 93) · tests.json=164 (ky vong 164) · sw.js v19-20261116: true · file exp con sot v17/162: khong",
+      "ms": 35
     },
     "static_syntax": {
       "ok": true,
       "detail": "node --check app.js/worker.js/sw.js + py_compile bridge/extraction/exporters/test OK",
-      "ms": 407
+      "ms": 471
     },
     "fixture_en_one_file": {
       "ok": true,
       "detail": "en.json 9753 key (434897 byte), 1 file locale en, #N=0, config giu 5 file, sidecar 9753 key",
-      "ms": 31290
+      "ms": 38086
     },
     "fixture_en_sample_comparison": {
       "ok": true,
@@ -51,8 +51,8 @@
     },
     "merge_5games_runs_ok": {
       "ok": true,
-      "detail": "9kings=41074 entry/8.9s · data=4964 entry/8.4s · ek2=39640 entry/7.4s · pb3=32975 entry/11.7s · passpartout=13892 entry/2.9s",
-      "ms": 80158
+      "detail": "9kings=41074 entry/10.8s · data=4964 entry/9.4s · ek2=39640 entry/8.2s · pb3=32975 entry/13.3s · passpartout=13892 entry/3.4s",
+      "ms": 95969
     },
     "merge_5games_9kings": {
       "ok": true,
@@ -82,62 +82,62 @@
     "ui_merge_checkbox_default_checked": {
       "ok": true,
       "detail": "checkbox #extract-merge-one co san, tick mac dinh, nhan co 'en.json': \" Gộp thành 1 file mỗi ngôn ngữ (en.json / zh.json)\"",
-      "ms": 1668
+      "ms": 2192
     },
     "ui_extract_merged_en_json": {
       "ok": true,
       "detail": "ket qua co en.json + dong 'Gop thanh 1 file'; file list: BillingMode.json|, BuildSettings.json|, PerformanceTestRunInfo.json|, PerformanceTestRunSettings.json|, Version.json|, en.json|en; file dich mac dinh: en.json",
-      "ms": 18312
+      "ms": 22561
     },
     "ui_extract_unchecked_keeps_perunit": {
       "ok": true,
       "detail": "bo tick: file list co resources.monobehaviour.en.json, khong co en.json: BillingMode.json|, BuildSettings.json|, PerformanceTestRunInfo.json|, PerformanceTestRunSettings.json|, Version.json|, EAC193F5-FBAE-43A0-8CE2-6748EA5AF5DC-resources.monobehaviour.en.json|en",
-      "ms": 12150
+      "ms": 14891
     },
     "ui_no_pageerror_no_overflow": {
       "ok": true,
       "detail": "pageerror=0 () · tran ngang: khong",
-      "ms": 198
+      "ms": 340
     },
     "regress_module_worker": {
       "ok": true,
       "detail": "=== XONG: 17 mục, 0 FAIL — xem module_worker_results.md ===",
-      "ms": 5582
+      "ms": 6414
     },
     "regress_c2": {
       "ok": true,
       "detail": "==== TỔNG: 13 mục, 0 FAIL ====",
-      "ms": 23984
+      "ms": 25584
     },
     "regress_c9": {
       "ok": true,
       "detail": "===== KẾT QUẢ C9: 16/16 PASS (0 FAIL) =====",
-      "ms": 64306
+      "ms": 73207
     },
     "regress_translate_full_A": {
       "ok": true,
-      "detail": "== TONG KET: 33/33 PASS, 0 FAIL (264.5s) ==",
-      "ms": 264685
+      "detail": "== TONG KET: 33/33 PASS, 0 FAIL (308.3s) ==",
+      "ms": 308606
     },
     "regress_mod_search_B": {
       "ok": true,
-      "detail": "== TONG KET: 25/25 PASS, 0 FAIL (158.2s) ==",
-      "ms": 158364
+      "detail": "== TONG KET: 25/25 PASS, 0 FAIL (186.3s) ==",
+      "ms": 186512
     },
     "regress_reselect_C": {
       "ok": true,
-      "detail": "PASS regress_translate_full_A | == TONG KET: 33/33 PASS, 0 FAIL (259.7s) == / PASS regress_mod_search_B | == TONG KET: 25/25 PASS, 0 FAIL (154.9s) == / == TONG KET: 26/26 PASS, 0 FAIL (619.4s) ==",
-      "ms": 619529
+      "detail": "PASS regress_translate_full_A | == TONG KET: 33/33 PASS, 0 FAIL (301.4s) == / PASS regress_mod_search_B | == TONG KET: 25/25 PASS, 0 FAIL (184.8s) == / == TONG KET: 26/26 PASS, 0 FAIL (725.6s) ==",
+      "ms": 725708
     },
     "regress_item8_static": {
       "ok": true,
       "detail": "{\"fails\": []}",
-      "ms": 112
+      "ms": 111
     },
     "regress_full_suite_python": {
       "ok": true,
-      "detail": "1706 test, OK",
-      "ms": 56229
+      "detail": "1719 test, OK",
+      "ms": 70175
     }
   }
 }

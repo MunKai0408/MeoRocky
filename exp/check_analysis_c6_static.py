@@ -13,7 +13,7 @@
 - site/index.html + site/app.js: nut btn-font-fallback + handler goi
   tmp_font_fallback, hien link tai script C#.
 - Manifest: tests.json co pb3/tests/test_tmp_fallback.py (files.json
-  khong doi vi khong them module Python moi).
+  khong doi o thoi C6 vi khong them module Python moi).
 In JSON ra stdout, exit 0 neu dat het.
 """
 import ast
@@ -134,14 +134,14 @@ for bad in ("new SharedArrayBuffer", "Cross-Origin-Opener-Policy",
 
 # ------------------------------------------------------------------ manifest
 files_json = json.load(open(os.path.join(PB3, "files.json"), encoding="utf-8"))
-chk(len(files_json["files"]) == 92,
-    "files.json %d file != 92 (C8 them sdk/format_probe.py)"
+chk(len(files_json["files"]) == 93,
+    "files.json %d file != 93 (phan D them sdk/font_list.py)"
     % len(files_json["files"]))
 tests_json = json.load(open(os.path.join(PB3, "tests.json"), encoding="utf-8"))
 chk("pb3/tests/test_tmp_fallback.py" in tests_json["files"],
     "tests.json thieu pb3/tests/test_tmp_fallback.py")
-chk(len(tests_json["files"]) == 163,
-    "tests.json %d file != 163" % len(tests_json["files"]))
+chk(len(tests_json["files"]) == 164,
+    "tests.json %d file != 164" % len(tests_json["files"]))
 
 print(json.dumps({"fails": FAILS}, ensure_ascii=False, indent=1))
 sys.exit(1 if FAILS else 0)
