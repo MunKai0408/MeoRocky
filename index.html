@@ -61,7 +61,7 @@
 
 <div class="card">
   <h2>1. Chọn file</h2>
-  <input type="file" id="file-input" accept=".ipa,.zip,.unity3d,.assets,.ttf,.json,.tar.xz">
+  <input type="file" id="file-input">
   <p id="file-info" class="sub" hidden></p>
   <p class="note">File chỉ được đọc và xử lý trong trình duyệt của bạn. Bản web giới hạn
   file ≤2GB; file lớn hơn hãy dùng bản iSH. Lưu ý: file gần 2GB vẫn có thể
@@ -89,6 +89,7 @@
   <h2>Danh sách entry trong file</h2>
   <p class="note">Liệt kê các entry của ZIP/IPA (tên, loại, kích thước).</p>
   <button id="btn-list-run">Liệt kê</button>
+  <p id="list-ipa-hint" class="warn" hidden></p>
   <div id="list-result"></div>
 </div>
 
@@ -97,6 +98,7 @@
   <p class="note">Đọc bundle .unity3d hoặc file .assets độc lập bằng parser thuần của PB3
   (UnityFS v8, SerializedFile v23). Không dùng UnityPy trên web.</p>
   <button id="btn-unity-run">Inspect</button>
+  <p id="unity-ipa-hint" class="warn" hidden></p>
   <div id="unity-result"></div>
 </div>
 
@@ -185,7 +187,7 @@
   lưu” rồi chạy lại với “Tiếp tục từ checkpoint” để bỏ qua game đã xong.</p>
   <div class="row">
     <label>Chọn các file game (nhiều file):
-      <input type="file" id="batch-files" multiple accept=".ipa,.zip,.unity3d,.assets">
+      <input type="file" id="batch-files" multiple>
     </label>
   </div>
   <p id="batch-files-info" class="sub" hidden></p>

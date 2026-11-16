@@ -21,6 +21,7 @@ from unittest import mock
 from core.errors import PB3Error
 from sdk import lz4pure, unity as u
 from tests.helpers import ROOT, TmpCase, copy_project, register_tmp_dir, slow_subprocess, subprocess_timeout, unregister_tmp_dir
+from tests.helpers import pytest  # noqa: F401 - marker needs_fixture (stub trên iSH)
 
 FX = ROOT / "tests" / "fixtures" / "unity"
 RES = FX / "resources.assets"
@@ -53,6 +54,7 @@ def nat():
 
 
 class TestDetect(unittest.TestCase):
+    @pytest.mark.needs_fixture("unity/sample.unity3d")
     def test_bundle_v7_none(self):
         info = u.detect_bundle(read(BUNDLE))
         self.assertIsNotNone(info)
@@ -60,6 +62,7 @@ class TestDetect(unittest.TestCase):
         self.assertEqual(info["unity_version"], "2019.4.40f1")
         self.assertEqual(u.parse_bundle(read(BUNDLE), nat()).compression_name, "none")
 
+    @pytest.mark.needs_fixture("unity/sample_lz4.unity3d", "unity/sample_lzma.unity3d", "unity/sample_v6.unity3d")
     def test_bundle_variants(self):
         self.assertEqual(u.parse_bundle(read(BUNDLE_LZ4), nat()).compression_name, "lz4")
         self.assertEqual(u.parse_bundle(read(BUNDLE_LZMA), nat()).compression_name, "lzma")
@@ -67,6 +70,7 @@ class TestDetect(unittest.TestCase):
         self.assertIsNotNone(info6)
         self.assertEqual(info6["version"], 6)
 
+    @pytest.mark.needs_fixture("unity/resources.assets")
     def test_not_bundle(self):
         self.assertIsNone(u.detect_bundle(b"hello world"))
         self.assertIsNone(u.detect_bundle(read(RES)))
@@ -150,29 +154,36 @@ class TestBundleParse(unittest.TestCase):
         self.assertEqual(names[1001], "greeting")
         self.assertEqual(names[1002], "longtext")
 
+    @pytest.mark.needs_fixture("unity/sample.unity3d")
     def test_v7_none(self):
         self._check_entries(u.parse_bundle(read(BUNDLE), nat()))
 
+    @pytest.mark.needs_fixture("unity/sample_lz4.unity3d")
     def test_v7_lz4_blocks_at_end(self):
         # sample_lz4.unity3d dùng blocks-info-at-end (flag 0x80)
         self._check_entries(u.parse_bundle(read(BUNDLE_LZ4), nat()))
 
+    @pytest.mark.needs_fixture("unity/sample_lzma.unity3d")
     def test_v7_lzma(self):
         self._check_entries(u.parse_bundle(read(BUNDLE_LZMA), nat()))
 
+    @pytest.mark.needs_fixture("unity/sample_v6.unity3d")
     def test_v6(self):
         self._check_entries(u.parse_bundle(read(BUNDLE_V6), nat()))
 
+    @pytest.mark.needs_fixture("unity/resources.assets", "unity/sample.unity3d")
     def test_truncated_raises(self):
         with self.assertRaises(PB3Error) as cm:
             u.parse_bundle(read(BUNDLE)[:100], nat())
         self.assertEqual(cm.exception.code, "E_CORRUPT")
 
+    @pytest.mark.needs_fixture("unity/sample.unity3d")
     def test_bad_magic_raises(self):
         with self.assertRaises(PB3Error) as cm:
             u.parse_bundle(b"NotUnity" + read(BUNDLE)[8:], nat())
         self.assertEqual(cm.exception.code, "E_UNSUPPORTED_FORMAT")
 
+    @pytest.mark.needs_fixture("unity/sample.unity3d")
     def test_unsupported_version_raises(self):
         data = bytearray(read(BUNDLE))
         # version là u32 big-endian ở offset 8 (sau "UnityFS\0")
@@ -183,6 +194,7 @@ class TestBundleParse(unittest.TestCase):
             u.parse_bundle(bytes(data), nat())
         self.assertEqual(cm.exception.code, "E_UNSUPPORTED_FORMAT")
 
+    @pytest.mark.needs_fixture("unity/resources.assets", "unity/sharedassets0.assets")
     def test_build_roundtrip_none_and_lz4(self):
         raw1 = read(RES)
         raw2 = read(SHARED)
@@ -194,6 +206,7 @@ class TestBundleParse(unittest.TestCase):
             self.assertEqual(parsed.get_entry(ENTRY1), raw1)
             self.assertEqual(parsed.get_entry(ENTRY2), raw2)
 
+    @pytest.mark.needs_fixture("unity/sample.unity3d")
     def test_build_unknown_entry_raises(self):
         bundle = u.parse_bundle(read(BUNDLE), nat())
         with self.assertRaises(PB3Error) as cm:
@@ -202,6 +215,7 @@ class TestBundleParse(unittest.TestCase):
 
 
 class TestSerializedParse(unittest.TestCase):
+    @pytest.mark.needs_fixture("unity/resources.assets")
     def test_resources_assets(self):
         sf = u.parse_serialized(read(RES))
         self.assertEqual(sf.version, 17)
@@ -212,11 +226,13 @@ class TestSerializedParse(unittest.TestCase):
         self.assertEqual(len(texts[1002][1]), 5437)  # chuỗi dài
         self.assertIn(b"DummyBehaviour", sf.object_bytes(1003))  # MonoBehaviour mờ
 
+    @pytest.mark.needs_fixture("unity/sharedassets0.assets")
     def test_sharedassets_json(self):
         sf = u.parse_serialized(read(SHARED))
         texts = dict((pid, s) for pid, _n, s in sf.text_assets())
         self.assertEqual(texts[2001], '{"level": 1, "lang": "vi", "title": "9 Kings"}')
 
+    @pytest.mark.needs_fixture("unity/sample_typetree.assets")
     def test_typetree_blob(self):
         sf = u.parse_serialized(read(TYPETREE))
         self.assertTrue(sf.enable_type_tree)
@@ -226,16 +242,19 @@ class TestSerializedParse(unittest.TestCase):
         self.assertEqual([c.name for c in node.children], ["m_Name", "m_Script"])
         self.assertEqual(sf.text_assets()[0][1], "greeting")
 
+    @pytest.mark.needs_fixture("unity/sample_v21.assets")
     def test_v21(self):
         sf = u.parse_serialized(read(V21))
         self.assertEqual(sf.version, 21)
         self.assertEqual(sf.text_assets()[0], (3001, "v21text", "SerializedFile v21 ok"))
 
+    @pytest.mark.needs_fixture("unity/resources.assets")
     def test_truncated_raises(self):
         with self.assertRaises(PB3Error) as cm:
             u.parse_serialized(read(RES)[:50])
         self.assertEqual(cm.exception.code, "E_CORRUPT")
 
+    @pytest.mark.needs_fixture("unity/resources.assets")
     def test_build_serialized_roundtrip(self):
         sf = u.parse_serialized(read(RES))
         rebuilt = u.build_serialized(sf, {})  # {} = giữ nguyên mọi object
@@ -260,6 +279,7 @@ class TestBundleV8(unittest.TestCase):
         self.assertEqual(names[4001], "greeting")
         self.assertEqual(names[4002], "longtext")
 
+    @pytest.mark.needs_fixture("unity/sample_v8.unity3d")
     def test_detect_v8(self):
         info = u.detect_bundle(read(BUNDLE_V8))
         self.assertIsNotNone(info)
@@ -267,12 +287,14 @@ class TestBundleV8(unittest.TestCase):
         self.assertEqual(info["unity_version"], "5.x.x")
         self.assertEqual(info["unity_revision"], "6000.0.23f1")
 
+    @pytest.mark.needs_fixture("unity/sample_v8.unity3d")
     def test_v8_none(self):
         self._check_v8_entries(u.parse_bundle(read(BUNDLE_V8), nat()))
         sf = u.parse_serialized(
             u.parse_bundle(read(BUNDLE_V8), nat()).get_entry(ENTRY1))
         self.assertEqual(sf.text_assets()[0][2], "Xin chao Unity 6!")
 
+    @pytest.mark.needs_fixture("unity/sample_v8_lz4.unity3d")
     def test_v8_lz4_blocks_at_end_padded(self):
         # sample_v8_lz4: LZ4 + blocks-info-at-end (0x80) + padding (0x200)
         bundle = u.parse_bundle(read(BUNDLE_V8_LZ4), nat())
@@ -291,6 +313,7 @@ class TestBundleV8(unittest.TestCase):
         self.assertTrue(u._uses_new_flags("6000.0.23f1"))
         self.assertTrue(u._uses_new_flags("5.x.x"))
 
+    @pytest.mark.needs_fixture("unity/resources.assets")
     def test_revision_gates_encryption_flag_old(self):
         # Bundle 2019 + cờ 0x200 = MÃ HÓA (cờ cũ), không phải padding.
         built = u.build_bundle([(ENTRY1, 0, read(RES))], version=7,
@@ -300,6 +323,7 @@ class TestBundleV8(unittest.TestCase):
             u.parse_bundle(built, nat())
         self.assertEqual(cm.exception.code, "E_ENCRYPTED")
 
+    @pytest.mark.needs_fixture("unity/resources.assets")
     def test_revision_gates_encryption_flag_new(self):
         # Bundle Unity 6 + cờ 0x1400 (0x400 cũ / 0x1000 mới) = MÃ HÓA.
         built = u.build_bundle([(ENTRY1, 0, read(RES))], version=8,
@@ -310,6 +334,7 @@ class TestBundleV8(unittest.TestCase):
             u.parse_bundle(built, nat())
         self.assertEqual(cm.exception.code, "E_ENCRYPTED")
 
+    @pytest.mark.needs_fixture("unity/resources.assets")
     def test_padding_flag_new_revision_parses(self):
         # Bundle Unity 6 + cờ 0x200 = PADDING (cờ mới), không phải mã hóa;
         # vùng block data được căn 16 nên đọc đúng.
@@ -322,6 +347,7 @@ class TestBundleV8(unittest.TestCase):
         self.assertTrue(bundle.uses_padding)
         self.assertEqual(bundle.get_entry(ENTRY1), read(RES))
 
+    @pytest.mark.needs_fixture("unity/resources.assets")
     def test_old_revision_with_padding_bit_is_encrypted(self):
         # Cùng bit 0x200 nhưng revision cũ -> mã hóa (dù writer có căn đệm).
         built = u.build_bundle([(ENTRY1, 0, read(RES))], version=7,
@@ -332,6 +358,7 @@ class TestBundleV8(unittest.TestCase):
             u.parse_bundle(built, nat())
         self.assertEqual(cm.exception.code, "E_ENCRYPTED")
 
+    @pytest.mark.needs_fixture("unity/sample_v23.assets")
     def test_build_roundtrip_v8_preserves_revision(self):
         raw1 = read(V23)
         built = u.build_bundle([(ENTRY1, 0, raw1)], version=8,
@@ -343,6 +370,7 @@ class TestBundleV8(unittest.TestCase):
         self.assertEqual(parsed.unity_revision, "6000.0.23f1")
         self.assertEqual(parsed.get_entry(ENTRY1), raw1)
 
+    @pytest.mark.needs_fixture("unity/sample_v8.unity3d")
     def test_plan_v8_bundle(self):
         plan = u.plan_bytes(read(BUNDLE_V8), name="sample_v8.unity3d",
                             backend=nat())
@@ -352,6 +380,7 @@ class TestBundleV8(unittest.TestCase):
         ta = [r for r in plan.rows if r.object_type == "TextAsset"]
         self.assertEqual({r.path_id for r in ta}, {4001, 4002, 4004})
 
+    @pytest.mark.needs_fixture("unity/nested_v8.ipa")
     def test_plan_nested_v8_ipa(self):
         plan = u.plan_bytes(read(NESTED_V8_IPA), name="nested_v8.ipa",
                             backend=nat())
@@ -363,6 +392,7 @@ class TestBundleV8(unittest.TestCase):
 class TestSerializedV23(unittest.TestCase):
     """SerializedFile v23 + Unity 6 (Claude 05b, decisions #77, #80)."""
 
+    @pytest.mark.needs_fixture("unity/sample_v23.assets")
     def test_v23_parse(self):
         sf = u.parse_serialized(read(V23))
         self.assertEqual(sf.version, 23)
@@ -374,6 +404,7 @@ class TestSerializedV23(unittest.TestCase):
         self.assertEqual(len(texts[4002][1]), 5437)  # chuỗi dài
         self.assertIn(b"DummyBehaviour6", sf.object_bytes(4003))
 
+    @pytest.mark.needs_fixture("unity/sample_v23.assets")
     def test_v23_typetree_blob(self):
         sf = u.parse_serialized(read(V23))
         self.assertEqual(len(sf.types), 2)
@@ -384,6 +415,7 @@ class TestSerializedV23(unittest.TestCase):
         self.assertTrue(sf.types[0].raw_typetree.startswith(b"mhtt"))
         self.assertEqual(sf.types[1].node.type, "MonoBehaviour")
 
+    @pytest.mark.needs_fixture("unity/sample_v23.assets")
     def test_v23_extended_header_is_big_endian(self):
         # Hồi quy #80: cả 48 byte đầu đều big-endian (theo UnityPy);
         # đọc bằng endian của file sẽ đảo byte metadata_size/data_offset.
@@ -395,6 +427,7 @@ class TestSerializedV23(unittest.TestCase):
         self.assertEqual(edoff, sf.data_offset)
         self.assertEqual(unk, 0)
 
+    @pytest.mark.needs_fixture("unity/sample_v23.assets")
     def test_v23_build_roundtrip(self):
         sf = u.parse_serialized(read(V23))
         rebuilt = u.build_serialized(sf, {})  # {} = giữ nguyên mọi object
@@ -407,6 +440,7 @@ class TestSerializedV23(unittest.TestCase):
         self.assertEqual(ems, sf2.metadata_size)
         self.assertEqual(edoff, sf2.data_offset)
 
+    @pytest.mark.needs_fixture("unity/sample_v23.assets")
     def test_v23_empty_typetree(self):
         # Type tree size 0 -> node None, object vẫn đọc được (theo UnityPy).
         sf = u.parse_serialized(read(V23))
@@ -418,6 +452,7 @@ class TestSerializedV23(unittest.TestCase):
         self.assertEqual(sf2.text_assets()[0][2], "Xin chao Unity 6!")
         self.assertEqual(sf2.object_bytes(4003), sf.object_bytes(4003))
 
+    @pytest.mark.needs_fixture("unity/sample_v23.assets")
     def test_v23_patch_inplace(self):
         r = u.apply_patch(u.PatchRequest(
             data=read(V23), kind="assets", path_id=4001,
@@ -428,6 +463,7 @@ class TestSerializedV23(unittest.TestCase):
         self.assertEqual(sf.version, 23)
         self.assertEqual(sf.text_assets()[0][2], "Xin chao Unity 7!")
 
+    @pytest.mark.needs_fixture("unity/sample_v23.assets")
     def test_v23_patch_rebuild_section(self):
         before = u.parse_serialized(read(V23))
         r = u.apply_patch(u.PatchRequest(
@@ -446,6 +482,7 @@ class TestSerializedV23(unittest.TestCase):
                          before.text_assets()[1][2])
         self.assertEqual(sf.object_bytes(4003), before.object_bytes(4003))
 
+    @pytest.mark.needs_fixture("unity/sample_v8.unity3d")
     def test_v23_patch_bundle_keeps_v8(self):
         r = u.apply_patch(u.PatchRequest(
             data=read(BUNDLE_V8), kind="bundle", entry=ENTRY1, path_id=4001,
@@ -529,6 +566,7 @@ class TestBackendModes(unittest.TestCase):
         finally:
             u._reset_probe_cache()
 
+    @pytest.mark.needs_fixture("unity/resources.assets", "unity/sample_lz4.unity3d")
     def test_native_never_needs_library(self):
         b = nat()
         self.assertIn("NATIVE", b.decisions[0])
@@ -557,6 +595,7 @@ class TestBackendModes(unittest.TestCase):
         self.assertTrue(any("UnityPy" in d for d in b.decisions))
         self.assertEqual(b.decompress(b"abc", 3, 0), b"abc")
 
+    @pytest.mark.needs_fixture("unity/resources.assets")
     def test_unitypy_load_guard(self):
         b = nat()
         with self.assertRaises(PB3Error) as cm:
@@ -570,6 +609,7 @@ class TestBackendModes(unittest.TestCase):
 
 
 class TestPlanner(unittest.TestCase):
+    @pytest.mark.needs_fixture("unity/nested.ipa")
     def test_plan_nested_ipa(self):
         plan = u.plan_bytes(read(NESTED_IPA), name="nested.ipa", backend=nat())
         self.assertEqual(plan.verdict.engine, "unity")
@@ -581,10 +621,12 @@ class TestPlanner(unittest.TestCase):
         # TextAsset được gợi ý trước (ưu tiên)
         self.assertEqual(ta[0].guess, "text")
 
+    @pytest.mark.needs_fixture("unity/sample.unity3d")
     def test_plan_bundle(self):
         plan = u.plan_bytes(read(BUNDLE), name="sample.unity3d", backend=nat())
         self.assertEqual(len([r for r in plan.rows if r.kind == "assets"]), 4)
 
+    @pytest.mark.needs_fixture("unity/resources.assets")
     def test_plan_assets_file(self):
         plan = u.plan_bytes(read(RES), name="resources.assets", backend=nat())
         self.assertEqual(plan.verdict.engine, "unity")
@@ -606,6 +648,7 @@ def _req(**kw):
 
 
 class TestPatcher(unittest.TestCase):
+    @pytest.mark.needs_fixture("unity/resources.assets")
     def test_inplace_same_length(self):
         r = u.apply_patch(_req())
         self.assertEqual(r.write_mode_used, "PATCH_INPLACE")
@@ -614,12 +657,14 @@ class TestPatcher(unittest.TestCase):
         sf = u.parse_serialized(r.output_bytes)
         self.assertEqual(sf.text_assets()[0][2], "Xin chao 8 Kings!")
 
+    @pytest.mark.needs_fixture("unity/resources.assets")
     def test_inplace_byte_diff_minimal(self):
         old = read(RES)
         r = u.apply_patch(_req())
         diffs = [i for i, (a, b) in enumerate(zip(old, r.output_bytes)) if a != b]
         self.assertEqual(diffs, [old.index(b"9 Kings")])  # đúng 1 byte đổi
 
+    @pytest.mark.needs_fixture("unity/resources.assets")
     def test_inplace_shorter_nul_padded(self):
         r = u.apply_patch(_req(old_text="Xin chao 9 Kings!", new_text="Hi!"))
         self.assertEqual(r.write_mode_used, "PATCH_INPLACE")
@@ -631,6 +676,7 @@ class TestPatcher(unittest.TestCase):
         self.assertTrue(script.startswith("Hi!"))
         self.assertEqual(len(script), 17)  # giữ nguyên độ dài script
 
+    @pytest.mark.needs_fixture("unity/resources.assets")
     def test_longer_escalates_to_rebuild_section(self):
         r = u.apply_patch(_req(old_text="Xin chao",
                                new_text="Xin chao cac ban choi game"))
@@ -640,12 +686,14 @@ class TestPatcher(unittest.TestCase):
         sf = u.parse_serialized(r.output_bytes)
         self.assertEqual(sf.text_assets()[0][2], "Xin chao cac ban choi game 9 Kings!")
 
+    @pytest.mark.needs_fixture("unity/resources.assets")
     def test_longer_refused_without_escalate(self):
         with self.assertRaises(PB3Error) as cm:
             u.apply_patch(_req(old_text="Xin chao", new_text="Xin chao cac ban",
                                allow_escalate=False))
         self.assertEqual(cm.exception.code, "E_WRITE_DISABLED")
 
+    @pytest.mark.needs_fixture("unity/resources.assets")
     def test_longer_within_same_alignment_escalates(self):
         # #180 (C10): "Xin chao" -> "Xin chào" (+1 byte) nhưng kích thước
         # object đã căn bằng nhau (24 byte) -> leo lên REBUILD_SECTION thay
@@ -657,12 +705,14 @@ class TestPatcher(unittest.TestCase):
         sf = u.parse_serialized(r.output_bytes)
         self.assertEqual(sf.text_assets()[0][2], "Xin chào 9 Kings!")
 
+    @pytest.mark.needs_fixture("unity/resources.assets")
     def test_longer_within_same_alignment_refused_without_escalate(self):
         with self.assertRaises(PB3Error) as cm:
             u.apply_patch(_req(old_text="Xin chao", new_text="Xin chào",
                                allow_escalate=False))
         self.assertEqual(cm.exception.code, "E_WRITE_DISABLED")
 
+    @pytest.mark.needs_fixture("unity/resources.assets")
     def test_shorter_within_same_alignment_nul_padded(self):
         # #180 mirror (C10): -1 byte trong cùng khối căn (longtext 6450 ->
         # 6449, aligned 6456 = 6456) trước đây lỗi E_WRITE_DISABLED; nay đệm
@@ -678,6 +728,7 @@ class TestPatcher(unittest.TestCase):
         self.assertEqual(len(script.encode("utf-8")), 6450)  # giữ nguyên độ dài script
         self.assertTrue(script.startswith("Dòng dài"))
 
+    @pytest.mark.needs_fixture("unity/resources.assets")
     def test_explicit_rebuild_section(self):
         r = u.apply_patch(_req(old_text="9 Kings", new_text="8 Kings",
                                write_mode="REBUILD_SECTION"))
@@ -686,27 +737,32 @@ class TestPatcher(unittest.TestCase):
         self.assertEqual(u.parse_serialized(r.output_bytes).text_assets()[0][2],
                          "Xin chao 8 Kings!")
 
+    @pytest.mark.needs_fixture("unity/resources.assets")
     def test_rebuild_all_refused_m2(self):
         with self.assertRaises(PB3Error) as cm:
             u.apply_patch(_req(write_mode="REBUILD_ALL", confirm=True))
         self.assertEqual(cm.exception.code, "E_WRITE_DISABLED")
         self.assertIn("M4", cm.exception.detail)
 
+    @pytest.mark.needs_fixture("unity/resources.assets")
     def test_old_text_not_found(self):
         with self.assertRaises(PB3Error) as cm:
             u.apply_patch(_req(old_text="khong co chu nay"))
         self.assertEqual(cm.exception.code, "E_CONFIG_INVALID")
 
+    @pytest.mark.needs_fixture("unity/resources.assets")
     def test_path_id_not_found(self):
         with self.assertRaises(PB3Error) as cm:
             u.apply_patch(_req(path_id=9999))
         self.assertEqual(cm.exception.code, "E_INPUT_NOT_FOUND")
 
+    @pytest.mark.needs_fixture("unity/resources.assets")
     def test_non_textasset_refused(self):
         with self.assertRaises(PB3Error) as cm:
             u.apply_patch(_req(path_id=1003, old_text="x", new_text="y"))
         self.assertEqual(cm.exception.code, "E_INPUT_NOT_FOUND")
 
+    @pytest.mark.needs_fixture("unity/resources.assets")
     def test_unrelated_objects_keep_hash(self):
         before = u.parse_serialized(read(RES))
         for kw in ({}, {"write_mode": "REBUILD_SECTION"},
@@ -716,6 +772,7 @@ class TestPatcher(unittest.TestCase):
             self.assertEqual(h(before.object_bytes(1002)), h(after.object_bytes(1002)))
             self.assertEqual(h(before.object_bytes(1003)), h(after.object_bytes(1003)))
 
+    @pytest.mark.needs_fixture("unity/resources.assets")
     def test_verify_failure_keeps_candidate_and_raises(self):
         with tempfile.TemporaryDirectory() as td:
             with mock.patch.object(u, "_verify_assets",
@@ -729,6 +786,7 @@ class TestPatcher(unittest.TestCase):
             sf = u.parse_serialized(kept[0].read_bytes())
             self.assertEqual(sf.text_assets()[0][2], "Xin chao 8 Kings!")
 
+    @pytest.mark.needs_fixture("unity/sample_lz4.unity3d")
     def test_patch_bundle_lz4_roundtrip(self):
         bundle = read(BUNDLE_LZ4)
         r = u.apply_patch(u.PatchRequest(
@@ -749,6 +807,7 @@ class TestPatcher(unittest.TestCase):
         sf2 = u.parse_serialized(u.parse_bundle(r2.output_bytes, nat()).get_entry(ENTRY1))
         self.assertEqual(sf2.text_assets()[0][2], "Xin chao 8 Kings!")
 
+    @pytest.mark.needs_fixture("unity/sample.unity3d")
     def test_patch_bundle_entry_missing(self):
         with self.assertRaises(PB3Error) as cm:
             u.apply_patch(u.PatchRequest(
@@ -756,6 +815,7 @@ class TestPatcher(unittest.TestCase):
                 path_id=1001, old_text="9 Kings", new_text="8 Kings"))
         self.assertEqual(cm.exception.code, "E_INPUT_NOT_FOUND")
 
+    @pytest.mark.needs_fixture("unity/sample.unity3d")
     def test_patch_bundle_inplace_preserves_other_entry(self):
         bundle = read(BUNDLE)
         before = u.parse_bundle(bundle, nat())
@@ -848,6 +908,7 @@ class TestUnityCli(TmpCase):
     def _fixture(self, name):
         return str(self._shared_proj / "tests" / "fixtures" / "unity" / name)
 
+    @pytest.mark.needs_fixture("unity/sample.unity3d")
     def test_inspect_bundle(self):
         r = self.run_menu(["unity", "inspect", self._fixture("sample.unity3d")])
         self.assertEqual(r.returncode, 0, r.stderr)
@@ -857,6 +918,7 @@ class TestUnityCli(TmpCase):
         self.assertIn("TextAsset", out)
         self.assertIn("greeting", out)
 
+    @pytest.mark.needs_fixture("unity/nested.ipa")
     def test_inspect_nested_ipa(self):
         r = self.run_menu(["unity", "inspect", self._fixture("nested.ipa")])
         self.assertEqual(r.returncode, 0, r.stderr)
@@ -864,6 +926,7 @@ class TestUnityCli(TmpCase):
         self.assertIn("level.unity3d", out)
         self.assertIn("TextAsset", out)
 
+    @pytest.mark.needs_fixture("unity/sample_v8.unity3d")
     def test_inspect_v8_bundle(self):
         # UnityFS v8 + Unity 6 (05b): inspect ra plan, không còn E_UNSUPPORTED_FORMAT
         r = self.run_menu(["unity", "inspect", self._fixture("sample_v8.unity3d")])
@@ -874,6 +937,7 @@ class TestUnityCli(TmpCase):
         self.assertIn("TextAsset", out)
         self.assertIn("greeting", out)
 
+    @pytest.mark.needs_fixture("unity/nested_v8.ipa")
     def test_inspect_v8_ipa(self):
         r = self.run_menu(["unity", "inspect", self._fixture("nested_v8.ipa")])
         self.assertEqual(r.returncode, 0, r.stderr)
@@ -881,6 +945,7 @@ class TestUnityCli(TmpCase):
         self.assertIn("level.unity3d", out)
         self.assertIn("TextAsset", out)
 
+    @pytest.mark.needs_fixture("unity/sample_v8.unity3d")
     def test_patch_v8_bundle(self):
         src = self._fixture("sample_v8.unity3d")
         r = self.run_menu(["unity", "patch", src, ENTRY1, "--object", "4001",
@@ -909,12 +974,14 @@ class TestUnityCli(TmpCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("CHƯA ĐỦ BẰNG CHỨNG", r.stdout.decode("utf-8"))
 
+    @pytest.mark.needs_fixture("unity/resources.assets")
     def test_read_text_asset(self):
         r = self.run_menu(["unity", "read", self._fixture("resources.assets"),
                            "--object", "1001"])
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("Xin chao 9 Kings!", r.stdout.decode("utf-8"))
 
+    @pytest.mark.needs_fixture("unity/sample.unity3d")
     def test_read_bundle_entry_out(self):
         dest = self.tmp / "level.unity3d"
         r = self.run_menu(["unity", "read", self._fixture("sample.unity3d"),
@@ -923,6 +990,7 @@ class TestUnityCli(TmpCase):
         sf = u.parse_serialized(dest.read_bytes())
         self.assertEqual(sf.text_assets()[0][2], "Xin chao 9 Kings!")
 
+    @pytest.mark.needs_fixture("unity/resources.assets")
     def test_patch_dry_run_then_write(self):
         src = self._fixture("resources.assets")
         out_dir = self._shared_proj / "workspace" / "output"
@@ -943,6 +1011,7 @@ class TestUnityCli(TmpCase):
         self.assertEqual(sf.text_assets()[0][2], "Xin chao 8 Kings!")
         self.assertEqual(read(RES), Path(src).read_bytes())  # nguồn không đổi
 
+    @pytest.mark.needs_fixture("unity/nested.ipa")
     def test_patch_ipa_writes_bundle_only(self):
         r = self.run_menu(["unity", "patch", self._fixture("nested.ipa"),
                            "Payload/Game.app/Data/level.unity3d::" + ENTRY1,
@@ -957,6 +1026,7 @@ class TestUnityCli(TmpCase):
         sf = u.parse_serialized(bundle.get_entry(ENTRY1))
         self.assertEqual(sf.text_assets()[0][2], "Xin chao 8 Kings!")
 
+    @pytest.mark.needs_fixture("unity/sample.unity3d")
     def test_mod_dry_run_and_write(self):
         src = self._fixture("sample.unity3d")
         # mod <file> --file <entry trong bundle> --object <id> ...

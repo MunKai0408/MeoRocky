@@ -4,6 +4,7 @@ của ZipVFS/NestedVFS phải khớp quy ước ở sdk/vfs.py (decisions #61).
 So sánh trực tiếp với MemoryVFS cùng nội dung: slice/read cho kết quả giống
 nhau; khác biệt duy nhất được phép là CRC (đọc toàn bộ ZIP kiểm CRC).
 """
+from tests.helpers import pytest  # noqa: F401 - marker needs_fixture (stub trên iSH)
 import io
 import unittest
 import zipfile
@@ -108,6 +109,7 @@ class TestNestedVfsContract(unittest.TestCase):
             self.assertTrue(nv.exists(path))
             self.assertFalse(nv.exists("inner1.zip::nope.txt"))
 
+    @pytest.mark.needs_fixture("zip/sample.ipa")
     def test_nested_open_vfs_bytes(self):
         with open_vfs(FIXTURE_IPA.read_bytes(), source_name="game.ipa") as vfs:
             self.assertEqual(vfs.kind, "zip")

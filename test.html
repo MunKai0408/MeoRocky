@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PB3 — Chạy test trong trình duyệt</title>
+<style>
+  body { font-family: system-ui, -apple-system, sans-serif; margin: 0 auto; max-width: 720px; padding: 16px; line-height: 1.5; }
+  h1 { font-size: 20px; }
+  .note { background: #fff8e1; border: 1px solid #ffe082; border-radius: 8px; padding: 10px 12px; margin: 12px 0; }
+  .note.warn { background: #fce4ec; border-color: #ef9a9a; }
+  button { padding: 10px 16px; font-size: 16px; margin: 4px 4px 4px 0; }
+  select { padding: 8px; font-size: 16px; }
+  #log { background: #111; color: #ddd; border-radius: 8px; padding: 12px; white-space: pre-wrap; word-break: break-word; min-height: 200px; max-height: 60vh; overflow-y: auto; font-family: ui-monospace, monospace; font-size: 13px; }
+  #status { font-weight: bold; margin: 8px 0; }
+  #summary { margin: 8px 0; }
+</style>
+</head>
+<body>
+<h1>PB3 — Chạy test trong trình duyệt</h1>
+
+<div class="note">
+  <b>Công cụ debug thủ công, KHÔNG phải gate CI.</b>
+  Trang này chạy pytest qua Pyodide ngay trong trình duyệt để kiểm tra nhanh
+  sau một lần sửa. Full suite (1562 test) chỉ chạy ở GitHub Actions
+  (xem <code>.github/workflows/test.yml</code>); ở đây chỉ chạy tier
+  <b>smoke</b> (mặc định, vài chục test then chốt) hoặc <b>fast</b>.
+</div>
+<div class="note">
+  Lần chạy đầu cần mạng: tải Pyodide đã vendor cùng origin (~10MB) rồi
+  micropip cài pytest từ PyPI. Test cần 1 trong 20 fixture nhị phân chưa
+  lên main sẽ <b>SKIP</b> kèm lý do (marker <code>needs_fixture</code>) —
+  đó là hành vi đúng, không phải lỗi. UnityPy không chạy trên web nên test
+  nào cần UnityPy sẽ skip/fail theo đúng cơ chế của nó, không tính vào
+  kết quả ở đây. Một test về pid (<code>test_detects_interrupted_previous_run</code>)
+  được bỏ qua vì trình duyệt (wasm) không có bảng process để kiểm tra pid —
+  test này vẫn chạy thật ở CI trên Linux.
+</div>
+
+<p>
+  <label>Tầng:
+    <select id="tier">
+      <option value="smoke" selected>smoke (mặc định)</option>
+      <option value="fast">fast</option>
+    </select>
+  </label>
+  <button id="run">Chạy test</button>
+  <button id="copy" disabled>Sao chép kết quả</button>
+</p>
+<p id="status">Chưa chạy.</p>
+<p id="summary"></p>
+<pre id="log"></pre>
+
+<script type="module">
+// test.html — chạy pytest qua Pyodide đã vendor (cùng origin, KHÔNG CDN).
+// Giống worker.js: import loadPyodide từ ./pyodide/pyodide.mjs, worker ở đây
+// chạy ngay trên main thread vì pytest chạy đồng bộ và trang này chỉ là
+// công cụ debug (không xử lý file game nên không cần Worker).
+import { loadPyodide } from "./pyodide/pyodide.mjs";
+
+const PB3_ROOT = "/pb3web";
+const logEl = document.getElementById("log");
+const statusEl = document.getElementById("status");
+const summaryEl = document.getElementById("summary");
+const runBtn = document.getElementById("run");
+const copyBtn = document.getElementById("copy");
+let pyodide = null;
+let booted = false;
+
+function log(s) { logEl.textContent += s; logEl.scrollTop = logEl.scrollHeight; }
+function status(s) { statusEl.textContent = s; }
+
+async function fetchIntoFs(pyodide, rel) {
+  const res = await fetch(rel);
+  if (!res.ok) throw new Error("Không tải được " + rel + " (HTTP " + res.status + ")");
+  const buf = new Uint8Array(await res.arrayBuffer());
+  const target = PB3_ROOT + "/" + rel.slice(4); // bỏ tiền tố "pb3/"
+  pyodide.FS.mkdirTree(target.slice(0, target.lastIndexOf("/")));
+  pyodide.FS.writeFile(target, buf);
+}
+
+async function boot() {
+  status("Đang tải Pyodide…");
+  pyodide = await loadPyodide({ indexURL: new URL("pyodide/", location.href).href });
+  status("Đang tải binding lz4…");
+  try { await pyodide.loadPackage("lz4"); }
+  catch (e) { log("Không tải được binding lz4, test cần lz4 sẽ dùng lz4pure/skip.\n"); }
+  status("Đang cài pytest (micropip, cần mạng)…");
+  await pyodide.loadPackage("micropip");
+  const micropip = pyodide.pyimport("micropip");
+  await micropip.install("pytest");
+  status("Đang tải mã PB3 + file test…");
+  for (const manFile of ["pb3/files.json", "pb3/tests.json"]) {
+    const man = await (await fetch(manFile)).json();
+    let done = 0;
+    const BATCH = 8;
+    for (let i = 0; i < man.files.length; i += BATCH) {
+      await Promise.all(man.files.slice(i, i + BATCH).map((rel) => fetchIntoFs(pyodide, rel)));
+      done += Math.min(BATCH, man.files.length - i);
+      status("Đang tải mã PB3 + file test… " + done + "/" + man.files.length + " (" + manFile + ")");
+    }
+  }
+  // Font đi kèm: base64 -> bytes (giống worker.js và bước khôi phục font ở CI).
+  const b64 = await (await fetch("fonts/BeVietnamPro-Regular.ttf.b64")).text();
+  const bin = atob(b64.replace(/\s+/g, ""));
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  pyodide.FS.mkdirTree(PB3_ROOT + "/fonts");
+  pyodide.FS.writeFile(PB3_ROOT + "/fonts/BeVietnamPro-Regular.ttf", bytes);
+  pyodide.runPython("import sys, os; sys.path.insert(0, '/pb3web'); os.chdir('/pb3web')");
+  booted = true;
+}
+
+runBtn.addEventListener("click", async () => {
+  runBtn.disabled = true;
+  copyBtn.disabled = true;
+  logEl.textContent = "";
+  summaryEl.textContent = "";
+  try {
+    if (!booted) await boot();
+    const tier = document.getElementById("tier").value;
+    status("Đang chạy pytest --tier " + tier + " … (đừng đóng trang)");
+    pyodide.setStdout({ batched: (s) => log(s + "\n") });
+    pyodide.setStderr({ batched: (s) => log(s + "\n") });
+    const code = pyodide.runPython(
+      "import pytest\n" +
+      // Bỏ qua 1 test về pid: wasm không có bảng process (xem
+      // .github/scripts/pyodide_smoke.mjs) — test này vẫn chạy ở CI Linux.
+      "pytest.main(['-q', '-rs', '--tier', '" + tier + "', '-p', 'no:cacheprovider',\n" +
+      "             '--deselect', 'tests/test_app_menu_cli.py::TestBootstrap::test_detects_interrupted_previous_run', 'tests'])\n");
+    summaryEl.textContent = "pytest exit code: " + code + (code === 0 ? " — XANH." : " — CÓ LỖI (xem log).");
+    status(code === 0 ? "Xong: xanh." : "Xong: có lỗi.");
+    copyBtn.disabled = false;
+  } catch (e) {
+    status("Lỗi: " + (e && e.message ? e.message : e));
+    log("\n[LỖI] " + (e && e.stack ? e.stack : e) + "\n");
+    copyBtn.disabled = false;
+  } finally {
+    runBtn.disabled = false;
+  }
+});
+
+copyBtn.addEventListener("click", async () => {
+  await navigator.clipboard.writeText(logEl.textContent);
+  status("Đã sao chép kết quả.");
+});
+</script>
+</body>
+</html>

@@ -11,6 +11,7 @@ from sdk.api import PluginContext
 from sdk.types import Candidate, LocTable, SourceRef
 from sdk.vfs import MemoryVFS
 from tests.helpers import TmpCase
+from tests.helpers import pytest  # noqa: F401 - marker needs_fixture (stub trên iSH)
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FIX = os.path.join(ROOT, "tests", "fixtures", "sqlite_loc")
@@ -53,6 +54,7 @@ def _db_bytes(tmp, stmts):
 
 
 class TestSqliteParse(TmpCase):
+    @pytest.mark.needs_fixture("sqlite_loc/a.sqlite")
     def test_fixture_localization_table_and_skipped_table(self):
         t = _parse(_read("a.sqlite"), self.tmp)
         got = [(e.key, e.locale, e.value) for e in t.entries]
@@ -123,12 +125,14 @@ class TestSqliteParse(TmpCase):
             _parse(b"khong phai sqlite", self.tmp)
         self.assertEqual(cm.exception.code, "E_CORRUPT")
 
+    @pytest.mark.needs_fixture("sqlite_loc/a.sqlite")
     def test_corrupt_truncated(self):
         data = _read("a.sqlite")[:100]  # còn magic, mất phần lớn nội dung
         with self.assertRaises(PB3Error) as cm:
             _parse(data, self.tmp)
         self.assertEqual(cm.exception.code, "E_CORRUPT")
 
+    @pytest.mark.needs_fixture("sqlite_loc/a.sqlite")
     def test_corrupt_bad_magic(self):
         data = bytearray(_read("a.sqlite"))
         data[0] = ord("X")
@@ -136,6 +140,7 @@ class TestSqliteParse(TmpCase):
             _parse(bytes(data), self.tmp)
         self.assertEqual(cm.exception.code, "E_CORRUPT")
 
+    @pytest.mark.needs_fixture("sqlite_loc/a.sqlite")
     def test_parse_bytes_direct(self):
         # _parse_bytes dùng trực tiếp (không qua guard) vẫn parse được.
         plug = _plug()
@@ -144,6 +149,7 @@ class TestSqliteParse(TmpCase):
 
 
 class TestSqliteReadOnly(TmpCase):
+    @pytest.mark.needs_fixture("sqlite_loc/a.sqlite")
     def test_build_raises_write_disabled(self):
         plug = _plug()
         ctx = _ctx({}, self.tmp).for_plugin(plug.manifest)
@@ -151,6 +157,7 @@ class TestSqliteReadOnly(TmpCase):
             plug.build(ctx, LocTable([], None, "sqlite_loc"), _read("a.sqlite"))
         self.assertEqual(cm.exception.code, "E_WRITE_DISABLED")
 
+    @pytest.mark.needs_fixture("sqlite_loc/a.sqlite")
     def test_verify_raises_write_disabled(self):
         plug = _plug()
         ctx = _ctx({}, self.tmp).for_plugin(plug.manifest)
@@ -164,6 +171,7 @@ class TestSqliteReadOnly(TmpCase):
         res = plug.selftest(ctx)
         self.assertTrue(res["ok"], res)
 
+    @pytest.mark.needs_fixture("sqlite_loc/a.sqlite")
     def test_parse_does_not_modify_db(self):
         data = _read("a.sqlite")
         t = _parse(data, self.tmp)
@@ -175,6 +183,7 @@ class TestSqliteReadOnly(TmpCase):
 
 
 class TestSqliteConformance(TmpCase):
+    @pytest.mark.needs_fixture("sqlite_loc/a.sqlite")
     def test_conformance_with_fixture(self):
         files = {"a.sqlite": _read("a.sqlite")}
         rep = run_conformance(SqliteLocPlugin, files=files)
@@ -185,6 +194,7 @@ class TestSqliteConformance(TmpCase):
         self.assertEqual(rep.get("write").status, "SKIP")
         self.assertEqual(rep.get("selftest").status, "PASS")
 
+    @pytest.mark.needs_fixture("sqlite_loc/a.sqlite")
     def test_detect_and_candidates(self):
         plug = _plug()
         ctx = _ctx({"a.sqlite": _read("a.sqlite"), "b.txt": b"hello"},
@@ -195,6 +205,7 @@ class TestSqliteConformance(TmpCase):
         ev = plug.detect(ctx)
         self.assertTrue(any(e.kind == "extension" for e in ev))
 
+    @pytest.mark.needs_fixture("sqlite_loc/a.sqlite")
     def test_probe_counts_entries(self):
         plug = _plug()
         ctx = _ctx({"a.sqlite": _read("a.sqlite")}, self.tmp).for_plugin(plug.manifest)

@@ -21,6 +21,7 @@ from pathlib import Path
 from core.app import bootstrap
 from core.errors import PB3Error
 from tests.helpers import ROOT, TmpCase
+from tests.helpers import pytest  # noqa: F401 - marker needs_fixture (stub trên iSH)
 
 FIX_ZIP = ROOT / "tests" / "fixtures" / "zip" / "sample.ipa"
 FIX_UNITY = ROOT / "tests" / "fixtures" / "unity" / "sample.unity3d"
@@ -41,6 +42,7 @@ def _scripted(answers):
 
 
 class TestF6Inventory(TmpCase):
+    @pytest.mark.needs_fixture("zip/sample.ipa")
     def test_inventory_zip_thật(self):
         from services.diagnostics_tool import inventory_of
         inv = inventory_of(str(FIX_ZIP))
@@ -175,6 +177,7 @@ class TestF6Cli(TmpCase):
         ns = p.parse_args(["diagnose", "hex", "x.zip", "--offset", "8", "--length", "16"])
         self.assertEqual((ns.offset, ns.length), (8, 16))
 
+    @pytest.mark.needs_fixture("zip/sample.ipa")
     def test_cli_inventory_zip_thật(self):
         rc, out = self._run(["diagnose", "inventory", str(FIX_ZIP)])
         self.assertEqual(rc, 0)
@@ -182,6 +185,7 @@ class TestF6Cli(TmpCase):
         self.assertIn("300", out)
         self.assertIn("deflated", out)
 
+    @pytest.mark.needs_fixture("zip/sample.ipa")
     def test_cli_mặc_định_là_inventory(self):
         rc, out = self._run(["diagnose", str(FIX_ZIP)])
         self.assertEqual(rc, 0)
@@ -225,6 +229,7 @@ class TestF6Cli(TmpCase):
         self.assertEqual(cm.exception.code, "E_CONFIG_INVALID")
 
 
+@pytest.mark.needs_fixture("zip/sample.ipa")
 class TestF5PickerWiring(TmpCase):
     def setUp(self):
         super().setUp()
@@ -304,6 +309,7 @@ class TestF2SdkAdapter(TmpCase):
             self.assertEqual((a.code, a.detail, a.hint, a.message_vi),
                              (b.code, b.detail, b.hint, b.message_vi))
 
+    @pytest.mark.needs_fixture("unity/sample.unity3d", "zip/sample.ipa")
     def test_resolve_vpath_lỗi_giống_hệt_unity_tool(self):
         from sdk import batch as batch_sdk
         from sdk import unity as unity_sdk
@@ -346,6 +352,7 @@ class TestF2SdkAdapter(TmpCase):
             self.assertEqual(batch_sdk._sdk_default_output_rel(*args),
                              ut._default_output_rel(*args))
 
+    @pytest.mark.needs_fixture("unity/sample.unity3d")
     def test_180_vẫn_xanh_qua_adapter_sdk_mới(self):
         """#180 (C10): 'Xin chao' -> 'Xin chào' (17->18 byte, cùng khối căn)
         qua batch mod thật (adapter sdk mới) phải ok và file đã patch đọc

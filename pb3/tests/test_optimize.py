@@ -27,6 +27,7 @@ from core.errors import PB3Error
 from sdk import lz4pure, unity as u
 from services import unity_tool as ut
 from tests.helpers import ROOT, TmpCase
+from tests.helpers import pytest  # noqa: F401 - marker needs_fixture (stub trên iSH)
 from tests.tiering import slow, timeout_scale
 
 FX = ROOT / "tests" / "fixtures" / "unity"
@@ -267,6 +268,7 @@ class TestTextAssetHead(unittest.TestCase):
 class TestObjectIndex(unittest.TestCase):
     """get_object dùng chỉ mục: cùng kết quả quét tuyến tính, O(1)."""
 
+    @pytest.mark.needs_fixture("unity/sample_v21.assets")
     def test_get_object_matches_linear_scan(self):
         for path in (FX / "sample_v21.assets", FX / "sample_v23.assets",
                      FX / "resources.assets"):
@@ -280,6 +282,7 @@ class TestObjectIndex(unittest.TestCase):
             # gọi lại: chỉ mục đã dựng, kết quả ổn định
             self.assertIs(sf.get_object(sf.objects[0].path_id), sf.objects[0])
 
+    @pytest.mark.needs_fixture("unity/resources.assets")
     def test_object_bytes_uses_index(self):
         sf = u.parse_serialized(Path(RES).read_bytes())
         seen = False
@@ -394,6 +397,7 @@ class TestObjectTable(unittest.TestCase):
             self.assertEqual(len(texts[1002][1]), 100)
 
 
+@pytest.mark.needs_fixture("unity/sample_v8_lz4.unity3d")
 class TestAutoFastPath(unittest.TestCase):
     """AUTO dùng đường C (lz4 binding / lzma) khi lập plan, không dùng lz4pure."""
 
@@ -539,6 +543,7 @@ class TestPlanCache(TmpCase):
         self.assertNotEqual(a, b)
         self.assertGreater(len(zlib.compress(a)), len(a) * 0.9)
 
+    @pytest.mark.needs_fixture("unity/sample_v8_lz4.unity3d")
     def test_small_file_not_cached(self):
         data = Path(BUNDLE_LZ4).read_bytes()
         self.assertLess(len(data), ut.PLAN_CACHE_MIN_BYTES)

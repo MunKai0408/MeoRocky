@@ -81,6 +81,38 @@ _ZIP_METHOD_NAMES = {
 _ZIP_METHOD_CODES = {v: k for k, v in _ZIP_METHOD_NAMES.items()}
 
 
+def fix_zip_entry_name(info: zipfile.ZipInfo) -> str:
+    """Sửa tên entry ZIP bị mojibake do cờ UTF-8 (bit 11) không được đặt.
+
+    Trường hợp thật (Safari iPhone, 2026-11-16): "Nén" trong Files iOS ghi
+    tên entry bằng byte UTF-8 (vd tên bắt đầu bằng U+200E LEFT-TO-RIGHT
+    MARK: byte E2 80 8E) nhưng KHÔNG đặt cờ UTF-8 bit 11. `zipfile` chuẩn
+    khi đó giải mã tên theo cp437, biến E2 80 8E thành chuỗi "ΓÇÄ" hiển thị
+    sai ("ΓÇÄ 9 Kings_v1.0.5-AppAssassin.ipa"). Sửa bằng cách mã hóa ngược
+    tên đã giải sai thành byte cp437 rồi giải lại thành UTF-8.
+
+    Chỉ áp dụng khi cờ UTF-8 chưa đặt VÀ byte giải lại thành UTF-8 hợp lệ
+    (strict) VÀ không chứa ký tự điều khiển. Tên ASCII, tên đã có cờ UTF-8,
+    và tên cp437 thật mà byte không phải UTF-8 hợp lệ thì giữ nguyên.
+    """
+    name = info.filename
+    if info.flag_bits & 0x800:
+        return name
+    try:
+        raw = name.encode("cp437")
+    except UnicodeEncodeError:
+        return name
+    try:
+        fixed = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return name
+    if fixed == name:
+        return name
+    if any(ord(c) < 0x20 and c not in "\t" for c in fixed):
+        return name
+    return fixed
+
+
 def support_matrix() -> List[Dict[str, str]]:
     """Bảng định dạng: format | đọc | ghi | backend (để in ra / ghi hồ sơ)."""
     return [
@@ -331,7 +363,10 @@ class ZipVFS(VFS):
         inv = ContainerInventory(kind=KIND_ZIP, source_name=self.source_name)
         seen = set()
         for order, info in enumerate(infos):
-            name = info.filename
+            # Tên hiển thị/đọc: sửa mojibake UTF-8-không-cờ (vd ZIP do "Nén"
+            # trong Files iOS tạo) — xem fix_zip_entry_name. ZipInfo gốc vẫn
+            # giữ để đọc dữ liệu (open theo object, không theo tên).
+            name = fix_zip_entry_name(info)
             entry = EntryInfo(
                 name=name, size=info.file_size, compress_size=info.compress_size,
                 compress_type=_ZIP_METHOD_NAMES.get(info.compress_type, "method-%d" % info.compress_type),
@@ -1247,7 +1282,10 @@ class ZipRebuildReport:
 
 
 def _zip_info_copy(info: zipfile.ZipInfo, compress_type: int, replaced: bool = False) -> zipfile.ZipInfo:
-    out = zipfile.ZipInfo(info.filename, info.date_time)
+    # Ghi lại bằng tên ĐÃ sửa mojibake (fix_zip_entry_name): nếu giữ tên
+    # mojibake, zipfile sẽ mã hóa nó thành UTF-8 và "đóng đinh" lỗi sai vào
+    # file đích. Tên ASCII/tên đã có cờ UTF-8 thì fix trả về y nguyên.
+    out = zipfile.ZipInfo(fix_zip_entry_name(info), info.date_time)
     out.compress_type = compress_type
     out.external_attr = info.external_attr
     out.internal_attr = info.internal_attr
@@ -1321,31 +1359,37 @@ def rebuild_zip(source: Union[str, os.PathLike, bytes, bytearray],
     except (zipfile.BadZipFile, zipfile.LargeZipFile) as exc:
         zf.close()
         raise error_from_exception(exc, where=src_name)
-    names = [i.filename for i in infos]
+    # Mọi so sánh tên ở dưới dùng tên ĐÃ sửa mojibake: khóa trong `repl` /
+    # `overrides` do phía gọi đưa vào đều là đường dẫn VFS (tên đã sửa),
+    # còn info.filename gốc có thể vẫn là chuỗi mojibake. Đọc dữ liệu vẫn
+    # dùng object ZipInfo gốc nên không ảnh hưởng.
+    names = [fix_zip_entry_name(i) for i in infos]
     for name in overrides:
         if name not in names and name not in repl:
             zf.close()
             raise PB3Error("E_INPUT_NOT_FOUND", "method_overrides cho entry không có", where=name)
     for info in infos:
-        if info.flag_bits & 0x1 and info.filename not in repl:
+        if info.flag_bits & 0x1 and fix_zip_entry_name(info) not in repl:
             zf.close()
             raise PB3Error("E_ENCRYPTED", "không ghi lại entry mã hóa khi không thay thế",
-                           where=info.filename)
+                           where=fix_zip_entry_name(info))
     expected: List[Tuple[str, int, int]] = []        # (tên, crc, size) để verify
     report = ZipRebuildReport(source_name=src_name, dest_name=str(dest), write_mode=write_mode)
     for info in infos:
-        if _unsafe_name_reason(info.filename.rstrip("/")) is not None and not info.filename.endswith("/"):
-            report.warnings.append("giữ nguyên entry tên không an toàn: %s" % info.filename)
+        _fixed = fix_zip_entry_name(info)
+        if _unsafe_name_reason(_fixed.rstrip("/")) is not None and not _fixed.endswith("/"):
+            report.warnings.append("giữ nguyên entry tên không an toàn: %s" % _fixed)
     # Kích thước đích dự kiến = nguồn - cỡ cũ của entry được thay (lần đầu)
     # + cỡ mới + cỡ entry thêm mới (trước đây cộng gộp sai: nguồn + mọi replacement).
     src_size = (os.path.getsize(str(src_path)) if src_path is not None else len(src_bytes or b""))
-    _src_names = [i.filename for i in infos]
+    _src_names = [fix_zip_entry_name(i) for i in infos]
     expected_size = src_size
     _seen_repl: set = set()
     for info in infos:
-        if info.filename in repl and info.filename not in _seen_repl:
-            _seen_repl.add(info.filename)
-            expected_size += len(repl[info.filename]) - info.file_size
+        _fixed = fix_zip_entry_name(info)
+        if _fixed in repl and _fixed not in _seen_repl:
+            _seen_repl.add(_fixed)
+            expected_size += len(repl[_fixed]) - info.file_size
     for name, data in repl.items():
         if name not in _src_names:
             expected_size += len(data)
@@ -1388,7 +1432,7 @@ def rebuild_zip(source: Union[str, os.PathLike, bytes, bytearray],
                 zout.comment = zf.comment   # giữ archive comment gốc
                 replaced_once: set = set()
                 for info in infos:
-                    name = info.filename
+                    name = fix_zip_entry_name(info)
                     new_method = overrides.get(name, info.compress_type)
                     if new_method != info.compress_type:
                         report.method_changes.append(
@@ -1405,7 +1449,7 @@ def rebuild_zip(source: Union[str, os.PathLike, bytes, bytearray],
                             out.write(data)
                         expected.append((name, binascii.crc32(data) & 0xFFFFFFFF, len(data)))
                         report.replaced.append(name)
-                    elif info.filename.endswith("/"):
+                    elif name.endswith("/"):
                         zout.writestr(zinfo, b"")
                         expected.append((name, 0, 0))
                         report.copied += 1

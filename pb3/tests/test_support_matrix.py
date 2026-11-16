@@ -5,8 +5,10 @@ dự án (tests.helpers.copy_project) để không đụng cây thật.
 """
 import argparse
 import contextlib
+import datetime
 import io
 import json
+import os
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -33,9 +35,21 @@ def run_cmd(app, ns):
 
 
 class MatrixCase(TmpCase):
+    # Ngày test cố định 2026-11-15 (UTC): sdk/support_matrix.py::_corpus_date
+    # lấy ngày từ mtime của tests/corpus/<id>.json, mà git checkout đặt lại
+    # mtime thành ngày checkout nên test lệch ngày trên máy mới/CI. Test tự
+    # đặt mtime file corpus trong bản sao (không sửa cây thật, không nới
+    # assertion, không đổi expected) — timezone không phải nguyên nhân vì
+    # _corpus_date đã đổi sang UTC.
+    CORPUS_MTIME = datetime.datetime(2026, 11, 15, 12, 0, 0,
+                                     tzinfo=datetime.timezone.utc).timestamp()
+
     def setUp(self):
         super().setUp()
         self.proj = copy_project(self.tmp)
+        corpus = self.proj / "tests" / "corpus" / "json_text.json"
+        if corpus.is_file():
+            os.utime(corpus, (self.CORPUS_MTIME, self.CORPUS_MTIME))
 
     def matrix_inputs(self, proj=None):
         """(rows, manifests) cho sm.generate từ Registry đã dựng (tầng test

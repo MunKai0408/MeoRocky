@@ -13,8 +13,20 @@ const state = {
   booted: false,
   bootInfo: null,
   donor: null,
-  file: null,            // {name, size, data: ArrayBuffer}
-  batchFiles: [],        // [{name, size, data}] cho tab Batch (nhiều file)
+  file: null,            // {name, size, lastModified, data: ArrayBuffer}
+  batchFiles: [],        // [{name, size, lastModified, data}] cho tab Batch (nhiều file)
+  // HOTFIX clone (Safari DataCloneError): file chỉ được gửi sang worker 1 lần.
+  // Sau lần transfer đầu, ArrayBuffer trong transfer list bị detached
+  // (byteLength = 0); gửi lại cùng buffer thì Safari ném "The object can
+  // not be cloned" ở MỌI thao tác sau thao tác đầu tiên. Vì vậy:
+  //  - fileSentFor/batchSentFor ghi lại file nào đã gửi (tên + size +
+  //    lastModified); thao tác sau không kèm file nữa — worker đã giữ file
+  //    trong FS /tmp/input từ lần gửi đầu, FS sống suốt phiên trang.
+  //  - Khi gửi, luôn gửi f.data.slice(0) (bản copy) để buffer gốc không
+  //    bao giờ bị detached, dù có phải gửi lại.
+  //  - Reset cờ khi chọn file mới và khi một runOp lỗi (để thử lại gửi lại).
+  fileSentFor: null,     // "tên|size|lastModified" của file đơn đã gửi
+  batchSentFor: null,    // key tương tự cho lô batch
   lastCheckpoint: null,  // chuỗi checkpoint batch mới nhất (để tải về)
   loadedCheckpoint: null, // checkpoint nạp từ localStorage để resume
   lastExtractKv: null,   // JSON text trích xuất được (để dịch tiếp)
@@ -25,6 +37,20 @@ const state = {
 
 const WARN_BYTES = 300 * 1024 * 1024;   // >300MB: cảnh báo RAM tab trình duyệt
 const MAX_BYTES = 2 * 1024 * 1024 * 1024;   // >2GB: từ chối (bridge cũng từ chối)
+
+// iOS Safari làm mờ file .ipa trong khung chọn dù input có accept=".ipa"
+// (quirk UTI của picker iOS), nên 2 input chính (#file-input, #batch-files)
+// KHÔNG dùng accept mà kiểm tra đuôi bằng JS sau khi chọn (không phân biệt
+// hoa/thường). File khác đuôi thì báo lỗi thân thiện, không im lặng.
+const GAME_EXTS = [".ipa", ".zip", ".unity3d", ".assets", ".ttf", ".json", ".tar.xz"];
+function gameExtOk(name) {
+  const lower = (name || "").toLowerCase();
+  return GAME_EXTS.some((ext) => lower.endsWith(ext));
+}
+function gameExtError(name) {
+  return "File \"" + name + "\" không phải định dạng PB3 hỗ trợ (" +
+    GAME_EXTS.join(", ") + "). Hãy chọn file .ipa/.zip/.unity3d/.assets/.ttf/.json/.tar.xz.";
+}
 
 function fmtBytes(n) {
   if (n == null || isNaN(n)) return "?";
@@ -112,7 +138,36 @@ function callWorker(op, payload) {
   return new Promise((resolve, reject) => {
     const id = state.nextId++;
     state.pending.set(id, { resolve, reject, t0: performance.now(), lastPct: -1 });
-    worker.postMessage(Object.assign({ id, op }, payload), (payload.files || []).map(f => f.data));
+    // HOTFIX clone: chỉ kèm file vào postMessage khi worker chưa có file đó.
+    // File đơn: so bằng tên|size|lastModified với cờ fileSentFor.
+    // Batch: so toàn bộ lô với cờ batchSentFor. File lẻ một lần (vd nhập KB)
+    // không có cờ thì luôn gửi bản copy slice(0).
+    let files = payload.files || [];
+    let toSend = files;
+    const filesKey = (list) => list.map((f) => f.name + "|" + f.size + "|" + (f.lastModified || 0)).join(";");
+    try {
+      if (files.length === 1 && state.file && files[0].data === state.file.data) {
+        const key = filesKey([state.file]);
+        if (state.fileSentFor === key) toSend = [];
+        else { toSend = [{ name: files[0].name, data: files[0].data.slice(0) }]; state.fileSentFor = key; }
+      } else if (files.length && state.batchFiles.length && files.length === state.batchFiles.length &&
+                 files.every((f, i) => f.data === state.batchFiles[i].data)) {
+        const key = filesKey(state.batchFiles);
+        if (state.batchSentFor === key) toSend = [];
+        else { toSend = files.map((f) => ({ name: f.name, data: f.data.slice(0) })); state.batchSentFor = key; }
+      } else if (files.length) {
+        toSend = files.map((f) => ({ name: f.name, data: f.data.slice(0) }));
+      }
+      worker.postMessage(Object.assign({ id, op }, payload, { files: toSend }),
+        toSend.map((f) => f.data));
+    } catch (e) {
+      // postMessage ném lỗi (vd transfer thất bại): cờ vừa đặt phải bỏ để
+      // lần thử sau gửi lại file; promise reject để runOp báo lỗi.
+      state.fileSentFor = null;
+      state.batchSentFor = null;
+      state.pending.delete(id);
+      reject(e);
+    }
   });
 }
 
@@ -128,6 +183,9 @@ async function runOp(label, fn, args, files, fileOut) {
   } catch (e) {
     progDone(label + " — lỗi");
     showError(label + " lỗi: " + e.message);
+    // HOTFIX clone: thao tác lỗi thì lần sau phải gửi lại file cho worker.
+    state.fileSentFor = null;
+    state.batchSentFor = null;
     throw e;
   }
 }
@@ -147,10 +205,49 @@ function inputFileArgs() {
 }
 function inputPath() { return "/tmp/input/" + state.file.name; }
 
+// Gợi ý ZIP-chứa-IPA: file Joseph chọn là ZIP do "Nén" trong Files tạo ra
+// (1 file .ipa + các entry __MACOSX/._...), trong khi đúng ra chỉ cần đổi
+// tên bản copy của IPA thành .zip. Chỉ hiện khi đúng điều kiện này:
+// đúng 1 entry .ipa (không phải thư mục) + ít nhất 1 entry khác, và mọi
+// entry còn lại đều nằm dưới __MACOSX/. Không hiện cho IPA thật hay ZIP
+// thường.
+const IPA_ZIP_HINT = "File này là ZIP chứa IPA — đổi tên .ipa thành .zip thay vì nén lại (nhấn giữ file → Đổi tên)";
+function isZipWithSingleIpa(entries) {
+  if (!entries || !entries.length) return false;
+  const isMac = (p) => p === "__MACOSX/" || p.startsWith("__MACOSX/");
+  // Entry __MACOSX/._*.ipa là file AppleDouble đi kèm, KHÔNG tính là IPA.
+  const ipas = entries.filter((e) => {
+    const p = String((e && e.path) || "");
+    return p && !isMac(p) && !p.endsWith("/") && /\.ipa$/i.test(p);
+  });
+  if (ipas.length !== 1) return false;
+  const others = entries.filter((e) => e !== ipas[0]);
+  if (!others.length) return false;   // chỉ 1 entry .ipa = IPA thật, không gợi ý
+  return others.every((e) => isMac(String((e && e.path) || "")));
+}
+function showIpaZipHint(el, entries) {
+  if (!el) return;
+  if (isZipWithSingleIpa(entries)) { el.textContent = IPA_ZIP_HINT; el.hidden = false; }
+  else el.hidden = true;
+}
+// Kiểm tra nhanh bằng list_entries (không gửi lại file — worker đã có file
+// từ thao tác trước) để hiện gợi ý cả khi inspect lỗi vì file là ZIP.
+async function maybeShowIpaZipHint(el) {
+  try {
+    const msg = await callWorker("run", { fn: "list_entries", args: [inputPath()], files: [] });
+    showIpaZipHint(el, JSON.parse(msg.result).entries || []);
+  } catch (e) { /* gợi ý chỉ là phụ: lỗi thì thôi, không báo thêm */ }
+}
+
 // ---- Chọn file ----
 $("file-input").addEventListener("change", (ev) => {
   const f = ev.target.files && ev.target.files[0];
   if (!f) return;
+  if (!gameExtOk(f.name)) {
+    showError(gameExtError(f.name));
+    ev.target.value = "";
+    return;
+  }
   if (f.size > MAX_BYTES) {
     showError("File " + fmtBytes(f.size) + " quá lớn cho bản web (>2GB). Dùng bản iSH cho file này.");
     return;
@@ -159,7 +256,8 @@ $("file-input").addEventListener("change", (ev) => {
     showError("Lưu ý: file " + fmtBytes(f.size) + " khá lớn, tab trình duyệt có thể tốn nhiều RAM. Vẫn thử chạy.");
   }
   f.arrayBuffer().then((buf) => {
-    state.file = { name: f.name, size: f.size, data: buf };
+    state.file = { name: f.name, size: f.size, lastModified: f.lastModified || 0, data: buf };
+    state.fileSentFor = null;   // HOTFIX clone: file mới thì gửi lại từ đầu
     $("file-info").textContent = f.name + " · " + fmtBytes(f.size);
     $("file-info").hidden = false;
     clearError();
@@ -190,6 +288,7 @@ $("btn-list-run").addEventListener("click", async () => {
     html += "</table>";
     if (parsed.entries.length > 200) html += "<p>…chỉ hiện 200 entry đầu.</p>";
     $("list-result").innerHTML = html;
+    showIpaZipHint($("list-ipa-hint"), parsed.entries);
   } catch (e) { /* đã báo lỗi */ }
 });
 
@@ -197,7 +296,7 @@ $("btn-list-run").addEventListener("click", async () => {
 $("btn-unity-run").addEventListener("click", async () => {
   try {
     const { parsed } = await runOp("Inspect Unity", "unity_inspect", [inputPath()], inputFileArgs());
-    if (!parsed.ok) { showError("Lỗi: " + parsed.error); return; }
+    if (!parsed.ok) { showError("Lỗi: " + parsed.error); maybeShowIpaZipHint($("unity-ipa-hint")); return; }
     let html = "";
     if (parsed.bundle) {
       html += "<p>Bundle Unity: <b>" + esc(parsed.unity_version || "?") + "</b> · nén " + esc(parsed.compression || "?") + " · " + (parsed.entries || []).length + " entry</p>";
@@ -342,15 +441,19 @@ $("btn-mod-write").addEventListener("click", () => runMod(true));
 $("batch-files").addEventListener("change", async (ev) => {
   const list = [...(ev.target.files || [])];
   state.batchFiles = [];
+  let rejected = 0;
   for (const f of list) {
+    if (!gameExtOk(f.name)) { showError(gameExtError(f.name)); rejected++; continue; }
     if (f.size > MAX_BYTES) { showError("File " + f.name + " quá lớn cho bản web (>2GB)."); continue; }
-    state.batchFiles.push({ name: f.name, size: f.size, data: await f.arrayBuffer() });
+    state.batchFiles.push({ name: f.name, size: f.size, lastModified: f.lastModified || 0, data: await f.arrayBuffer() });
   }
+  state.batchSentFor = null;   // HOTFIX clone: lô mới thì gửi lại từ đầu
+  ev.target.value = "";
   if (state.batchFiles.length) {
     $("batch-files-info").textContent = state.batchFiles.length + " file: " +
       state.batchFiles.map(f => f.name + " (" + fmtBytes(f.size) + ")").join(", ");
     $("batch-files-info").hidden = false;
-    clearError();
+    if (!rejected) clearError();
   }
 });
 $("btn-batch-load-ckpt").addEventListener("click", () => {

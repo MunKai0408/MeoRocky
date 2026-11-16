@@ -8,6 +8,25 @@ import ast
 import unittest
 from pathlib import Path
 
+try:
+    import pytest
+except ImportError:  # iSH: pytest không có sẵn, run_tests.py (unittest) vẫn phải chạy
+    class _PytestMarkStub:
+        """Bản thay thế tối giản cho pytest.mark khi pytest chưa cài:
+        @pytest.mark.needs_fixture(...) thành decorator giữ nguyên hàm
+        (marker chỉ có tác dụng khi chạy bằng pytest ở CI/trình duyệt)."""
+        def __getattr__(self, _name):
+            def _deco(*args, **kwargs):
+                def _wrap(fn):
+                    return fn
+                return _wrap
+            return _deco
+
+    class _PytestStub:
+        mark = _PytestMarkStub()
+
+    pytest = _PytestStub()  # noqa: F811 - stub chỉ dùng khi thiếu pytest thật
+
 ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))

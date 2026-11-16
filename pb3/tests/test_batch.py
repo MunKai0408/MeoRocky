@@ -24,6 +24,7 @@ from sdk import batch as b
 from sdk.batch import BatchItem, BatchRunner, parse_manifest
 from services import language_tool
 from tests.helpers import TmpCase, copy_project, register_tmp_dir, unregister_tmp_dir
+from tests.helpers import pytest  # noqa: F401 - marker needs_fixture (stub trên iSH)
 
 UNITY = "tests/fixtures/unity/sample.unity3d"
 CAB = "CAB-0123456789abcdef0123456789abcdef"
@@ -359,6 +360,7 @@ class TestBatchRun(BatchCase):
         self.assertEqual((s.ok, s.skipped), (2, 1))
         self.assertIn("--limit 2", s.games[2].note)
 
+    @pytest.mark.needs_fixture("unity/sample.unity3d")
     def test_mod_dry_run_writes_no_patched_file(self):
         # Chuỗi mới cùng độ dài byte với chuỗi cũ: PATCH_INPLACE chứa được.
         unity = self.fix(UNITY)
@@ -371,6 +373,7 @@ class TestBatchRun(BatchCase):
         self.assertEqual(names, ["result.json"])
         self.assertIn("dry-run", summary.games[0].note)
 
+    @pytest.mark.needs_fixture("unity/sample.unity3d")
     def test_mod_write_writes_unit_only(self):
         unity = self.fix(UNITY)
         items = [BatchItem(path=unity, mode="mod", file=CAB, object="1001",
@@ -385,6 +388,7 @@ class TestBatchRun(BatchCase):
         self.assertEqual(sorted(p.name for p in game_dir.iterdir()),
                          ["result.json", "sample.unity3d"])
 
+    @pytest.mark.needs_fixture("unity/sample.unity3d")
     def test_mod_longer_within_same_alignment_escalates(self):
         # #180 (C10): "Xin chao" -> "Xin chào" (+1 byte, aligned size bằng
         # nhau) trước đây batch mod fail E_WRITE_DISABLED; nay leo lên

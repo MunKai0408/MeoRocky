@@ -31,6 +31,7 @@ from sdk.manifest import parse_manifest
 from sdk.types import Candidate, LocEntry, LocTable, SourceRef
 from sdk.vfs import LimitedVFS, MemoryVFS
 from tests.helpers import ROOT, TmpCase, subprocess_timeout
+from tests.helpers import pytest  # noqa: F401 - marker needs_fixture (stub trên iSH)
 from tests.tiering import slow
 from tests.test_sdk import APPX_A
 
@@ -70,6 +71,7 @@ class TestPolishUnityVersions(TmpCase):
     """U15: SerializedFile v15/16/18/19/20/22 — dựng từ template v21 qua
     build_serialized rồi parse lại; mọi phiên bản đều đọc được TextAsset."""
 
+    @pytest.mark.needs_fixture("unity/sample_v21.assets")
     def test_versions_roundtrip(self):
         sf = u.parse_serialized(read(V21))
         n_obj = len(sf.objects)
@@ -136,6 +138,7 @@ class TestPolishUnity(TmpCase):
         back = u.parse_serialized(res.output_bytes)
         self.assertEqual(back.text_assets()[0][2], "Xin chao 8 Kings!")
 
+    @pytest.mark.needs_fixture("unity/sample_v21.assets", "unity/sample_v8.unity3d")
     def test_u1_container_per_entry_resilient_direct_hard_abort(self):
         v9 = bytearray(read(BUNDLE_V8))
         struct.pack_into(">I", v9, 8, 9)
@@ -259,6 +262,7 @@ class TestPolishContainers(TmpCase):
             nested.close()
         self.assertEqual([e.name for e in inv.entries], ["inner.txt"])
 
+    @pytest.mark.needs_fixture("zip/sample.ipa")
     def test_v17_container_list_limit_and_formats_cli(self):
         out = subprocess.run(
             [sys.executable, "menu.py", "container", "list",
@@ -273,6 +277,7 @@ class TestPolishContainers(TmpCase):
         self.assertIn("TAR.BZ2", out)
         self.assertIn("16 MiB", out)
 
+    @pytest.mark.needs_fixture("zip/sample.ipa")
     def test_v22_container_read_nested_chunked(self):
         out_path = self.tmp / "res.assets"
         r = subprocess.run(

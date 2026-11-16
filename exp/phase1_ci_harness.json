@@ -1,0 +1,43 @@
+{
+  "conftest_merged": {
+    "ok": true,
+    "detail": "marker_needs_fixture=true hook_skip=true strict_env=true fixed_now=true fixed_today=true fixture_path=true tiering_kept=true fixtures_dir=true",
+    "seconds": 0
+  },
+  "markers_count": {
+    "ok": true,
+    "detail": "decorator needs_fixture trong test_*.py: 116 (kỳ vọng 116, phủ 126 test: 5 class-level + 111 method-level)",
+    "seconds": 0
+  },
+  "date_test_after_touch": {
+    "ok": true,
+    "detail": ".                                                                        [100%] 1 passed in 0.48s",
+    "seconds": 1
+  },
+  "pages_yml": {
+    "ok": true,
+    "detail": "jobs=unit,assets,pyodide-node,build-deploy | parses=true jobs_unit_assets_deploy=true no_pyodide_0264=true no_pyodide_download=true needs_both_tests=true deploy_only_main=true pages_source_note=true",
+    "seconds": 0.1
+  },
+  "test_html": {
+    "ok": true,
+    "detail": "exists=true loadPyodide_same_origin=true no_cdn=true micropip_pytest=true tier_smoke_default=true no_full_tier=true honest_note=true copy_button=true tests_manifest=true pid_deselect=true | tests.json entries=155",
+    "seconds": 0
+  },
+  "test_yml_two_jobs": {
+    "ok": true,
+    "detail": "jobs=unit,assets,pyodide-node | parses_jobs=true unit_marker_filter=true strict_1=true gh_release_download=true lists_20_files=true no_old_28_text=true font_restore_kept=true python312=true pytest_rs=true pyodide_node_job=true",
+    "seconds": 0.1
+  },
+  "pyodide_pytest_smoke": {
+    "ok": true,
+    "detail": "pyodide=314.0.8 lz4=OK micropip pytest=OK http_fetch=0 files=242 font=132948B pytest_smoke_exit=0 | . | . |                [100%] | 58 passed, 1508 deselected in 4.93s",
+    "seconds": 10.8
+  },
+  "picker_ipa": {
+    "ok": true,
+    "detail": "file_input_no_accept=true batch_files_no_accept=true translate_json_kept=true kb_import_kept=true js_ext_check=true | boot_ok=true list_ipa_total=11 extract_entries=21 files=6 runtime=true",
+    "seconds": 0.4
+  },
+  "_failures": 0
+}

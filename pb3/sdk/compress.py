@@ -56,6 +56,7 @@ from core import safe_io
 from core.errors import PB3Error, error_from_exception
 from core.limits import Limits
 from core.progress import CancelToken
+from sdk.containers import fix_zip_entry_name
 
 FORMAT = "pb3-solid-xz"
 FORMAT_VERSION = 1
@@ -343,7 +344,10 @@ def _inventory_zip(zf: zipfile.ZipFile, limits: Limits, where: str) -> List[Entr
     out: List[EntryRecord] = []
     seen = set()
     for info in infos:
-        name = info.filename
+        # Tên entry trong manifest nén/khôi phục: sửa mojibake UTF-8-không-cờ
+        # (ZIP do "Nén" trong Files iOS tạo) để lúc giải nén khôi phục đúng
+        # tên gốc, thay vì tên "ΓÇÄ ...".
+        name = fix_zip_entry_name(info)
         is_dir = name.endswith("/")
         if name in seen:
             raise PB3Error("E_BAD_ARCHIVE", "entry trùng tên %r (không nén được: "

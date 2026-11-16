@@ -119,6 +119,10 @@ self.onmessage = async (ev) => {
       if (typeof msg.fn === "string" && msg.fn.indexOf("translate") === 0) {
         googleCancelled = false;
       }
+      // HOTFIX clone: main thread chỉ gửi file 1 lần cho mỗi file đã chọn
+      // (xem fileSentFor/batchSentFor trong app.js) — các lần sau msg.files
+      // có thể RỖNG vì file đã nằm trong FS /tmp/input từ lần gửi đầu.
+      // FS của worker sống suốt phiên trang nên cứ dùng lại, không đòi gửi lại.
       for (const f of (msg.files || [])) {
         pyodide.FS.mkdirTree("/tmp/input");
         pyodide.FS.writeFile("/tmp/input/" + f.name, new Uint8Array(f.data));

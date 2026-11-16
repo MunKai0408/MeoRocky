@@ -12,6 +12,7 @@ from pathlib import Path
 from core.app import bootstrap
 from tests.helpers import (TmpCase, copy_project, register_tmp_dir,
                            subprocess_timeout, unregister_tmp_dir)
+from tests.helpers import pytest  # noqa: F401 - marker needs_fixture (stub trên iSH)
 from tests.test_app_menu_cli import run_menu_scripted
 
 GAME1 = "tests/fixtures/extract/game1.zip"
@@ -61,6 +62,7 @@ class TestLanguageCli(TmpCase):
         en = json.loads((Path(out) / "English.en.json").read_text(encoding="utf-8"))
         self.assertEqual(en["hello"], "Hello")
 
+    @pytest.mark.needs_fixture("unity/sample.unity3d")
     def test_cli_extract_unity(self):
         out = self.outdir("ext2")
         rc, stdout, err = self.cli("extract", UNITY, "--out", out)
@@ -69,6 +71,7 @@ class TestLanguageCli(TmpCase):
         cfg = json.loads((Path(out) / "config.json").read_text(encoding="utf-8"))
         self.assertEqual(cfg, {"level": "1", "lang": "vi", "title": "9 Kings"})
 
+    @pytest.mark.needs_fixture("unity/sample.unity3d")
     def test_cli_file_pin_raw_scan(self):
         out = self.outdir("ext3")
         rc, stdout, err = self.cli("extract", UNITY, "--file", GREETING_VPATH,
@@ -142,6 +145,7 @@ class TestLanguageCli(TmpCase):
         content = written.read_text(encoding="utf-8")
         self.assertIn("play,Chơi,开始", content)  # cột zh giữ nguyên
 
+    @pytest.mark.needs_fixture("unity/sample.unity3d")
     def test_cli_apply_write_unity(self):
         _out, edited = self._extract_then_edit(UNITY, "ext9", "config.json",
                                                title="9 Kings VIET NAM")

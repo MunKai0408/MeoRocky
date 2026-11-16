@@ -17,6 +17,7 @@ from sdk import exporters as exp
 from sdk import extraction as ext
 from services import language_tool
 from tests.helpers import TmpCase, copy_project, register_tmp_dir, unregister_tmp_dir
+from tests.helpers import pytest  # noqa: F401 - marker needs_fixture (stub trên iSH)
 
 GAME1 = "tests/fixtures/extract/game1.zip"
 AMBIG = "tests/fixtures/extract/ambig.zip"
@@ -98,6 +99,7 @@ class TestDiscovery(ExtractionCase):
         code, _c, _e = disc.detect_locale('{"lang": "vi", "title": "9 Kings"}', table)
         self.assertEqual(code, "vi")
 
+    @pytest.mark.needs_fixture("unity/sample.unity3d")
     def test_detect_engine_unity_and_unknown(self):
         data = Path(self.fix(UNITY)).read_bytes()
         g = disc.detect_engine([UNITY], {UNITY: data[:4096]})
@@ -311,6 +313,7 @@ class TestArbitration(ExtractionCase):
         self.assertEqual(len(r.candidates), 1)
         self.assertEqual(r.candidates[0]["locale"], "fr")
 
+    @pytest.mark.needs_fixture("unity/sample.unity3d")
     def test_pin_file_bypasses_arbitration(self):
         r = self.run_ext(self.fix(UNITY),
                          pin_file="sample.unity3d::CAB-0123456789abcdef0123456789abcdef::greeting")
@@ -329,6 +332,7 @@ class TestArbitration(ExtractionCase):
         self.assertEqual(r.decision, "none")
         self.assertTrue(any(e["code"] == "E_INPUT_NOT_FOUND" for e in r.errors))
 
+    @pytest.mark.needs_fixture("unity/sample.unity3d")
     def test_single_option_ask_auto_selects(self):
         # config (TextAsset JSON không đuôi) chỉ có một lựa chọn đạt ngưỡng.
         r = self.run_ext(self.fix(UNITY))
@@ -337,6 +341,7 @@ class TestArbitration(ExtractionCase):
                          ["sample.unity3d::CAB-0123456789abcdef0123456789abcde0::config"])
 
 
+@pytest.mark.needs_fixture("unity/sample.unity3d")
 class TestUnityExtraction(ExtractionCase):
     def test_unity_engine_certain(self):
         r = self.run_ext(self.fix(UNITY))
@@ -437,6 +442,7 @@ class TestApplyEdits(ExtractionCase):
         self.assertIsNone(res["written"])
         self.assertFalse((self.tmp / "apply-out").exists())
 
+    @pytest.mark.needs_fixture("unity/sample.unity3d")
     def test_apply_unity_bundle_roundtrip(self):
         r = self._extract(self.fix(UNITY))
         edited = self._edit_json("config.json", title="9 Kings VIET NAM")
@@ -461,6 +467,7 @@ class TestApplyEdits(ExtractionCase):
         self.assertIn("9 Kings VIET NAM", scripts["config"])
         self.assertEqual(scripts["greeting"], "Xin chao 9 Kings!")
 
+    @pytest.mark.needs_fixture("unity/sample.unity3d")
     def test_apply_unity_shorter_title_still_patches(self):
         # Title ngắn hơn nhưng bản build của plugin (pretty-print) vẫn dài
         # hơn script gốc (compact) của fixture -> leo thang REBUILD_SECTION;
@@ -485,6 +492,7 @@ class TestApplyEdits(ExtractionCase):
         self.assertIn('"title": "9K"', scripts["config"])
         self.assertEqual(scripts["greeting"], "Xin chao 9 Kings!")
 
+    @pytest.mark.needs_fixture("unity/sample.unity3d")
     def test_apply_unity_dry_run(self):
         self._extract(self.fix(UNITY))
         edited = self._edit_json("config.json", title="9 Kings VIET NAM")

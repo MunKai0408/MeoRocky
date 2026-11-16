@@ -19,6 +19,7 @@ from sdk import font as fs
 from services import font_tool as ft
 from tests.fixtures.font import build_fixtures as fx
 from tests.helpers import TmpCase
+from tests.helpers import pytest  # noqa: F401 - marker needs_fixture (stub trên iSH)
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -319,12 +320,14 @@ class TestScan(TmpCase):
         self.assertEqual(scan.fonts[0].kind, "zip-entry")
         self.assertFalse(scan.fonts[0].is_full)
 
+    @pytest.mark.needs_fixture("unity/resources.assets")
     def test_scan_unity_assets_without_fonts(self):
         fixture = ROOT / "tests" / "fixtures" / "unity" / "resources.assets"
         scan = ft.scan_fonts(str(fixture))
         self.assertEqual(scan.fonts, [])
         self.assertEqual(scan.warnings, [])
 
+    @pytest.mark.needs_fixture("unity/resources.assets")
     def test_list_unity_font_objects_empty_on_fixture(self):
         from sdk import unity as uni
         data = (ROOT / "tests" / "fixtures" / "unity" / "resources.assets").read_bytes()

@@ -26,6 +26,7 @@ from services import container_tool as ct
 from services import language_tool as lt
 from services import unity_tool as ut
 from tests.helpers import ROOT, TmpCase
+from tests.helpers import pytest  # noqa: F401 - marker needs_fixture (stub trên iSH)
 
 FX = ROOT / "tests" / "fixtures"
 GAME1 = "tests/fixtures/extract/game1.zip"
@@ -433,6 +434,7 @@ class TestInspectProgressStepped(unittest.TestCase):
 
 
 # ------------------------------------------------------------------ (f) container
+@pytest.mark.needs_fixture("zip/sample.ipa")
 class TestContainerProgress(TmpCase):
     def test_list_steps_one_percent(self):
         ov = FakeOv(enabled=True)

@@ -92,7 +92,10 @@ class TestLogging(TmpCase):
     def test_setup_twice_does_not_duplicate_handlers(self):
         self.setup()
         ls = self.setup()
-        self.assertEqual(len(ls.logger.handlers), 2)
+        # Chỉ đếm handler DO PB3 TẠO: runner test (pytest logging plugin)
+        # cũng gắn handler của nó vào logger, không phải handler PB3 nhân đôi.
+        owned = [h for h in ls.logger.handlers if getattr(h, "_pb3_owned", False)]
+        self.assertEqual(len(owned), 2)
 
 
 class TestLimits(TmpCase):

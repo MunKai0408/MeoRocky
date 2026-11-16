@@ -28,8 +28,29 @@ from tests.fixtures.godot import builder as godot_builder
 from tests.fixtures.unreal.builder import SAMPLE_TEXTS, sample_pak_bytes
 from tests.helpers import (ROOT, TmpCase, copy_project, register_tmp_dir, slow_subprocess,
                            subprocess_timeout, unregister_tmp_dir)
+from tests.helpers import pytest  # noqa: F401 - marker needs_fixture (stub trên iSH)
 
 FIXTURE_IPA = ROOT / "tests" / "fixtures" / "zip" / "sample.ipa"
+
+
+def make_ios_zip(entries):
+    """ZIP kiểu "Nén" trong Files iOS: tên entry ghi bằng byte UTF-8 nhưng
+    cờ UTF-8 bit 11 KHÔNG đặt. `zipfile` chuẩn khi đó giải tên theo cp437
+    (mojibake). entries: [(tên str, bytes)]."""
+    import zlib
+    local, central = b"", b""
+    for name, data in entries:
+        nb = name.encode("utf-8")
+        crc = zlib.crc32(data) & 0xFFFFFFFF
+        off = len(local)
+        local += struct.pack("<IHHHHHIIIHH", 0x04034B50, 20, 0x0000, 0, 0,
+                             0x21, crc, len(data), len(data), len(nb), 0) + nb + data
+        central += struct.pack("<IHHHHHHIIIHHHHHII", 0x02014B50, 20, 20, 0x0000,
+                               0, 0, 0x21, crc, len(data), len(data), len(nb),
+                               0, 0, 0, 0, 0, off) + nb
+    eocd = struct.pack("<IHHHHIIH", 0x06054B50, 0, 0, len(entries), len(entries),
+                       len(central), len(local), 0)
+    return local + central + eocd
 
 
 def make_zip(specs, *, method=zipfile.ZIP_DEFLATED):
@@ -250,6 +271,35 @@ class TestZipVFS(unittest.TestCase):
             self.assertEqual(list(vfs.iter_entries()), [])
             self.assertEqual(vfs.inventory().entries, [])
 
+    def test_zip_name_utf8_without_flag_ios_mojibake(self):
+        # Hồi quy bug clone-fix (2026-11-16): ZIP do "Nén" trong Files iOS
+        # tạo — tên bắt đầu bằng U+200E (byte E2 80 8E), không đặt cờ UTF-8
+        # bit 11. zipfile thô giải thành "ΓÇÄ ..."; PB3 phải hiển thị đúng.
+        name = "\u200e 9 Kings_v1.0.5-AppAssassin.ipa"
+        mac = "__MACOSX/._" + name
+        data = make_ios_zip([(name, b"PKfake"), (mac, b"x")])
+        with zipfile.ZipFile(io.BytesIO(data)) as zf:
+            self.assertEqual(zf.namelist()[0],
+                             "ΓÇÄ 9 Kings_v1.0.5-AppAssassin.ipa")
+        with ZipVFS(data) as vfs:
+            self.assertEqual(list(vfs.iter_entries()), [name, mac])
+            self.assertEqual(vfs.read(name, None), b"PKfake")
+            self.assertEqual(vfs.read(mac, None), b"x")
+            self.assertNotIn("ΓÇÄ", vfs.inventory().entries[0].name)
+
+    def test_zip_name_utf8_with_flag_and_ascii_unchanged(self):
+        data = make_zip([("café.txt", b"a"), ("plain.txt", b"b")])
+        with ZipVFS(data) as vfs:
+            self.assertEqual(list(vfs.iter_entries()), ["café.txt", "plain.txt"])
+
+    def test_compress_manifest_fixes_ios_mojibake_name(self):
+        from sdk.compress import _inventory_zip
+        name = "\u200e 9 Kings_v1.0.5-AppAssassin.ipa"
+        data = make_ios_zip([(name, b"PKfake")])
+        with zipfile.ZipFile(io.BytesIO(data)) as zf:
+            recs = _inventory_zip(zf, Limits(), "test.zip")
+        self.assertEqual([r.name for r in recs], [name])
+
     def test_zip_bomb_limits(self):
         data = make_zip([("a.txt", b"A" * 500), ("b.txt", b"B" * 500), ("c.txt", b"C" * 500)])
         with self.assertRaises(PB3Error) as cm:
@@ -311,6 +361,7 @@ class TestZipVFS(unittest.TestCase):
             self.assertEqual(entry.extra["comment"], "hi")
             self.assertEqual(entry.extra["external_attr"], 0o640 << 16)
 
+    @pytest.mark.needs_fixture("zip/sample.ipa")
     def test_sample_ipa_fixture(self):
         with open_vfs(FIXTURE_IPA) as vfs:
             self.assertEqual(vfs.kind, "zip")
@@ -411,6 +462,7 @@ class TestSingleStreamVFS(unittest.TestCase):
 
 
 class TestNestedVFS(unittest.TestCase):
+    @pytest.mark.needs_fixture("zip/sample.ipa")
     def test_nested_read_and_iter(self):
         with NestedVFS(open_vfs(FIXTURE_IPA)) as nv:
             path = "Payload/Game.app/Data/level.unity3d::resources.assets"
@@ -456,6 +508,7 @@ class TestNestedVFS(unittest.TestCase):
                     nv.read("a.zip::x::leaf.txt", None)
                 self.assertEqual(cm.exception.code, "E_ARCHIVE_BOMB")
 
+    @pytest.mark.needs_fixture("zip/sample.ipa")
     def test_nested_missing_and_not_archive(self):
         with NestedVFS(open_vfs(FIXTURE_IPA)) as nv:
             with self.assertRaises(PB3Error) as cm:
@@ -494,6 +547,23 @@ class TestRebuildZip(TmpCase):
             self.assertEqual(zf.read("c.txt"), b"CCCC")
             self.assertEqual(zf.getinfo("a.txt").compress_type, zipfile.ZIP_STORED)
             self.assertEqual(zf.getinfo("b.txt").compress_type, zipfile.ZIP_DEFLATED)
+
+    def test_rebuild_fixes_ios_mojibake_name(self):
+        # Hồi quy bug clone-fix: rebuild ZIP kiểu iOS (tên UTF-8, không cờ
+        # bit 11) phải ghi ra tên đúng, và replace bằng tên đã sửa phải khớp
+        # (khóa repl là đường dẫn VFS — tên đã sửa).
+        name = "\u200e 9 Kings_v1.0.5-AppAssassin.ipa"
+        src = self.tmp / "ios.zip"
+        src.write_bytes(make_ios_zip([(name, b"PKfake")]))
+        rep = rebuild_zip(src, self.dst)
+        self.assertEqual(rep.copied, 1)
+        with zipfile.ZipFile(self.dst) as zf:
+            self.assertEqual(zf.namelist(), [name])
+            self.assertEqual(zf.read(name), b"PKfake")
+        rep2 = rebuild_zip(src, self.tmp / "ios2.zip", {name: b"NEW"})
+        self.assertEqual(rep2.replaced, [name])
+        with zipfile.ZipFile(self.tmp / "ios2.zip") as zf:
+            self.assertEqual(zf.read(name), b"NEW")
 
     def test_method_change_reported(self):
         rep = rebuild_zip(self.src, self.dst, {"a.txt": b"AAAA"},
@@ -567,6 +637,7 @@ class TestZipPlugin(unittest.TestCase):
         from sdk.api import PluginContext
         return PluginContext(MemoryVFS(files), Limits(), None, None, None, True, None, None, "zip")
 
+    @pytest.mark.needs_fixture("zip/sample.ipa")
     def test_detect_candidates_probe_open(self):
         from plugins.zip.plugin import ZipPlugin
         ipa = FIXTURE_IPA.read_bytes()
@@ -585,6 +656,7 @@ class TestZipPlugin(unittest.TestCase):
             self.assertEqual(vfs.read("Payload/Game.app/Data/config.txt", None), b"level=1\n")
         self.assertTrue(plugin.selftest(ctx)["ok"])
 
+    @pytest.mark.needs_fixture("zip/sample.ipa")
     def test_conformance_pass_on_fixture(self):
         from plugins.zip.plugin import ZipPlugin
         from registry.conformance import run_conformance
@@ -605,6 +677,7 @@ class TestZipPlugin(unittest.TestCase):
 
 
 @slow_subprocess
+@pytest.mark.needs_fixture("zip/sample.ipa")
 class TestContainerCli(TmpCase):
     """CLI thật trên bản sao dự án (tầng slow)."""
 
