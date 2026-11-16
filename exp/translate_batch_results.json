@@ -1,0 +1,115 @@
+{
+  "when": "2026-11-16T07:28:38.017Z",
+  "failures": 0,
+  "results": {
+    "gt_live_multiq_ignored": {
+      "ok": true,
+      "detail": "GET 3q: HTTP 200 (bản dịch: \"Chơi\" — không có \"Thoát\" của q thứ 2: true); POST 50q: HTTP 200 (chỉ dịch q đầu: true) — KẾT LUẬN: gtx KHÔNG nhận nhiều q/request, batch phải dùng joined-text 1 q.",
+      "seconds": 0.5
+    },
+    "gt_live_joined_50": {
+      "ok": true,
+      "detail": "POST joined 50: HTTP 200; tách lại: 50/50 marker khớp (mẫu: [\"Xin chuỗi số 0 để dịch\",\"Xin chuỗi số 1 để dịch\",\"Chuỗi số 2 để dịch nhé\"]) — batch joined-text DỊCH ĐƯỢC THẬT từ IP máy chủ.",
+      "seconds": 0.2
+    },
+    "gt_token_bucket_paces": {
+      "ok": true,
+      "detail": "2 lần warmup + 3 lần googleTranslateOne (fetch tức thì) mất 1316ms (cần >= 900ms: mỗi lần chờ nạp 1 token/500ms) — thay sleep 0,4s cố định.",
+      "seconds": 1.3
+    },
+    "gt_backoff_429_retries": {
+      "ok": true,
+      "detail": "fetch gọi 3 lần (429, 429, 200), mất 3502ms (cần >= 2900ms: backoff 1s + 2s), kết quả: \"VI:Play\"",
+      "seconds": 3.5
+    },
+    "gt_batch_50_one_request": {
+      "ok": true,
+      "detail": "fetch gọi 1 lần (POST), body có marker ⟦n⟧: true; tách lại 50/50, đầu=\"VI:String number 0 to translate please\", cuối=\"VI:String number 49 to translate please\"",
+      "seconds": 0
+    },
+    "gt_batch_split_mismatch_bad_response": {
+      "ok": true,
+      "detail": "googleTranslateBatch với bản dịch mất marker -> kind=\"bad_response\" (cần \"bad_response\" để Python rơi về từng chuỗi)",
+      "seconds": 0
+    },
+    "gt_abort_cancelled": {
+      "ok": true,
+      "detail": "fetch đã bắt đầu: true; abort -> kind=\"cancelled\" (cần \"cancelled\", không phải \"timeout\")",
+      "seconds": 0.5
+    },
+    "gt_proxy_batch_and_quota": {
+      "ok": true,
+      "detail": "proxy batch: [\"VI:Play\",\"VI:Quit\"]; quota -> kind=\"quota\"; translateBatchWithFallbacks mode=proxy-batch",
+      "seconds": 0
+    },
+    "batch_1000_mock_success": {
+      "ok": true,
+      "detail": "1000 key -> 1035 segment, 652 unique (khử 383 trùng = 37.0%), cần Google 625 unique (từ điển lo 27); mock nhận 625 chuỗi qua 7 batch (tối thiểu 7 nếu đủ 100/batch), single=0, mode=gtx-joined; tiến trình cuối 1035/1035; mẫu Iron Sword=\"VI[Iron Sword]\", Play=\"Chơi\"; thời gian thật 639ms (mock delay 30ms/batch)",
+      "seconds": 0.6
+    },
+    "batch_glossary_first_no_leak": {
+      "ok": true,
+      "detail": "mock batch nhận 625 chuỗi; lọt từ điển: 0 (cần 0 — vd Play/Quit phải qua từ điển, không gửi Google); trùng lặp trong số đã gửi: 0 (cần 0); glossary_count=44",
+      "seconds": 0
+    },
+    "batch_priority_ui_first": {
+      "ok": true,
+      "detail": "thứ tự gửi Google: 625 chuỗi, ưu tiên không giảm (true); chuỗi UI cuối ở vị trí 375, chuỗi log/desc đầu ở vị trí 411 (cần UI trước log/desc)",
+      "seconds": 0
+    },
+    "batch_fail_falls_back_single": {
+      "ok": true,
+      "detail": "batch lỗi hết -> single_requests=625 (cần 625), batch_requests=0, mode=single, cảnh báo tắt batch: true; mẫu Iron Sword dịch đúng",
+      "seconds": 0.1
+    },
+    "batch_wrong_count_detected": {
+      "ok": true,
+      "detail": "batch 1 trả sai số lượng -> Python phát hiện, dịch lại 100 chuỗi đơn cho batch đó; batch_requests=6/7 batch; số chuỗi VI[ trong kết quả > 900",
+      "seconds": 0
+    },
+    "batch_cancel_keeps_partial": {
+      "ok": true,
+      "detail": "cancelled=true sau 1 batch; giữ lại 194/1000 chuỗi đã dịch (cần >0 và <1000); incomplete_keys=762 (phần chưa xong được báo để app.js đưa về hàng đợi resume)",
+      "seconds": 0.1
+    },
+    "batch_quota_stops_google": {
+      "ok": true,
+      "detail": "google_count=0, single gọi=0 (cần 0 — không gọi Google nữa); network_error=\"Google Translate lỗi (quota): Error: Proxy dịch: đã hết 500.000 ký tự miễn phí của tháng.\"; cảnh báo hạn mức: true",
+      "seconds": 0
+    },
+    "browser_boot_proxy_set": {
+      "ok": true,
+      "detail": "boot tới Sẵn sàng; proxy dịch giả (batch) đặt qua localStorage + ô nhập",
+      "seconds": 5.8
+    },
+    "browser_batch_1000_real_time": {
+      "ok": true,
+      "detail": "dialog ước tính batch 15 giây: true; thời gian THẬT 1000 chuỗi qua proxy giả (250ms/batch): 3.1s (≈ 322.2 chuỗi/giây); output 1000/1000 key; info: \"Đã dịch 1000/1000 chuỗi (Google: 804 đoạn · từ điển offline: 36 đoạn · bộ nhớ dịch: 187 chuỗi · khử trùng lặp: 186 đoạn · batch: 7 request, từng chuỗi: 0). Xong — bấm “Tải bản dịch\"",
+      "seconds": 21.7
+    },
+    "browser_batch_cancel_keeps_partial": {
+      "ok": true,
+      "detail": "sau Hủy: 100/1000 chuỗi đã dịch (giữ lại phần đã dịch, không mất); tải phần đã dịch: translated.vi.json với 100 chuỗi VI:",
+      "seconds": 1.5
+    },
+    "browser_batch_resume_after_reload": {
+      "ok": true,
+      "detail": "thanh resume sau reload: \"dán tay — đã dịch 100/1000 chuỗi (đã hủy/dở dang)\"; bấm Tiếp tục -> xong đủ 1000/1000 key, tất cả 1000 chuỗi đều VI: (không còn chuỗi gốc sót lại từ chunk bị hủy): true; thanh resume ẩn sau khi xong: true",
+      "seconds": 8.6
+    },
+    "browser_390_no_overflow_no_errors": {
+      "ok": true,
+      "detail": "390px: scrollWidth=390 clientWidth=390 (không tràn); pageerror: không có",
+      "seconds": 0
+    },
+    "browser_share_error_shows_name": {
+      "ok": true,
+      "detail": "bấm Lưu/Chia sẻ khi navigator.share ném NotAllowedError -> banner: \"Chia sẻ lỗi: NotAllowedError: The request is not allowed by the user agent or the platform in the current context, possibly because the user denied permission.\" (cần cả tên lỗi + message)",
+      "seconds": 5.9
+    }
+  },
+  "dedupeRate": 0.370048309178744,
+  "batch1000Ms": 639,
+  "browser1000Ms": 3104,
+  "browser1000Rate": 322.1563329512386
+}

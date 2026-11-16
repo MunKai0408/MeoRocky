@@ -45,6 +45,44 @@ async function kbstoreTx(mode, fn) {
   } finally { db.close(); }
 }
 
+// ---- DB riêng cho hàng đợi dịch (mục A) ----
+// CỐ TÌNH tách khỏi 'pb3-kb-store': KB và checkpoint batch (mục 4) mở DB
+// đó ở version 1 — nhét thêm store vào đó phải nâng version, làm vỡ
+// harness cũ (VersionError khi mở v1 sau khi đã lên v2) và fake
+// indexedDB của harness KB (không có objectStoreNames). DB riêng v1,
+// store 'translate_jobs', không đụng gì tới KB.
+const TRANSLATE_JOBS_DB_NAME = 'pb3-translate-jobs';
+const TRANSLATE_JOBS_STORE = 'translate_jobs';
+
+function translateJobsOpenDB() {
+  return new Promise((resolve, reject) => {
+    const r = indexedDB.open(TRANSLATE_JOBS_DB_NAME, 1);
+    r.onupgradeneeded = () => {
+      const db = r.result;
+      // Fake indexedDB trong harness cũ không có objectStoreNames —
+      // chỉ tạo store khi chưa có (hoặc khi không kiểm tra được).
+      if (!db.objectStoreNames || !db.objectStoreNames.contains(TRANSLATE_JOBS_STORE)) {
+        db.createObjectStore(TRANSLATE_JOBS_STORE, { keyPath: 'id' });
+      }
+    };
+    r.onsuccess = () => resolve(r.result);
+    r.onerror = () => reject(r.error);
+  });
+}
+
+async function translateJobsTx(mode, fn) {
+  const db = await translateJobsOpenDB();
+  try {
+    return await new Promise((resolve, reject) => {
+      const t = db.transaction(TRANSLATE_JOBS_STORE, mode);
+      const req = fn(t.objectStore(TRANSLATE_JOBS_STORE));
+      t.oncomplete = () => resolve(req && req.result);
+      t.onerror = () => reject(t.error);
+      t.onabort = () => reject(t.error);
+    });
+  } finally { db.close(); }
+}
+
 class KBStore {
   constructor(key = 'kb.sqlite', { debounceMs = 0 } = {}) {
     this.key = key;
@@ -125,3 +163,45 @@ class KBStore {
 }
 
 if (typeof window !== 'undefined') window.KBStore = KBStore;
+
+/* TranslateJobStore — Hàng đợi dịch bền trong IndexedDB (mục A).
+ *
+ * Một job dịch Google: lưu sau mỗi chunk (500 key) nên tắt tab/đóng trang
+ * giữa chừng vẫn tiếp tục được từ chỗ đã xong, không dịch lại phần cũ.
+ * Job đã xong (status "done") đồng thời là BỘ NHỚ DỊCH (TM): job mới tra
+ * value giống hệt trong các job done cùng ngôn ngữ đích trước khi gửi
+ * Google. (KB game-profile KHÔNG chứa bản dịch nên không dùng làm TM.)
+ *
+ * Job: {id, name, to, status:"running"|"cancelled"|"done",
+ *       items:[[key,value],...] (phần CHƯA dịch — ngắn dần theo tiến độ),
+ *       results:{key: translated} (phần ĐÃ dịch xong),
+ *       total (tổng key ban đầu), tmCount, createdAt, updatedAt}
+ */
+class TranslateJobStore {
+  async save(job) {
+    job.updatedAt = Date.now();
+    await translateJobsTx('readwrite', (s) => s.put(job));
+    return job;
+  }
+  async get(id) {
+    const v = await translateJobsTx('readonly', (s) => s.get(id));
+    return v || null;
+  }
+  async getAll() {
+    const v = await translateJobsTx('readonly', (s) => s.getAll());
+    return v || [];
+  }
+  async remove(id) {
+    await translateJobsTx('readwrite', (s) => s.delete(id));
+  }
+  /** Job dở dang gần nhất (running/cancelled) để hiện nút Tiếp tục. */
+  async latestUnfinished() {
+    const all = await this.getAll();
+    const open = all.filter((j) => j &&
+      (j.status === 'running' || j.status === 'cancelled'));
+    open.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+    return open.length ? open[0] : null;
+  }
+}
+
+if (typeof window !== 'undefined') window.TranslateJobStore = TranslateJobStore;

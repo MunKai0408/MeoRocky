@@ -31,12 +31,20 @@
 //              fallback:"mymemory+offline"} (HTTP 429)
 //     Lỗi khác: {ok:false, code, error, provider:"none",
 //              fallback:"mymemory+offline"}
+//   POST /  {texts:[...], target, source?} -> batch (mục A, đợt 13:52):
+//     OK:     {ok:true, translated:[...], provider:"google", chars, cached,
+//              month_used, month_limit} — Google v2 nhận q dạng mảng
+//     (tối đa 128 chuỗi) nên batch thật được, khác gtx miễn phí (chỉ
+//     dịch q đầu). Giới hạn: 1–100 chuỗi, mỗi chuỗi ≤2000 ký tự, tổng
+//     ≤5000 ký tự/request (cùng hạn mức tháng như dịch đơn).
 //
 // Triển khai: xem cloudflare/README.md (cần tài khoản Cloudflare của Joseph
 // + API key Google — KHÔNG có key nào trong repo này).
 
 const GOOGLE_API = "https://translation.googleapis.com/language/translate/v2";
 const MAX_TEXT_CHARS = 5000; // Google v2: tối đa 5000 ký tự/request
+const MAX_BATCH_TEXTS = 100; // batch: tối đa 100 chuỗi/request
+const MAX_BATCH_TEXT_CHARS = 2000; // mỗi chuỗi trong batch tối đa 2000 ký tự
 
 const DEFAULT_MONTHLY_LIMIT = 500000;
 const DEFAULT_RATE_PER_MINUTE = 60;
@@ -171,6 +179,77 @@ async function callGoogle(text, source, target, apiKey) {
   throw lastErr || new Error("Google lỗi không rõ.");
 }
 
+// Gọi Google Cloud Translation API v2 với q dạng MẢNG (tối đa 128 chuỗi
+// theo tài liệu Google). Trả mảng bản dịch song song với texts (đúng thứ
+// tự). Dùng lại đúng luật retry/backoff/Retry-After của callGoogle.
+// (gtx miễn phí KHÔNG làm được việc này — nó chỉ dịch q đầu tiên.)
+async function callGoogleBatch(texts, source, target, apiKey) {
+  const url = GOOGLE_API + "?key=" + encodeURIComponent(apiKey);
+  let lastErr = null;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    if (attempt > 0) {
+      await sleep(1000 * attempt);
+    }
+    let res;
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 15000);
+    try {
+      res = await fetch(url, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ q: texts, target, source, format: "text" }),
+        signal: ctrl.signal,
+      });
+    } catch (e) {
+      clearTimeout(timer);
+      const err = new Error(
+        e && e.name === "AbortError"
+          ? "Google quá thời gian chờ (15 giây)."
+          : "Không gọi được Google (" + (e && e.message ? e.message : e) + ").",
+      );
+      err.retryable = true;
+      throw err;
+    } finally {
+      clearTimeout(timer);
+    }
+    if (res.status === 200) {
+      let data;
+      try {
+        data = await res.json();
+      } catch (e) {
+        const err = new Error("Google trả về dữ liệu không đọc được.");
+        err.retryable = false;
+        throw err;
+      }
+      const list =
+        data && data.data && data.data.translations;
+      if (!Array.isArray(list) || list.length !== texts.length ||
+          !list.every((t) => t && typeof t.translatedText === "string")) {
+        const err = new Error("Google trả về thiếu bản dịch.");
+        err.retryable = false;
+        throw err;
+      }
+      return list.map((t) => t.translatedText);
+    }
+    if (res.status === 429 || (res.status >= 500 && res.status <= 504)) {
+      const wait = parseRetryAfterMs(res);
+      lastErr = new Error("Google giới hạn tốc độ (HTTP " + res.status + ").");
+      lastErr.status = res.status;
+      lastErr.retryable = true;
+      if (attempt < 2) {
+        await sleep(Math.min(wait, 10000));
+        continue;
+      }
+      throw lastErr;
+    }
+    const err = new Error("Google trả HTTP " + res.status + ".");
+    err.status = res.status;
+    err.retryable = false;
+    throw err;
+  }
+  throw lastErr || new Error("Google lỗi không rõ.");
+}
+
 export default {
   async fetch(request, env, ctx) {
     if (request.method === "OPTIONS") {
@@ -181,9 +260,9 @@ export default {
       return json({
         ok: true,
         service: "beartea-translate-proxy",
-        version: 1,
+        version: 2,
         monthly_limit: parseInt(env.MONTHLY_CHAR_LIMIT || String(DEFAULT_MONTHLY_LIMIT), 10),
-        note: "POST {text, target, source?} để dịch.",
+        note: "POST {text, target, source?} để dịch 1 chuỗi; POST {texts:[...], target, source?} để dịch batch (tối đa 100 chuỗi, tổng 5000 ký tự).",
       });
     }
     if (request.method !== "POST") {
@@ -219,24 +298,48 @@ export default {
     try {
       body = await request.json();
     } catch (e) {
-      return fail("bad_request", "Body phải là JSON {text, target, source?}.", 400);
+      return fail("bad_request", "Body phải là JSON {text, target, source?} hoặc {texts:[...], target, source?}.", 400);
     }
-    const text = body && body.text;
     const target = body && body.target;
     const source = (body && body.source) || "en";
-    if (typeof text !== "string" || !text.trim()) {
-      return fail("bad_request", "Thiếu text (chuỗi cần dịch).", 400);
-    }
-    if ([...text].length > MAX_TEXT_CHARS) {
-      return fail("bad_request", "Text quá dài (tối đa " + MAX_TEXT_CHARS + " ký tự/request).", 400);
-    }
     if (typeof target !== "string" || !/^[a-z]{2,5}$/i.test(target)) {
       return fail("bad_request", "target phải là mã ngôn ngữ (vd: vi, en).", 400);
     }
     if (typeof source !== "string" || !/^[a-z]{2,5}$/i.test(source)) {
       return fail("bad_request", "source phải là mã ngôn ngữ (vd: en, vi).", 400);
     }
-    const chars = [...text].length;
+    // Batch: {texts:[...]} — mỗi chuỗi ≤2000 ký tự, tổng ≤5000 ký tự.
+    const isBatch = Array.isArray(body && body.texts);
+    let texts = null;
+    let text = null;
+    let chars = 0;
+    if (isBatch) {
+      texts = body.texts;
+      if (!texts.length || texts.length > MAX_BATCH_TEXTS) {
+        return fail("bad_request", "Batch cần 1–" + MAX_BATCH_TEXTS + " chuỗi.", 400);
+      }
+      for (const t of texts) {
+        if (typeof t !== "string" || !t.trim()) {
+          return fail("bad_request", "Mỗi chuỗi trong batch phải là text không rỗng.", 400);
+        }
+        if ([...t].length > MAX_BATCH_TEXT_CHARS) {
+          return fail("bad_request", "Mỗi chuỗi trong batch tối đa " + MAX_BATCH_TEXT_CHARS + " ký tự.", 400);
+        }
+      }
+      chars = texts.reduce((n, t) => n + [...t].length, 0);
+      if (chars > MAX_TEXT_CHARS) {
+        return fail("bad_request", "Batch tối đa " + MAX_TEXT_CHARS + " ký tự tổng cộng.", 400);
+      }
+    } else {
+      text = body && body.text;
+      if (typeof text !== "string" || !text.trim()) {
+        return fail("bad_request", "Thiếu text (chuỗi cần dịch).", 400);
+      }
+      if ([...text].length > MAX_TEXT_CHARS) {
+        return fail("bad_request", "Text quá dài (tối đa " + MAX_TEXT_CHARS + " ký tự/request).", 400);
+      }
+      chars = [...text].length;
+    }
 
     // Giới hạn theo IP (chống 1 IP spam hết hạn mức tháng của mọi người).
     const ip = request.headers.get("CF-Connecting-IP") || "unknown";
@@ -271,6 +374,73 @@ export default {
 
     const usageKey = "usage:" + monthKey();
     const monthUsed = await kvInt(usageKv, usageKey);
+
+    // ---- Batch {texts:[...]}: cache từng chuỗi, gọi Google 1 lần cho
+    // phần chưa cache, ghi cache từng kết quả. Hạn mức tháng chỉ tính
+    // ký tự CHƯA cache (phần đã cache không tốn ký tự mới).
+    if (isBatch) {
+      const keys = [];
+      for (const t of texts) {
+        keys.push("t:" + (await sha256Hex(
+          [t, source, target, glossaryVersion].join("\n"))));
+      }
+      const cachedVals = [];
+      for (const k of keys) cachedVals.push(await cache.get(k));
+      const needIdx = [];
+      let uncachedChars = 0;
+      for (let i = 0; i < texts.length; i++) {
+        if (cachedVals[i] == null) {
+          needIdx.push(i);
+          uncachedChars += [...texts[i]].length;
+        }
+      }
+      if (monthUsed + uncachedChars > monthlyLimit) {
+        return fail(
+          "quota_exceeded",
+          "Đã hết " + monthlyLimit.toLocaleString("en-US") +
+            " ký tự miễn phí của tháng " + monthKey() +
+            " (đã dùng " + monthUsed.toLocaleString("en-US") +
+            "). Client tự rơi về MyMemory + từ điển offline, không phát sinh phí.",
+          429,
+          { month_used: monthUsed, month_limit: monthlyLimit },
+        );
+      }
+      const out = cachedVals.slice();
+      if (needIdx.length) {
+        await usageKv.put(usageKey, String(monthUsed + uncachedChars));
+        let got;
+        try {
+          got = await callGoogleBatch(
+            needIdx.map((i) => texts[i]), source, target, env.GOOGLE_API_KEY);
+        } catch (e) {
+          await usageKv.put(usageKey, String(monthUsed)); // hoàn lại
+          const failures = (breaker.failures || 0) + 1;
+          const openUntil = failures >= breakerThreshold
+            ? Date.now() + breakerCooldownS * 1000 : 0;
+          await usageKv.put("breaker",
+            JSON.stringify({ failures, open_until: openUntil }));
+          const status = (e && e.status === 429) ? 429 : 502;
+          return fail(
+            e && e.status === 429 ? "google_rate_limited" : "google_error",
+            "Google lỗi: " + (e && e.message ? e.message : e) +
+              " Client tự dùng MyMemory + từ điển offline.",
+            status,
+            { month_used: monthUsed, month_limit: monthlyLimit },
+          );
+        }
+        await usageKv.put("breaker", JSON.stringify({ failures: 0, open_until: 0 }));
+        for (let j = 0; j < needIdx.length; j++) {
+          out[needIdx[j]] = got[j];
+          await cache.put(keys[needIdx[j]], got[j],
+            { expirationTtl: 30 * 24 * 3600 });
+        }
+      }
+      return json({
+        ok: true, translated: out, provider: "google", chars,
+        cached: needIdx.length === 0,
+        month_used: monthUsed + uncachedChars, month_limit: monthlyLimit,
+      });
+    }
 
     // Cache KV: cùng text + ngôn ngữ + glossary_version thì không gọi
     // Google, không tính ký tự.

@@ -12,7 +12,7 @@
   "boot": {
     "ok": true,
     "detail": "{\"ok\":true,\"plugins\":20,\"plugin_ids\":[\"apple_plist\",\"apple_strings\",\"cocos_detect\",\"csv_table\",\"defold_detect\",\"gamemaker_detect\",\"generic_strings\",\"godot_pck\",\"godot_translation\",\"json_text\",\"po_mo\",\"properties\",\"resx\",\"sqlite_loc\",\"unreal_locres\",\"unreal_pak\",\"xliff\",\"xml_strings\",\"yaml_ini\",\"zip\"],\"problems\":[]}",
-    "seconds": 1.1
+    "seconds": 1
   },
   "extract_xml_trigger_no_crash": {
     "ok": true,

@@ -12,12 +12,12 @@
   "load_lz4": {
     "ok": true,
     "detail": "loadPackage lz4 OK",
-    "seconds": 0.3
+    "seconds": 0.2
   },
   "write_site_files": {
     "ok": true,
     "detail": "87 file pb3/ + font b64 (132948 byte) ghi vào /pb3web",
-    "seconds": 0.1
+    "seconds": 0
   },
   "boot": {
     "ok": true,
@@ -46,7 +46,7 @@
   },
   "extract": {
     "ok": true,
-    "detail": "decision=done total=21 files=6 zip=3484B phases=extract:inventory,extract:layers,extract:candidates,extract:sniff,extract:probe,extract:export progress_events=74",
+    "detail": "decision=done total=21 files=6 zip=3884B phases=extract:inventory,extract:layers,extract:candidates,extract:sniff,extract:probe,extract:export progress_events=74",
     "seconds": 0.1
   },
   "translate_offline": {

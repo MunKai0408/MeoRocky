@@ -135,6 +135,8 @@ class ExtractionRequest:
     # "probe" | "export". None = không báo (mặc định, giữ nguyên hành vi cũ).
     tempdir: Optional[str] = None
     root: Optional[str] = None         # gốc dự án (đọc config/locales.toml)
+    source_paths: Optional[List[str]] = None  # vpath chỉ trích xuất các entry này (None/rỗng = tự động, xét hết như cũ); entry con "w::..." của một entry đã chọn cũng được xét
+    locales: Optional[set] = None      # lọc mềm nhiều locale ở vòng export (vd {"en", "zh"}); None = không lọc. Khác req.locale (lọc cứng 1 locale + E_LOCALE_NOT_FOUND khi vắng): lọc mềm KHÔNG fail cả đợt khi một locale vắng mặt.
 
 
 @dataclass
@@ -142,6 +144,7 @@ class FileOutcome:
     path: str
     plugin: str
     locale: Optional[str]
+    source: str = ""                   # nguồn gốc (đơn vị Unity chứa TextAsset, hoặc chính path với file thường) — để báo `output ← source`
     entries: int = 0
     ok: int = 0
     empty: int = 0
@@ -186,53 +189,115 @@ class _Layer:
         self.kind = kind
 
 
-def _expand_unity(data: bytes, vpath: str, backend, limits) -> Dict[str, bytes]:
-    """TextAsset trong một entry Unity -> {vpath ảo: script UTF-8}.
+_UNITY_SOURCE_EXTS = (".assets", ".unity3d", ".bundle", ".resS")
+
+
+def _source_of(path: str) -> str:
+    """Nguồn gốc của 1 file trích xuất (để báo `output ← source`).
+
+    - TextAsset Unity: đơn vị chứa nó — phần trước "::" mà kết thúc bằng
+      đuôi Unity (.assets/.unity3d/.bundle), vd
+      `.../localization-locales_assets_all.bundle::CAB-...::en.json`
+      -> `.../localization-locales_assets_all.bundle`;
+      file .assets nằm trong ZIP: `game.zip::Data/x.assets::en`
+      -> `game.zip::Data/x.assets`.
+    - File thường: chính đường dẫn đó.
+    - Bundle không có đuôi Unity (chỉ nhận bằng magic UnityFS) thì trả
+      nguyên đường dẫn ảo (vẫn nhận ra nguồn, chỉ dài hơn)."""
+    parts = str(path).split("::")
+    if len(parts) >= 2:
+        for i in range(1, len(parts)):
+            prefix = "::".join(parts[:i])
+            if prefix.lower().endswith(_UNITY_SOURCE_EXTS):
+                return prefix
+    return str(path)
+
+
+def _expand_unity(data: bytes, vpath: str, backend, limits) -> Tuple[Dict[str, bytes], List[str]]:
+    """TextAsset trong một entry Unity -> ({vpath ảo: script UTF-8}, notes).
 
     Bundle: mở từng entry .assets bên trong rồi đọc TextAsset; file
     .assets độc lập: đọc thẳng. TextAsset hỏng bị bỏ qua (kèm ghi chú
-    trong warnings của SerializedFile, không làm hỏng cả file)."""
+    trong warnings của SerializedFile, không làm hỏng cả file).
+
+    KHÔNG BAO GIỜ bỏ qua lặng lẽ (lỗi en.json 2026-11-16: bundle
+    localization biến mất khỏi report vì mọi đường lỗi đều `return {}`
+    im lặng): mọi vấn đề đều ghi vào `notes` — parse lỗi (kèm mã),
+    entry không phải SerializedFile, bundle cho 0 TextAsset — để caller
+    ghi vào skipped/log thay vì để bundle biến mất."""
     out: Dict[str, bytes] = {}
+    notes: List[str] = []
     assets: List[Tuple[str, Any]] = []
     det = unity_sdk.detect_bundle(data)
     if det is not None:
         try:
             bundle = unity_sdk.parse_bundle(data, backend, limits, where=vpath)
-        except PB3Error:
-            return out
+        except PB3Error as exc:
+            notes.append("parse bundle lỗi [%s]: %s"
+                         % (exc.code, exc.message_vi or exc.detail))
+            return out, notes
         for name in bundle.entry_names():
             try:
                 entry_data = bundle.get_entry(name)
-            except PB3Error:
+            except PB3Error as exc:
+                notes.append("không đọc được entry %s trong bundle [%s]"
+                             % (name, exc.code))
                 continue
             try:
                 assets.append((name, unity_sdk.parse_serialized(entry_data, limits, where=name)))
-            except PB3Error:
+            except PB3Error as exc:
+                notes.append("entry %s không phải SerializedFile [%s]: %s"
+                             % (name, exc.code, exc.message_vi or exc.detail))
                 continue
     else:
         try:
             assets.append(("", unity_sdk.parse_serialized(data, limits, where=vpath)))
-        except PB3Error:
-            return out
+        except PB3Error as exc:
+            notes.append("parse SerializedFile lỗi [%s]: %s"
+                         % (exc.code, exc.message_vi or exc.detail))
+            return out, notes
+    n_text_assets = 0
     for assets_name, sf in assets:
-        for _pid, name, script in sf.text_assets():
+        tas = sf.text_assets()
+        n_text_assets += len(tas)
+        for _pid, name, script in tas:
             safe = _sanitize_segment(name)
             base = vpath + ("::" + assets_name if assets_name else "")
             out[base + "::" + safe] = script.encode("utf-8")
-    return out
+    if not out:
+        notes.append("không có TextAsset nào (%d SerializedFile đã mở, %d TextAsset)"
+                     % (len(assets), n_text_assets))
+    return out, notes
 
 
 def _build_layers(root_vfs, inv: List[disc.InventoryEntry], limits, backend, log,
-                  progress_fn: Optional[Callable[[str, int, Optional[int]], None]] = None
+                  progress_fn: Optional[Callable[[str, int, Optional[int]], None]] = None,
+                  skipped: Optional[List[Dict[str, Any]]] = None
                   ) -> List[_Layer]:
     """Các lớp VFS: gốc + container lồng + TextAsset Unity ảo (MemoryVFS).
 
     progress_fn("layers", đã_xong, tổng): báo sau mỗi entry đã xử lý xong
-    (lag 1 entry: báo số entry trước đó để % luôn là việc ĐÃ xong)."""
+    (lag 1 entry: báo số entry trước đó để % luôn là việc ĐÃ xong).
+
+    KHÔNG BAO GIỜ bỏ qua lặng lẽ (lỗi en.json 2026-11-16): container/
+    file Unity nào đọc lỗi, quá giới hạn, hoặc cho 0 TextAsset đều ghi
+    vào `skipped` (nếu truyền vào) kèm lý do + đường dẫn đầy đủ, và log.
+    Giới hạn 64MB/entry vẫn giữ (bảo vệ RAM tab iPhone; bundle text
+    localization >64MB là không tưởng) — nhưng vượt giới hạn thì phải
+    BÁO RÕ để lần chạy sau trên IPA thật đọc được lý do, thay vì bundle
+    biến mất như trước."""
     layers = [_Layer("", root_vfs, "root")]
     nested = NestedVFS(root_vfs, limits=limits)
     virtual: Dict[str, bytes] = {}
     total = len(inv)
+
+    def _add_skipped(path: str, reason: str) -> None:
+        if skipped is None:
+            return
+        if any(s.get("path") == path for s in skipped):
+            return
+        skipped.append({"path": path, "reason": reason})
+
     for i, entry in enumerate(inv, 1):
         if i > 1 and progress_fn is not None:
             try:
@@ -242,26 +307,50 @@ def _build_layers(root_vfs, inv: List[disc.InventoryEntry], limits, backend, log
         if entry.kind == "container":
             try:
                 data = bytes(nested.read(entry.path, None))
-            except PB3Error:
+            except PB3Error as exc:
+                _add_skipped(entry.path, "không đọc được container [%s]: %s"
+                             % (exc.code, exc.message_vi or exc.detail))
+                log("container %s: không đọc được [%s]" % (entry.path, exc.code))
                 continue
             if len(data) > limits.max_entry_bytes:
+                _add_skipped(entry.path, "container %d byte > giới hạn entry %d byte"
+                             % (len(data), limits.max_entry_bytes))
+                log("container %s: %d byte > giới hạn %d, bỏ qua"
+                    % (entry.path, len(data), limits.max_entry_bytes))
                 continue
             try:
                 child = open_vfs(data, limits=limits, source_name=entry.path)
-            except PB3Error:
+            except PB3Error as exc:
+                _add_skipped(entry.path, "không mở được container [%s]: %s"
+                             % (exc.code, exc.message_vi or exc.detail))
+                log("container %s: không mở được [%s]" % (entry.path, exc.code))
                 continue
             layers.append(_Layer(entry.path + "::", child, "nested"))
         elif entry.kind == "unity":
             if entry.size > limits.max_entry_bytes:
+                _add_skipped(entry.path, "file Unity %d byte > giới hạn entry %d byte — "
+                             "không mở bundle/.assets (cần nâng giới hạn Unity nếu "
+                             "bundle thật vượt ngưỡng này)" % (entry.size, limits.max_entry_bytes))
+                log("Unity: %s: %d byte > giới hạn %d, bỏ qua"
+                    % (entry.path, entry.size, limits.max_entry_bytes))
                 continue
             try:
                 data = bytes(nested.read(entry.path, None))
-            except PB3Error:
+            except PB3Error as exc:
+                _add_skipped(entry.path, "không đọc được file Unity [%s]: %s"
+                             % (exc.code, exc.message_vi or exc.detail))
+                log("Unity: %s: không đọc được [%s]" % (entry.path, exc.code))
                 continue
-            got = _expand_unity(data, entry.path, backend, limits)
+            got, notes = _expand_unity(data, entry.path, backend, limits)
             if got:
                 virtual.update(got)
                 log("Unity: %s -> %d TextAsset" % (entry.path, len(got)))
+                for n in notes:
+                    log("Unity: %s: %s" % (entry.path, n))
+            else:
+                reason = "; ".join(notes) if notes else "không có TextAsset nào"
+                _add_skipped(entry.path, reason)
+                log("Unity: %s -> 0 TextAsset (%s)" % (entry.path, reason))
     if progress_fn is not None:
         try:
             progress_fn("layers", total, total)
@@ -294,6 +383,9 @@ def run_extraction(req: ExtractionRequest) -> ExtractionResult:
     t0 = time.monotonic()
     limits = req.limits or Limits()
     logs: List[str] = []
+    # Lọc mềm nhiều locale: chuẩn hóa về set chữ thường; rỗng = không lọc.
+    locales = ({str(c).lower() for c in req.locales} if req.locales else None)
+    wanted_txt = "/".join(sorted(locales)) if locales else ""
 
     def log(msg: str) -> None:
         logs.append(msg)
@@ -357,6 +449,26 @@ def run_extraction(req: ExtractionRequest) -> ExtractionResult:
         if e.kind == "excluded":
             result.skipped.append({"path": e.path, "reason": e.excluded_reason or "loại trừ"})
 
+    # Chọn file (UI: source_paths): chỉ xét các entry đã chọn (+ entry con
+    # "w::..." của một entry đã chọn, vd file trong ZIP đã chọn). Entry
+    # không được chọn ghi skipped kèm lý do, không biến mất lặng lẽ.
+    # Rỗng/None = tự động (xét hết như cũ — tool tự tìm đúng file).
+    if req.source_paths:
+        wanted_paths = {str(p) for p in req.source_paths}
+        kept_inv = []
+        for e in inv:
+            if e.kind == "excluded":
+                kept_inv.append(e)
+                continue
+            if e.path in wanted_paths or any(
+                    e.path.startswith(w + "::") for w in wanted_paths):
+                kept_inv.append(e)
+                continue
+            result.skipped.append({"path": e.path,
+                                   "reason": "không được chọn (chỉ trích xuất file đã chọn)"})
+            log("bỏ qua %s: không được chọn" % e.path)
+        inv = kept_inv
+
     # -- bước 2: engine hints ----------------------------------------------
     names = [e.path for e in inv]
     heads: Dict[str, bytes] = {}
@@ -379,7 +491,7 @@ def run_extraction(req: ExtractionRequest) -> ExtractionResult:
     # -- bước 3: candidate generation ---------------------------------------
     backend = unity_sdk.UnityBackend("AUTO", limits)
     layers = _build_layers(root_vfs, inv, limits, backend, log,
-                           progress_fn=_progress)
+                           progress_fn=_progress, skipped=result.skipped)
     records = [r for r in req.registry.active()
                if r.manifest is not None and r.manifest.kind in ("format", "extractor")]
     log("plugin định dạng: %d (%s)"
@@ -587,6 +699,27 @@ def run_extraction(req: ExtractionRequest) -> ExtractionResult:
         # MAX_PROBE_CANDIDATES thì không báo đủ tổng).
         _progress("probe", _probe_i, _probe_total)
     log("probe ok: %d ứng viên" % len(probed))
+    # Lọc mềm nhiều locale (req.locales, vd {"en", "zh"}): bỏ ứng viên có
+    # locale phát hiện ĐÃ RÕ mà không thuộc tập lọc — ghi skipped, không
+    # để nhóm locale bị loại gây ASK rồi làm hỏng cả đợt. Entry chưa rõ
+    # locale (None) vẫn đi tiếp; vòng export mới quyết theo locale thật
+    # của từng entry (vd CSV đa locale không có locale trong tên).
+    if locales is not None:
+        kept_probed = []
+        _locale_skip_seen = set()
+        for item in probed:
+            code, _conf, _ev = disc.detect_locale(item["full"], locale_table)
+            if code is not None and code not in locales:
+                # Cùng đường dẫn có thể được probe bởi nhiều plugin: ghi
+                # skipped 1 lần cho 1 đường dẫn, khỏi trùng lặp.
+                if item["full"] not in _locale_skip_seen:
+                    _locale_skip_seen.add(item["full"])
+                    result.skipped.append({"path": item["full"],
+                                           "reason": "locale %s không phải %s"
+                                                     % (code, wanted_txt)})
+                continue
+            kept_probed.append(item)
+        probed = kept_probed
     if not probed:
         result.decision = "none"
         result.report = _build_report(req, result, logs, t0)
@@ -677,6 +810,11 @@ def run_extraction(req: ExtractionRequest) -> ExtractionResult:
                 tables.append(LocTable.from_key_values(
                     dict(kv), adapter_id=rec.plugin_id,
                     locale=loc_code, source=src))
+                if locales is not None and loc_code not in locales:
+                    result.skipped.append({"path": item["full"],
+                                           "reason": "locale %s không phải %s"
+                                                     % (loc_code or "không xác định", wanted_txt)})
+                    continue
                 if req.locale not in (None, "all") and loc_code != req.locale:
                     continue
                 outcome = FileOutcome(item["full"], rec.plugin_id,
@@ -686,7 +824,8 @@ def run_extraction(req: ExtractionRequest) -> ExtractionResult:
                                       source_kind="raw_scan" if rec.plugin_id == "generic_strings"
                                       else "verified",
                                       warnings=["dùng checkpoint, không parse lại"],
-                                      sha256=file_sha)
+                                      sha256=file_sha,
+                                      source=_source_of(item["full"]))
                 outcome.exported = reused.get("exported", {}).get(loc)
                 result.files.append(outcome)
                 result.total_entries += len(kv)
@@ -706,6 +845,15 @@ def run_extraction(req: ExtractionRequest) -> ExtractionResult:
             by_locale.setdefault(e.locale or table.locale or item.get("group_locale"), []).append(e)
         for loc, entries in sorted(by_locale.items(), key=lambda kv: (kv[0] or "")):
             all_locales.add(loc)
+            # Lọc mềm nhiều locale (req.locales): chỉ trích xuất entry có
+            # locale thuộc tập lọc; locale khác hoặc không xác định được thì
+            # bỏ qua kèm lý do — KHÔNG fail cả đợt khi một locale vắng mặt
+            # (khác req.locale cứng ở dưới).
+            if locales is not None and loc not in locales:
+                result.skipped.append({"path": item["full"],
+                                       "reason": "locale %s không phải %s"
+                                                 % (loc or "không xác định", wanted_txt)})
+                continue
             if req.locale not in (None, "all") and loc != req.locale:
                 continue
             outcome = _outcome_for(table, rec, item["full"], loc, entries)
@@ -921,7 +1069,7 @@ def _outcome_for(table: LocTable, rec, full_path: str, locale: Optional[str],
                        warnings=sorted(set(warnings)),
                        editable=bool(rec.manifest.can_write),
                        source_kind="raw_scan" if rec.plugin_id == "generic_strings" else "verified",
-                       kv=kv)
+                       kv=kv, source=_source_of(full_path))
 
 
 # ------------------------------------------------------------------ export
@@ -988,14 +1136,20 @@ def _export(req: ExtractionRequest, result: ExtractionResult, source_hash: str,
         ent["locales"][outcome.locale or ""] = dict(outcome.kv)
         ent["exported"][outcome.locale or ""] = fname
     _save_checkpoint(req, source_hash, checkpoint_files)
-    _write_reports(req, result)
+    _write_reports(req, result, logs)
 
 
-def _write_reports(req: ExtractionRequest, result: ExtractionResult) -> None:
-    """Ghi extraction_report.txt/.json vào out_dir (kể cả khi có lỗi)."""
+def _write_reports(req: ExtractionRequest, result: ExtractionResult,
+                   logs: List[str]) -> None:
+    """Ghi extraction_report.txt/.json vào out_dir (kể cả khi có lỗi).
+
+    LƯU Ý (lỗi en.json 2026-11-16): trước đây hàm này gọi
+    `_build_report(req, result, [], 0.0)` — truyền logs RỖNG — nên file
+    report trên đĩa LUÔN có `"log": []` dù `result.report` trong bộ nhớ
+    có log thật. Nay truyền `logs` thật qua `_export`."""
     if req.out_dir is None:
         return
-    report = _build_report(req, result, [], 0.0)
+    report = _build_report(req, result, logs, 0.0)
     result.report = report
     try:
         with open(os.path.join(req.out_dir, REPORT_TXT), "w", encoding="utf-8") as fh:
@@ -1022,8 +1176,11 @@ def _build_report(req: ExtractionRequest, result: ExtractionResult, logs: List[s
         "engine_confidence": round(result.engine_confidence, 2),
         "engine_reasons": list(result.engine_reasons),
         "locale_requested": req.locale,
+        "locales_requested": sorted(req.locales) if req.locales else None,
+        "source_paths": list(req.source_paths) if req.source_paths else None,
         "decision": result.decision,
         "files": [{"path": f.path, "plugin": f.plugin, "locale": f.locale,
+                   "source": f.source or _source_of(f.path),
                    "entries": f.entries, "ok": f.ok, "empty": f.empty,
                    "conflicts": f.conflicts, "unparsed": f.unparsed,
                    "warnings": list(f.warnings), "exported": f.exported,

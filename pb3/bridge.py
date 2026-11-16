@@ -33,7 +33,6 @@ mỗi lần KB đổi, kb_restore nạp lại lúc boot); tải lại trang thì
 phục lại. Nút xuất .sqlite (kb_export) vẫn là đường sao lưu chính.
 """
 
-import asyncio
 import base64
 import hashlib
 import io
@@ -258,12 +257,19 @@ def unity_inspect_entry(path, entry):
         return _err(e)
 
 
-def extract(path):
+def extract(path, source_paths=None, locales=None):
     """Trích xuất text đầy đủ (pipeline 7 bước của PB3).
 
     Kết quả ghi ra /tmp/pb3out rồi nén thành /tmp/extract.zip để JS tải về.
     progress_fn báo tiến độ thật từng bước (inventory/layers/candidates/
     sniff/probe/export) về JS qua _emit.
+
+    source_paths: danh sách vpath chỉ trích xuất các entry đó (None/rỗng
+    = tự động, tool tự tìm file). locales: danh sách locale lọc mềm
+    (vd ["en", "zh"]; None = không lọc). Mỗi file trả kèm "source"
+    (nguồn gốc: `en.json ← ...localization-locales_assets_all.bundle`),
+    "skipped" (mọi file bỏ qua kèm lý do — không bao giờ im lặng) và
+    "log" (log pipeline, vd "Unity: ... -> N TextAsset").
     """
     try:
         from sdk import extraction as ext
@@ -276,13 +282,28 @@ def extract(path):
         def _pf(step, done, total):
             _emit("extract:" + str(step), done, total)
 
+        # JS (Pyodide) đưa list sang dạng JsProxy, và null sang JsNull
+        # (KHÔNG phải None — `is not None` sai). Dùng truthiness như
+        # batch_run vẫn làm: JsNull falsy; list rỗng -> không lọc.
+        paths = None
+        if source_paths:
+            paths = [str(p) for p in list(source_paths)]
+            if not paths:
+                paths = None
+        locs = None
+        if locales:
+            locs = {str(c).lower() for c in list(locales) if str(c).strip()}
+            if not locs:
+                locs = None
         req = ext.ExtractionRequest(
             source=path, registry=_reg, tempdir=str(_app.paths.temp),
-            root=WEB_ROOT, out_dir=out_dir, progress_fn=_pf)
+            root=WEB_ROOT, out_dir=out_dir, progress_fn=_pf,
+            source_paths=paths, locales=locs)
         r = ext.run_extraction(req)
         files = [{"path": f.path, "plugin": f.plugin,
                   "entries": int(f.entries), "locale": f.locale,
-                  "exported": f.exported} for f in r.files]
+                  "exported": f.exported,
+                  "source": f.source or f.path} for f in r.files]
         zpath = "/tmp/extract.zip"
         if os.path.exists(zpath):
             os.remove(zpath)
@@ -294,11 +315,57 @@ def extract(path):
         return json.dumps({
             "ok": bool(r.ok), "decision": str(r.decision),
             "total_entries": int(r.total_entries), "files": files,
+            "skipped": list(r.skipped or []),
+            "log": list((r.report or {}).get("log") or []),
             "errors": list(r.errors or []), "zip_path": zpath,
             "zip_bytes": os.path.getsize(zpath),
         }, ensure_ascii=False)
     except Exception as e:  # noqa: BLE001
         return _err(e)
+
+
+MAX_READ_EXTRACTED = 4 * 1024 * 1024   # read_extracted: tối đa 4MB nạp vào ô dịch
+
+
+def read_extracted(name):
+    """Đọc 1 file JSON đã trích xuất trong /tmp/pb3out (để nạp vào tab Dịch).
+
+    Chỉ nhận tên file trần (không đường dẫn — chống directory traversal
+    trong FS worker); file phải là JSON hợp lệ và <= 4MB (ô dịch + bộ nhớ
+    tab iPhone). Lớn hơn thì báo rõ, user tải extract.zip về rồi dán
+    từng phần. Không cần gửi lại file game (worker đã có /tmp/pb3out từ
+    đợt extract vừa rồi)."""
+    try:
+        if not isinstance(name, str) or not name or "/" in name or "\\" in name \
+                or name in (".", ".."):
+            raise ValueError("Tên file không hợp lệ: %r." % (name,))
+        fp = os.path.join("/tmp/pb3out", name)
+        if not os.path.isfile(fp):
+            raise ValueError(
+                "Không tìm thấy %s trong kết quả trích xuất vừa rồi. "
+                "Hãy chạy Trích xuất trước." % name)
+        n = os.path.getsize(fp)
+        if n > MAX_READ_EXTRACTED:
+            raise ValueError(
+                "File %s quá lớn (%s) để nạp vào ô dịch (giới hạn %s). "
+                "Hãy tải extract.zip về rồi dán từng phần vào ô dịch."
+                % (name, _fmt_bytes(n), _fmt_bytes(MAX_READ_EXTRACTED)))
+        with open(fp, "r", encoding="utf-8") as fh:
+            text = fh.read()
+        json.loads(text)   # phải là JSON hợp lệ mới nạp vào ô dịch
+        return json.dumps({"ok": True, "name": name, "text": text,
+                           "bytes": int(n)}, ensure_ascii=False)
+    except Exception as e:  # noqa: BLE001
+        return _err(e)
+
+
+def _fmt_bytes(n):
+    """Số byte -> chuỗi gọn (dùng cho thông báo read_extracted)."""
+    for unit in ("B", "KB", "MB"):
+        if n < 1024 or unit == "MB":
+            return "%d %s" % (n, unit) if unit == "B" else "%.1f %s" % (n, unit)
+        n /= 1024.0
+    return "%d B" % n
 
 
 def translate_json(json_text, to="vi", credit=True):
@@ -348,24 +415,125 @@ def _gt_error_text(exc):
     return "Google Translate lỗi: %s" % msg
 
 
+# --- Batch dịch (mục A, đợt bổ sung 13:52) ---
+# Gộp tối đa 100 chuỗi + 5000 ký tự/batch (khớp giới hạn proxy Cloudflare
+# + giữ q joined-text vừa phải cho gtx). Batch lỗi liên tiếp 2 lần thì
+# tắt batch, về dịch từng chuỗi cho phần còn lại.
+BATCH_MAX_STRINGS = 100
+BATCH_MAX_CHARS = 5000
+_BATCH_FAIL_LATCH = 2
+
+_HIGH_PRIO_TOKENS = ("menu", "ui", "button", "btn", "title", "item",
+                     "name", "label", "tab", "setting", "option",
+                     "header", "footer", "hud")
+_LOW_PRIO_TOKENS = ("log", "desc", "description", "dialogue", "dialog",
+                    "story", "lore", "flavor", "note")
+_LOW_PRIO_MAX_CHARS = 300
+
+
+def _norm_segment_text(text):
+    """Chuẩn hoá để khử trùng lặp: gộp khoảng trắng, bỏ trắng đầu/cuối."""
+    return " ".join(str(text).split())
+
+
+def _priority_of(key, text):
+    """Thứ tự dịch: 0 = menu/UI/tên item trước; 1 = thường; 2 = log/mô tả
+    dài sau. Khớp theo tên key (chuỗi con, chữ thường) + độ dài text."""
+    low_key = str(key).lower()
+    if len(text) > _LOW_PRIO_MAX_CHARS:
+        return 2
+    if any(tok in low_key for tok in _LOW_PRIO_TOKENS):
+        return 2
+    if any(tok in low_key for tok in _HIGH_PRIO_TOKENS):
+        return 0
+    return 1
+
+
+def _gt_kind(exc):
+    """Kind lỗi JS (vd 'network'/'cancelled'/'quota') từ lỗi JS bọc trong
+    Python. Thử đọc thuộc tính kind (như _gt_error_text), nếu không được
+    thì bóc từ chuỗi lỗi dạng '(kind): ...'; không bóc được thì ''."""
+    try:
+        kind = getattr(exc, "kind", None)
+    except Exception:
+        kind = None
+    if isinstance(kind, str) and kind:
+        return kind
+    try:
+        msg = str(exc)
+    except Exception:
+        return ""
+    if "(" in msg and ")" in msg:
+        inner = msg.split("(", 1)[1].split(")", 1)[0].strip()
+        if inner and " " not in inner and len(inner) <= 32:
+            return inner
+    return ""
+
+
+def _coerce_batch_result(got):
+    """Chuẩn hoá kết quả js.pb3_google_translate_batch về
+    (translations, mode). Hợp đồng JS: chuỗi JSON
+    {"translations":[...], "mode":"proxy-batch"|"gtx-joined"}; chấp nhận
+    cả mảng JS trực tiếp (mode "batch") để khỏi vỡ nếu worker trả khác.
+    Trả (None, "") khi không đọc được."""
+    mode = "batch"
+    data = got
+    if isinstance(got, str):
+        try:
+            parsed = json.loads(got)
+        except Exception:
+            return None, ""
+        if not isinstance(parsed, dict):
+            return None, ""
+        mode = str(parsed.get("mode") or "batch")
+        data = parsed.get("translations")
+    else:
+        try:
+            to_py = getattr(data, "to_py", None)
+            if callable(to_py):
+                data = to_py()
+        except Exception:
+            pass
+    if data is None:
+        return None, ""
+    try:
+        items = list(data)
+    except Exception:
+        return None, ""
+    if not all(isinstance(x, str) for x in items):
+        return None, ""
+    return items, mode
+
+
 async def translate_json_google(json_text, to="vi", credit=True):
     """Dịch bảng key-value bằng Google Translate thật qua fetch() của JS.
 
-    Luồng: Python (async) gọi `js.pb3_google_translate` (gt.js) cho từng
-    đoạn text đã che placeholder — 1 chuỗi/request, cách nhau 0.4 giây
-    (luật bản iSH); gt.js tự thử lại tối đa 3 lần với backoff khi 429/5xx.
-    Đoạn nào Google lỗi (mất mạng, CORS, 429 hết retry, trang Sorry) thì
-    dùng từ điển offline cho đoạn đó rồi dịch tiếp, không crash; lỗi đầu
-    tiên ghi vào network_error. Chỉ dịch VALUE, giữ KEY; placeholder
-    ({0}, %s), thẻ, xuống dòng được che/khôi phục như bản iSH; credit
-    'Việt Hoá Bởi Bear' gắn như translate_json. Nút Hủy: Python kiểm tra
-    `js.pb3_google_cancelled()` trước mỗi chuỗi (await fetch nhường lại
-    event loop nên worker vẫn nhận được message hủy) — hủy thì trả kết
+    Luồng (batch, mục A): Python (async) gọi `js.pb3_google_translate_batch`
+    (gt.js) cho từng BATCH tối đa 100 chuỗi/5000 ký tự — gtx không nhận
+    nhiều q/request (chỉ dịch q đầu, đã kiểm chứng live) nên batch gộp N
+    chuỗi thành 1 q với marker ⟦1⟧, ⟦2⟧... rồi tách lại; proxy Cloudflare
+    (nếu có URL) thì batch thật bằng q mảng của Translation v2. Trước khi
+    gửi: khử trùng lặp (dòng đã che giống nhau chỉ dịch 1 lần) + tra từ
+    điển offline TRƯỚC (glossary-first) + sắp theo ưu tiên (menu/UI/tên
+    item trước, log/mô tả dài sau). Batch lỗi thì dịch lại từng chuỗi cho
+    batch đó (qua `js.pb3_google_translate`); batch lỗi liên tiếp 2 lần
+    thì tắt batch cho phần còn lại. Không còn sleep 0,4s cố định — tốc độ
+    gọi Google do token bucket bên gt.js giới hạn (2 dồn, nạp 1/500ms) +
+    backoff khi 429. Đoạn nào Google lỗi thì dùng từ điển offline cho đoạn
+    đó rồi dịch tiếp, không crash; lỗi đầu tiên ghi vào network_error.
+    Proxy báo hết hạn mức tháng (quota) thì dừng gọi Google luôn. Chỉ
+    dịch VALUE, giữ KEY; placeholder ({0}, %s), thẻ, xuống dòng được
+    che/khôi phục như bản iSH; credit 'Việt Hoá Bởi Bear' gắn như
+    translate_json. Nút Hủy: Python kiểm tra `js.pb3_google_cancelled()`
+    trước mỗi batch/chuỗi, JS abort cả fetch đang chạy — hủy thì trả kết
     quả từng phần với cancelled=True.
 
     Kết quả thêm: translated_by ("google"/"mixed"/"offline"), google_count,
-    glossary_count, network_error, cancelled. Hàm này là async — worker.js
-    await Promise trả về trước khi gửi kết quả về main thread.
+    glossary_count, network_error, cancelled, deduped (số đoạn trùng đã
+    khử), unique_segments, batches, batch_requests, single_requests,
+    batch_mode ("gtx-joined"/"proxy-batch"/"single"/"none"). Hàm này là
+    async — worker.js await Promise trả về trước khi gửi kết quả về main
+    thread.
     """
     try:
         from sdk.translate import (OfflineGlossaryProvider, apply_credit,
@@ -384,9 +552,11 @@ async def translate_json_google(json_text, to="vi", credit=True):
         try:
             import js as _js
             _gt = getattr(_js, "pb3_google_translate", None)
+            _gt_batch = getattr(_js, "pb3_google_translate_batch", None)
             _cancel_fn = getattr(_js, "pb3_google_cancelled", None)
         except Exception:
             _gt = None
+            _gt_batch = None
             _cancel_fn = None
 
         def _is_cancelled():
@@ -435,45 +605,181 @@ async def translate_json_google(json_text, to="vi", credit=True):
         total = len(segments)
 
         seg_out = {}  # (key, line_no) -> (translated_masked_or_None, origin)
+        # --- Khử trùng lặp: gom các dòng đã che giống nhau (chuẩn hoá
+        # khoảng trắng) về 1 unique; dịch 1 lần rồi map lại cho mọi key.
+        # An toàn: unmask dùng tokens riêng của từng dòng (xem mask_line).
+        uniques = []  # {"masked", "keys":[(key,line_no)], "prio"}
+        uid_of_norm = {}
+        for (key, line_no, masked, _tokens) in segments:
+            norm = _norm_segment_text(masked)
+            uid = uid_of_norm.get(norm)
+            if uid is None:
+                uid = len(uniques)
+                uid_of_norm[norm] = uid
+                uniques.append({"masked": masked,
+                                "keys": [(key, line_no)],
+                                "prio": _priority_of(key, masked)})
+            else:
+                uniques[uid]["keys"].append((key, line_no))
+                p = _priority_of(key, masked)
+                if p < uniques[uid]["prio"]:
+                    uniques[uid]["prio"] = p
+        deduped = len(segments) - len(uniques)
+
+        # --- Tra từ điển offline TRƯỚC (glossary-first): chuỗi nào từ
+        # điển biết thì không gửi Google (tiết kiệm request + không tốn
+        # hạn mức proxy).
+        uniq_val = [None] * len(uniques)   # masked đã dịch / None
+        uniq_origin = [""] * len(uniques)
+        if uniques:
+            fb_all = fallback.translate_batch(
+                [u["masked"] for u in uniques], src, to)
+            for uid, val in enumerate(fb_all or []):
+                if val is not None:
+                    uniq_val[uid] = val
+                    uniq_origin[uid] = "glossary"
+                    glossary_count += len(uniques[uid]["keys"])
+        done_segments = sum(len(uniques[uid]["keys"])
+                            for uid in range(len(uniques))
+                            if uniq_val[uid] is not None)
+        if done_segments:
+            _emit("translate", done_segments, total)
+
+        # --- Phần còn lại: sắp theo ưu tiên rồi chia batch.
+        need = [uid for uid in range(len(uniques))
+                if uniq_val[uid] is None]
+        need.sort(key=lambda uid: (uniques[uid]["prio"], uid))
+        batches = []
+        cur, cur_chars = [], 0
+        for uid in need:
+            m = uniques[uid]["masked"]
+            if cur and (len(cur) >= BATCH_MAX_STRINGS
+                        or cur_chars + len(m) > BATCH_MAX_CHARS):
+                batches.append(cur)
+                cur, cur_chars = [], 0
+            cur.append(uid)
+            cur_chars += len(m)
+        if cur:
+            batches.append(cur)
+
+        batch_requests = single_requests = 0
+        batch_failures = 0
+        batch_mode = None
+        quota_hit = False
         # Ngắt mạch: Google lỗi liên tiếp 3 chuỗi (vd IP bị 429+Sorry) thì
         # dừng gọi Google cho phần còn lại, dùng thẳng từ điển offline —
         # khỏi bắt người dùng chờ mỗi chuỗi thử lại 3 lần vô ích.
         consec_failures = 0
-        for idx, (key, line_no, masked, _tokens) in enumerate(segments):
+        for batch in batches:
             if _is_cancelled():
                 cancelled = True
                 break
-            if idx:
-                await asyncio.sleep(0.4)
-            val = None
-            origin = ""
-            if _gt is not None:
+            texts = [uniques[uid]["masked"] for uid in batch]
+            got_batch = False
+            if _gt_batch is not None and not quota_hit:
                 try:
-                    got = await _gt(masked, src, to)
-                    val = str(got)
-                    origin = "google"
+                    raw = await _gt_batch(texts, src, to)
+                    items, mode = _coerce_batch_result(raw)
+                    if items is None or len(items) != len(batch):
+                        raise ValueError(
+                            "batch trả %s chuỗi, cần %d"
+                            % (len(items) if items is not None else "?",
+                               len(batch)))
+                    for uid, val in zip(batch, items):
+                        uniq_val[uid] = val
+                        uniq_origin[uid] = "google"
+                        google_count += len(uniques[uid]["keys"])
+                    batch_requests += 1
+                    batch_mode = mode
+                    batch_failures = 0
                     consec_failures = 0
-                except Exception as exc:  # noqa: BLE001 - rơi về offline
+                    got_batch = True
+                except Exception as exc:  # noqa: BLE001 - rơi về từng chuỗi
+                    kind = _gt_kind(exc)
+                    if kind == "cancelled":
+                        cancelled = True
+                        break
                     if network_error is None:
                         network_error = _gt_error_text(exc)
-                    consec_failures += 1
-                    if consec_failures >= 3:
+                    if kind == "quota":
+                        quota_hit = True
                         _gt = None
+                        _gt_batch = None
                         warnings.append(
-                            "Google lỗi liên tiếp 3 chuỗi — dừng gọi Google, "
+                            "Proxy dịch hết hạn mức tháng — dừng gọi Google, "
                             "dùng từ điển offline cho phần còn lại.")
-            if val is None:
-                fb = fallback.translate_batch([masked], src, to)
-                if fb and fb[0] is not None:
-                    val = fb[0]
-                    origin = "glossary"
-            seg_out[(key, line_no)] = (val, origin)
-            if origin == "google":
-                google_count += 1
-            elif origin == "glossary":
-                glossary_count += 1
-            _emit("translate", idx + 1, total)
+                    else:
+                        batch_failures += 1
+                        if batch_failures >= _BATCH_FAIL_LATCH:
+                            _gt_batch = None
+                            warnings.append(
+                                "Batch dịch lỗi liên tiếp %d lần — tắt batch, "
+                                "dịch từng chuỗi cho phần còn lại."
+                                % _BATCH_FAIL_LATCH)
+            if got_batch:
+                done_segments += sum(len(uniques[uid]["keys"])
+                                     for uid in batch)
+                _emit("translate", done_segments, total)
+                continue
+            # --- Rơi về từng chuỗi cho batch này (batch lỗi / không có
+            # hàm batch / hết quota thì _gt đã None -> chỉ còn glossary).
+            stop_here = False
+            for uid in batch:
+                if _is_cancelled():
+                    cancelled = True
+                    stop_here = True
+                    break
+                masked = uniques[uid]["masked"]
+                val = None
+                origin = ""
+                if _gt is not None and not quota_hit:
+                    try:
+                        got = await _gt(masked, src, to)
+                        val = str(got)
+                        origin = "google"
+                        single_requests += 1
+                        consec_failures = 0
+                    except Exception as exc:  # noqa: BLE001
+                        if network_error is None:
+                            network_error = _gt_error_text(exc)
+                        kind = _gt_kind(exc)
+                        if kind == "cancelled":
+                            cancelled = True
+                            stop_here = True
+                            break
+                        if kind == "quota":
+                            quota_hit = True
+                            _gt = None
+                            warnings.append(
+                                "Proxy dịch hết hạn mức tháng — dừng gọi "
+                                "Google, dùng từ điển offline cho phần còn lại.")
+                        consec_failures += 1
+                        if consec_failures >= 3:
+                            _gt = None
+                            warnings.append(
+                                "Google lỗi liên tiếp 3 chuỗi — dừng gọi Google, "
+                                "dùng từ điển offline cho phần còn lại.")
+                if val is None:
+                    fb = fallback.translate_batch([masked], src, to)
+                    if fb and fb[0] is not None:
+                        val = fb[0]
+                        origin = "glossary"
+                uniq_val[uid] = val
+                uniq_origin[uid] = origin
+                if origin == "google":
+                    google_count += len(uniques[uid]["keys"])
+                elif origin == "glossary":
+                    glossary_count += len(uniques[uid]["keys"])
+                done_segments += len(uniques[uid]["keys"])
+                _emit("translate", done_segments, total)
+            if stop_here:
+                break
 
+        for uid, u in enumerate(uniques):
+            for (key, line_no) in u["keys"]:
+                seg_out[(key, line_no)] = (uniq_val[uid], uniq_origin[uid])
+
+        incomplete_keys = []
         for key, (value, lines, segs) in pending.items():
             out_lines = list(lines)
             n_missing = n_glossary = 0
@@ -490,9 +796,11 @@ async def translate_json_google(json_text, to="vi", credit=True):
                 translated[key] = value
                 untranslated += 1
                 untranslated_keys.append(key)
+                incomplete_keys.append(key)
             elif n_missing:
                 translated[key] = new_value
                 untranslated_keys.append(key)
+                incomplete_keys.append(key)
                 warnings.append("key %s: %d/%d dòng chưa dịch (giữ nguyên)"
                                 % (key, n_missing, len(segs)))
             else:
@@ -512,6 +820,12 @@ async def translate_json_google(json_text, to="vi", credit=True):
             translated_by = "google"
         else:
             translated_by = "mixed"
+        if batch_requests:
+            batch_mode_out = batch_mode or "batch"
+        elif single_requests:
+            batch_mode_out = "single"
+        else:
+            batch_mode_out = "none"
         return json.dumps({
             "ok": True, "translated": translated, "total": int(len(kv)),
             "untranslated": int(untranslated),
@@ -521,7 +835,38 @@ async def translate_json_google(json_text, to="vi", credit=True):
             "google_count": int(google_count),
             "glossary_count": int(glossary_count),
             "network_error": network_error, "cancelled": bool(cancelled),
+            "deduped": int(deduped),
+            "unique_segments": int(len(uniques)),
+            "batches": int(len(batches)),
+            "batch_requests": int(batch_requests),
+            "single_requests": int(single_requests),
+            "batch_mode": batch_mode_out,
+            # Key chưa dịch xong (đầy đủ, không cắt 50 như
+            # untranslated_keys) — app.js đưa chúng về lại hàng đợi để
+            # dịch tiếp khi resume, thay vì ghi nhận là "đã xong".
+            "incomplete_keys": incomplete_keys,
         }, ensure_ascii=False)
+    except Exception as e:  # noqa: BLE001
+        return _err(e)
+
+
+def apply_credit_only(json_text):
+    """Chỉ gắn credit 'Việt Hoá Bởi Bear' vào bảng đã dịch (không dịch).
+
+    Dùng sau khi app.js dịch theo từng chunk với credit=False để khỏi gắn
+    credit nhiều lần (mỗi chunk gắn 1 lần thì credit xuất hiện nhiều chỗ).
+    """
+    try:
+        from sdk.translate import apply_credit
+        kv = json.loads(json_text)
+        if not isinstance(kv, dict):
+            raise ValueError("File JSON phải là object key-value.")
+        translated = {str(k): (v if isinstance(v, str)
+                              else json.dumps(v, ensure_ascii=False))
+                      for k, v in kv.items()}
+        credit_key = apply_credit(translated)
+        return json.dumps({"ok": True, "translated": translated,
+                           "credit_key": credit_key}, ensure_ascii=False)
     except Exception as e:  # noqa: BLE001
         return _err(e)
 

@@ -32,7 +32,7 @@
   },
   "kb_add_query_list": {
     "ok": true,
-    "detail": "game_id=1 engine=unknown query_found=true files=5 list_games=1 size=115368B",
+    "detail": "game_id=1 engine=unknown query_found=true files=5 list_games=1 size=115368B session_only=false persisted=true",
     "seconds": 0.1
   },
   "kb_export": {
@@ -52,8 +52,8 @@
   },
   "batch_sequential_2jobs": {
     "ok": true,
-    "detail": "total=2 ok=2 failed=0 jobs=1 ckpt_games=2 zip=2077B progress_batch_2_2=true games=[ok:game_01_game1,ok:game_02_resources]",
-    "seconds": 0.2
+    "detail": "total=2 ok=2 failed=0 jobs=1 ckpt_games=2 zip=2074B progress_batch_2_2=true games=[ok:game_01_game1,ok:game_02_resources]",
+    "seconds": 0.1
   },
   "batch_resume_checkpoint": {
     "ok": true,

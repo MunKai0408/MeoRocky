@@ -1,0 +1,141 @@
+{
+  "when": "2026-11-16T07:29:01.100Z",
+  "failures": 0,
+  "results": {
+    "kbstore_load_empty": {
+      "ok": true,
+      "detail": "load() trên IndexedDB trống -> null",
+      "seconds": 0
+    },
+    "kbstore_save_load_roundtrip": {
+      "ok": true,
+      "detail": "saveNow 20 byte (magic SQLite + 4 byte) -> load() dài 20 byte, khớp từng byte: true",
+      "seconds": 0
+    },
+    "kbstore_markdirty_flush": {
+      "ok": true,
+      "detail": "markDirty() + flush() -> IndexedDB có bytes mới (dài 19), lastSavedAt=1794814124035",
+      "seconds": 0
+    },
+    "kbstore_flush_error_redirty": {
+      "ok": true,
+      "detail": "flush lỗi -> _dirty=true (lưu lại sau), onStatus=[\"dirty\",\"saving\",\"error:snapshot loi gia\",\"dirty\",\"saving\",\"saved\"]; flush lại sau khi sửa -> load() dài 17 byte đúng: true",
+      "seconds": 0
+    },
+    "kbstore_request_persistence": {
+      "ok": true,
+      "detail": "requestPersistence() -> true (navigator.storage.persist giả trả true)",
+      "seconds": 0
+    },
+    "kbstore_importfile_magic": {
+      "ok": true,
+      "detail": "file magic đúng -> importFile trả 17 byte: true; file magic sai -> ném: \"Không phải file SQLite hợp lệ\"",
+      "seconds": 0
+    },
+    "kbstore_lifecycle_flush_on_hide": {
+      "ok": true,
+      "detail": "debounce 60s nhưng ẩn tab -> flush khẩn chạy, load() dài 18 byte đúng: true",
+      "seconds": 0.2
+    },
+    "kbstore_overwrite": {
+      "ok": true,
+      "detail": "save 17 byte rồi save 18 byte -> load() dài 18, byte cuối đúng bản mới",
+      "seconds": 0
+    },
+    "bridge_boot_and_kb_fns": {
+      "ok": true,
+      "detail": "boot plugins=20; bridge fns: {\"kb_snapshot\":true,\"kb_restore\":true,\"kb_list\":true}",
+      "seconds": 1
+    },
+    "bridge_kb_list_persisted_flags": {
+      "ok": true,
+      "detail": "kb_list -> persisted=true session_only=false games=0",
+      "seconds": 0.1
+    },
+    "bridge_kb_snapshot_restore_roundtrip": {
+      "ok": true,
+      "detail": "kb_add game_id=1; snapshot games=1 size=57344B magic SQLite=true; query sau snapshot found=true; forget -> list=0; restore games=1 list=1 id_khoi_phuc=1 (phải = 1)",
+      "seconds": 0.1
+    },
+    "bridge_kb_restore_invalid_keeps_old": {
+      "ok": true,
+      "detail": "base64 sai -> ok=false (Dữ liệu KB không phải base64 hợp lệ.); base64 đúng nhưng không phải SQLite -> ok=false; rỗng -> ok=false; sau 3 lần restore lỗi, kb_list vẫn 1 game id=1",
+      "seconds": 0
+    },
+    "bridge_kb_snapshot_empty": {
+      "ok": true,
+      "detail": "snapshot KB trống: games=0 size=57344B magic SQLite=true; restore -> games=0 list=0",
+      "seconds": 0
+    },
+    "static_manifest_valid": {
+      "ok": true,
+      "detail": "manifest parse OK; short_name=BearTea display=standalone start_url=. icons=[\"192x192\",\"512x512\",\"180x180\"] (file tồn tại: true)",
+      "seconds": 0
+    },
+    "static_icons_png_size": {
+      "ok": true,
+      "detail": "icon-192={\"w\":192,\"h\":192} icon-512={\"w\":512,\"h\":512} apple-touch-icon={\"w\":180,\"h\":180}",
+      "seconds": 0
+    },
+    "static_index_wiring": {
+      "ok": true,
+      "detail": "thiếu/sai: không có | kb-store.js ở vị trí 43344, app.js ở 43419 (kb-store phải trước)",
+      "seconds": 0
+    },
+    "static_app_wiring": {
+      "ok": true,
+      "detail": "thiếu/sai: không có",
+      "seconds": 0
+    },
+    "static_kbstore_file": {
+      "ok": true,
+      "detail": "node --check kb-store.js + app.js: OK | có indexedDB.open/requestPersistence/markDirty/flush/importFile/visibilitychange: true,true,true,true,true,true | classic (không export): true | không API OPFS/COI: true",
+      "seconds": 0.2
+    },
+    "static_bridge_kb_api": {
+      "ok": true,
+      "detail": "py_compile: OK | kb_snapshot=true kb_restore=true session_only False=true persisted True=true magic check=true",
+      "seconds": 0.1
+    },
+    "static_no_coi_item3": {
+      "ok": true,
+      "detail": "file chứa COI: không có",
+      "seconds": 0
+    },
+    "browser_boot_and_kb_status": {
+      "ok": true,
+      "detail": "status=Sẵn sàng; #kb-status sau boot: \"KB: 0 game · 88.5 KB · tự lưu vào IndexedDB sau mỗi thay đổi (lần lưu gần nhất: chưa lưu lần nào).\"",
+      "seconds": 5.2
+    },
+    "browser_kb_add_autosave": {
+      "ok": true,
+      "detail": "#kb-result: Đã thêm game vào KB; #kb-status sau autosave: \"KB: 1 game · 56.0 KB · tự lưu vào IndexedDB sau mỗi thay đổi (lần lưu gần nhất: 07:28:54 16/11/2026).\"",
+      "seconds": 0.3
+    },
+    "browser_export_reminder_and_persist": {
+      "ok": true,
+      "detail": "nhắc export hiện: true (Nhắc sao lưu: KB đã có dữ liệu nhưng bạn chưa từng xuất file .sqlite — hãy bấm “Tải KB về …); #kb-persist: \"Lưu trữ bền vững: CHƯA CẤP — Safari có thể xóa KB sau ~7 ngày không mở trang; hãy cài BearTea vào Màn hình chính (mục dưới) để giữ KB bền hơn.\"",
+      "seconds": 0
+    },
+    "browser_kb_survives_reload": {
+      "ok": true,
+      "detail": "sau reload + boot lại: #kb-status 1 game; #kb-result sau Liệt kê: \"1 game trong KB · dung lượng 56.0 KB · tự lưu vào IndexedDB.IDBundleVersionEngineLần thấy cuối1??unknown2026-11-16T07:28\"",
+      "seconds": 5.7
+    },
+    "browser_kb_export_download_and_reminder_off": {
+      "ok": true,
+      "detail": "download suggestedFilename=pb3_kb.sqlite; localStorage pb3_kb_last_export=1794814140711; nhắc export đã ẩn: true",
+      "seconds": 0.1
+    },
+    "browser_pwa_install_prompt": {
+      "ok": true,
+      "detail": "dispatch beforeinstallprompt -> nút Cài hiện: true; bấm nút (không có prompt thật) không lỗi trang; fetch manifest.webmanifest short_name=BearTea: true; pageerror: []",
+      "seconds": 0.3
+    },
+    "browser_no_pageerrors": {
+      "ok": true,
+      "detail": "pageerror trong cả phiên (boot x2 + thêm KB + reload + xuất + PWA): không có",
+      "seconds": 0
+    }
+  }
+}

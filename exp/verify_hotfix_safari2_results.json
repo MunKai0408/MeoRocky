@@ -44,7 +44,7 @@
     "bridge_boot": {
       "ok": true,
       "detail": "boot ok=true plugins=20",
-      "seconds": 1
+      "seconds": 1.1
     },
     "unity_inspect_zip_lists_bundles": {
       "ok": true,
@@ -54,7 +54,7 @@
     "unity_inspect_entry": {
       "ok": true,
       "detail": "bundle files=2; assets version=17 2019.4.40f1",
-      "seconds": 0.3
+      "seconds": 0.4
     },
     "unity_inspect_zip_no_bundles": {
       "ok": true,
@@ -79,12 +79,12 @@
     "table_old_css_broken_control": {
       "ok": true,
       "detail": "CSS cũ: chữ trong ô tiêu đề/Loại tối đa 2 dòng (vỡ chữ nếu >1) — th=[{\"text\":\"Đường dẫn\",\"lines\":1},{\"text\":\"Loại\",\"lines\":2},{\"text\":\"Kích thước\",\"lines\":2}]",
-      "seconds": 0.8
+      "seconds": 0.5
     },
     "table_390px_new_css": {
       "ok": true,
       "detail": "390px: tiêu đề/Loại/Kích thước đúng 1 dòng (không vỡ chữ); cột đường dẫn [3,2,1,1] dòng (được ngắt); bảng block+overflow-x:auto, plugin scrollW=354 > clientW=340",
-      "seconds": 0.2
+      "seconds": 0.3
     }
   }
 }

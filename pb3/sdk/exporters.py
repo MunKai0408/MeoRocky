@@ -118,7 +118,9 @@ def report_text(report: Dict[str, Any]) -> str:
                         f.get("entries", 0), f.get("ok", 0), f.get("empty", 0),
                         f.get("conflicts", 0), f.get("unparsed", 0)))
         if f.get("exported"):
-            lines.append("      -> %s" % f["exported"])
+            # Nguồn gốc đầy đủ: file xuất ← đơn vị Unity/file nguồn trong IPA.
+            lines.append("      %s ← %s" % (f["exported"],
+                                            f.get("source") or f.get("path", "?")))
         for w in f.get("warnings", []):
             lines.append("      cảnh báo: " + w)
     if report.get("skipped"):

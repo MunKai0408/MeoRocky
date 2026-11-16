@@ -30,6 +30,14 @@ const state = {
   lastCheckpoint: null,  // chuỗi checkpoint batch mới nhất (để tải về)
   loadedCheckpoint: null, // checkpoint nạp từ localStorage để resume
   lastExtractKv: null,   // JSON text trích xuất được (để dịch tiếp)
+  lastExtractFiles: [],  // [{path, plugin, entries, locale, exported, source}] đợt extract vừa rồi (dropdown tab Dịch)
+  translateJob: null,    // job dịch Google đang chạy (hàng đợi bền IndexedDB)
+  translateCancel: false, // user đã bấm Hủy (dừng sau chunk hiện tại)
+  translateChunk: null,  // {idx, total} chunk đang dịch (hiện "đợt X/Y")
+  translateResumeJob: null, // job dở dang để nút "Tiếp tục dịch" dùng
+  extractEntries: [],    // entry trích xuất được trong file đang chọn (từ list_entries)
+  extractListFor: null,  // "tên|cỡ|lastModified" của file mà extractEntries thuộc về
+  extractSelected: null, // Set(vpath) đã tick ở chế độ chọn tay; null = chưa tải danh sách (coi như tự động)
   lastDownload: null,    // {name, blob} file vừa tạo xong (để Chia sẻ / tải blob lại)
   unityBundles: [],      // bundle/.assets trong ZIP/IPA đang inspect
   currentToolTab: "list", // tab công cụ đang mở trong view "Chức năng" (redesign)
@@ -152,6 +160,23 @@ worker.onmessage = (ev) => {
       return;
     }
     if (!p) return;
+    // Tiến trình dịch: hiện số chuỗi đã dịch/tổng số + tốc độ + thời gian
+    // còn lại ngay trong tab Dịch (khi tab đang mở), để user thấy tool
+    // đang chạy chứ không tưởng đứng im.
+    if (msg.kind === "translate" && msg.total > 0) {
+      const info = $("translate-info");
+      const tab = $("tab-translate");
+      if (info && tab && !tab.hidden) {
+        const elapsed = (performance.now() - progT0) / 1000;
+        const rate = elapsed > 0 ? msg.done / elapsed : 0;
+        const eta = rate > 0 ? (msg.total - msg.done) / rate : null;
+        info.textContent = "Đang dịch: " + msg.done + "/" + msg.total + " chuỗi" +
+          (rate > 0 ? " · ~" + rate.toFixed(1) + " chuỗi/giây" : "") +
+          (eta != null ? " · còn khoảng " + fmtTime(eta) : "") +
+          (state.translateChunk && state.translateChunk.total > 1
+            ? " · đợt " + state.translateChunk.idx + "/" + state.translateChunk.total : "");
+      }
+    }
     if (msg.total > 0) progSet(100 * msg.done / msg.total, msg.done, msg.total);
     else progSet(progLastPct < 0 ? 0 : progLastPct, msg.done, -1);
     return;
@@ -239,6 +264,14 @@ async function runOp(label, fn, args, files, fileOut) {
 const kbStore = (typeof KBStore !== "undefined")
   ? new KBStore("kb.sqlite", { debounceMs: 0 }) : null;
 const KB_LAST_EXPORT_KEY = "pb3_kb_last_export";
+
+// ---- Hàng đợi dịch bền (mục A): TranslateJobStore (kb-store.js) ----
+// Job dịch Google lưu vào IndexedDB sau mỗi chunk nên tắt tab vẫn tiếp
+// tục được; job đã xong đồng thời là bộ nhớ dịch (TM) cho job sau.
+const translateJobStore = (typeof TranslateJobStore !== "undefined")
+  ? new TranslateJobStore() : null;
+const TRANSLATE_CHUNK_KEYS = 500; // số key mỗi lần gọi worker (lưu job sau mỗi chunk)
+const TRANSLATE_BATCH_STRINGS = 100; // chuỗi/request — KHỚP BATCH_MAX_STRINGS bên bridge.py
 const KB_EXPORT_REMINDER_DAYS = 7;
 
 function kbBytesFromB64(b64) {
@@ -478,7 +511,13 @@ $("btn-share-download").addEventListener("click", async () => {
     }
   } catch (e) {
     if (e && e.name === "AbortError") return;   // user hủy bảng chia sẻ
-    showError("Chia sẻ lỗi: " + (e.message || e));
+    // Hiện cả TÊN lỗi (vd NotAllowedError) + message, nhưng giữ tiền tố
+    // "Chia sẻ lỗi: " (harness hotfix_safari2 kiểm tra startsWith tiền tố
+    // này). Giả thuyết "mất user activation" chưa có bằng chứng thiết bị
+    // thật (handler này không có await nào trước share) nên cần đúng dòng
+    // lỗi này từ Safari thật.
+    showError("Chia sẻ lỗi: " + (e && e.name ? e.name + ": " : "") +
+      (e && e.message ? e.message : e));
   }
 });
 // Nút "Tải về (blob)": đường dự phòng — bấm anchor blob để trình duyệt tải
@@ -659,6 +698,9 @@ function handleChosenFile(f) {
   f.arrayBuffer().then((buf) => {
     state.file = { name: f.name, size: f.size, lastModified: f.lastModified || 0, data: buf };
     state.fileSentFor = null;   // HOTFIX clone: file mới thì gửi lại từ đầu
+    state.extractListFor = null;  // file mới -> danh sách chọn file cũ hết hạn
+    state.extractSelected = null;
+    state.extractEntries = [];
     $("file-info").textContent = f.name + " · " + fmtBytes(f.size);
     $("file-info").hidden = false;
     $("btn-clear-file").hidden = false;
@@ -698,6 +740,9 @@ $("dropzone").addEventListener("drop", (ev) => {
 function clearFile() {
   state.file = null;
   state.fileSentFor = null;
+  state.extractListFor = null;
+  state.extractSelected = null;
+  state.extractEntries = [];
   const inp = $("file-input");
   if (inp) inp.value = "";
   $("file-info").hidden = true;
@@ -728,6 +773,10 @@ function showTab(name) {
     $("tab-" + t).hidden = (t !== name);
     $("btn-" + t).classList.toggle("active", t === name);
   }
+  // Mở tab Trích xuất thì tải danh sách file để chọn tay (nếu đã chọn
+  // file và danh sách chưa có); mở tab Dịch thì đồng bộ banner rỗng.
+  if (name === "extract") maybeRefreshExtractFileList();
+  if (name === "translate") { syncTranslateEmptyBanner(); refreshTranslateResumeBar(); }
 }
 for (const t of tabs) {
   $("btn-" + t).addEventListener("click", () => {
@@ -884,21 +933,134 @@ $("btn-unity-run").addEventListener("click", async () => {
   } catch (e) { maybeShowIpaZipHint($("unity-ipa-hint")); }
 });
 
+// ---- Danh sách file để chọn tay (tab Trích xuất) ----
+// Chỉ liệt kê entry trích xuất được: container Unity (.assets/.unity3d/
+// .bundle) + file text. Dùng chung dữ liệu inventory với tab Danh sách
+// (bridge list_entries) — không liệt kê lại bằng cách khác.
+const EXTRACT_TEXT_EXTS = [".json", ".xml", ".txt", ".csv", ".tsv", ".plist", ".strings", ".po", ".xlf", ".xliff", ".resx", ".properties", ".yaml", ".yml", ".ini"];
+function extractEntrySelectable(e) {
+  if (!e) return false;
+  if (e.kind === "unity") return true;
+  if (e.kind !== "file") return false;
+  const p = String(e.path || "").toLowerCase();
+  if (EXTRACT_TEXT_EXTS.some((ext) => p.endsWith(ext))) return true;
+  return /(language|locali[sz]ation|locale|translation|i18n|l10n|lang|text|strings?)/i.test(p);
+}
+function extractListKey() {
+  return state.file ? state.file.name + "|" + state.file.size + "|" + (state.file.lastModified || 0) : "";
+}
+async function maybeRefreshExtractFileList() {
+  const box = $("extract-file-list");
+  if (!box) return;
+  if (!state.file) {
+    box.innerHTML = "<p class=\"note\">Chưa chọn file — chọn file IPA/ZIP ở Trang chủ trước.</p>";
+    return;
+  }
+  if (state.extractListFor === extractListKey() && state.extractEntries.length) {
+    renderExtractFileList();
+    return;
+  }
+  try {
+    const { parsed } = await runOp("Liệt kê file trích xuất", "list_entries", [inputPath()], inputFileArgs());
+    state.extractEntries = (parsed.entries || []).filter(extractEntrySelectable);
+    state.extractListFor = extractListKey();
+    // Chế độ chọn tay mặc định tick tất cả.
+    state.extractSelected = new Set(state.extractEntries.map((e) => e.path));
+    renderExtractFileList();
+  } catch (e) { /* runOp đã báo lỗi */ }
+}
+function renderExtractFileList() {
+  const box = $("extract-file-list");
+  if (!box) return;
+  const manual = $("extract-mode-manual") && $("extract-mode-manual").checked;
+  if (!state.extractEntries.length) {
+    box.innerHTML = "<p class=\"note\">Không thấy file nào trích xuất được trong file này.</p>";
+    return;
+  }
+  let html = "<p class=\"note\">" + (manual
+    ? "Chế độ chọn tay: bỏ tick để loại file khỏi đợt trích xuất (mặc định tick tất cả)."
+    : "Chế độ tự động: tool tự tìm đúng file — danh sách dưới đây chỉ để xem, không cần chọn.") +
+    "</p><table><tr><th></th><th>Đường dẫn</th><th>Loại</th><th>Kích thước</th></tr>";
+  const shown = state.extractEntries.slice(0, 200);
+  for (const e of shown) {
+    const checked = !state.extractSelected || state.extractSelected.has(e.path);
+    html += "<tr><td><input type=\"checkbox\" data-path=\"" + esc(e.path) + "\"" +
+      (checked ? " checked" : "") + (manual ? "" : " disabled") + "></td><td>" +
+      esc(e.path) + "</td><td>" + esc(e.kind) + "</td><td>" + fmtBytes(e.size) + "</td></tr>";
+  }
+  html += "</table>";
+  if (state.extractEntries.length > 200) html += "<p>…chỉ hiện 200 file đầu.</p>";
+  box.innerHTML = html;
+}
+// Checkbox đổi thì cập nhật Set phía JS (không query DOM lúc chạy extract —
+// DOM giả trong harness không có querySelector, và Set này là nguồn thật
+// duy nhất cho source_paths).
+$("extract-file-list").addEventListener("change", (ev) => {
+  const cb = ev.target;
+  if (!cb || cb.type !== "checkbox" || typeof cb.getAttribute !== "function") return;
+  const p = cb.getAttribute("data-path");
+  if (!p) return;
+  if (!state.extractSelected) state.extractSelected = new Set();
+  if (cb.checked) state.extractSelected.add(p);
+  else state.extractSelected.delete(p);
+});
+$("btn-extract-list").addEventListener("click", () => {
+  state.extractListFor = null;
+  maybeRefreshExtractFileList();
+});
+// Đổi chế độ chọn file: chỉ vẽ lại (bật/tắt checkbox), không tải lại danh sách.
+$("extract-mode-auto").addEventListener("change", renderExtractFileList);
+$("extract-mode-manual").addEventListener("change", renderExtractFileList);
+
 // ---- Trích xuất ----
 $("btn-extract-run").addEventListener("click", async () => {
   try {
-    const { parsed } = await runOp("Trích xuất text", "extract", [inputPath()], inputFileArgs(), true);
-    let html = "<p>Kết quả: <b>" + esc(parsed.decision) + "</b> · " + parsed.total_entries + " entry · " + parsed.files.length + " file · file <b>extract.zip</b> đã sẵn sàng — bấm “Lưu / Chia sẻ” ở thanh Lưu file bên dưới để lưu về máy</p><table><tr><th>File</th><th>Plugin</th><th>Chuỗi</th><th>Locale</th></tr>";
+    const manual = $("extract-mode-manual") && $("extract-mode-manual").checked;
+    let sourcePaths = null;
+    if (manual && state.extractSelected && state.extractEntries.length) {
+      // Chọn tay: gửi đúng danh sách đã tick. Chưa tải danh sách thì coi
+      // như tự động (không gửi gì) — không bắt user phải tải danh sách.
+      sourcePaths = [...state.extractSelected];
+    }
+    const locSel = ($("extract-locales") && $("extract-locales").value) || "both";
+    const locales = locSel === "both" ? ["en", "zh"] : [locSel];
+    const { parsed } = await runOp("Trích xuất text", "extract", [inputPath(), sourcePaths, locales], inputFileArgs(), true);
+    let html = "<p>Kết quả: <b>" + esc(parsed.decision) + "</b> · " + parsed.total_entries + " entry · " + parsed.files.length + " file · file <b>extract.zip</b> đã sẵn sàng — bấm “Lưu / Chia sẻ” ở thanh Lưu file bên dưới để lưu về máy</p><table><tr><th>File</th><th>Plugin</th><th>Chuỗi</th><th>Locale</th><th></th></tr>";
     for (const f of parsed.files) {
-      html += "<tr><td>" + esc(f.path) + "</td><td>" + esc(f.plugin) + "</td><td>" + f.entries + "</td><td>" + esc(f.locale || "") + "</td></tr>";
+      const name = f.exported || f.path;
+      html += "<tr><td>" + esc(name) + "</td><td>" + esc(f.plugin) + "</td><td>" + f.entries + "</td><td>" + esc(f.locale || "") + "</td><td>" +
+        (/\.json$/i.test(name)
+          ? "<button class=\"secondary\" data-translate-file=\"" + esc(name) + "\">Dịch sang tiếng Việt</button>"
+          : "") + "</td></tr>";
+      html += "<tr><td colspan=\"5\" class=\"sub\">từ: " + esc(f.source || f.path) + "</td></tr>";
     }
     html += "</table>";
-    if ((parsed.errors || []).length) html += "<p>Lỗi: " + esc(parsed.errors.join("; ")) + "</p>";
+    const skipped = parsed.skipped || [];
+    if (skipped.length) html += "<p class=\"note\">Đã bỏ qua " + skipped.length + " mục — xem chi tiết trong extraction_report.txt của extract.zip.</p>";
+    if ((parsed.errors || []).length) html += "<p>Lỗi: " + esc(parsed.errors.map((e) => (e && e.code ? "[" + e.code + "] " : "") + (e && (e.message || e.error || ""))).join("; ")) + "</p>";
     $("extract-result").innerHTML = html;
-    // Giữ lại 1 file JSON để dịch tiếp (lấy file en.json nếu có).
-    const en = parsed.files.find(f => /en\.json$/i.test(f.path || ""));
+    // Giữ lại file JSON để dịch tiếp (dropdown tab Dịch, mặc định en.json).
+    state.lastExtractFiles = parsed.files || [];
+    const en = parsed.files.find((f) => f.locale === "en" && f.exported);
     if (en && en.exported) state.lastExtractKv = en.exported;
+    refreshTranslateSourceSelect();
+    // Nối Dịch với Trích xuất: nạp sẵn file mặc định (en.json nếu có) vào
+    // ô dịch — lỗi nạp không làm hỏng kết quả extract.
+    const defName = defaultTranslateFile();
+    if (defName) loadExtractedToTranslate(defName);
   } catch (e) { /* đã báo lỗi */ }
+});
+// Nút "Dịch sang tiếng Việt" trên từng file JSON trong kết quả extract:
+// chuyển sang tab Dịch với nội dung file đó đã nạp.
+$("extract-result").addEventListener("click", (ev) => {
+  const b = ev.target && ev.target.closest ? ev.target.closest("[data-translate-file]") : null;
+  if (!b || typeof b.getAttribute !== "function") return;
+  const name = b.getAttribute("data-translate-file");
+  if (!name) return;
+  goTool("translate");
+  const sel = $("translate-source-select");
+  if (sel) sel.value = name;
+  loadExtractedToTranslate(name);
 });
 
 // ---- Dịch ----
@@ -923,7 +1085,307 @@ $("translate-proxy").addEventListener("change", (ev) => {
 $("translate-json-file").addEventListener("change", (ev) => {
   const f = ev.target.files && ev.target.files[0];
   if (!f) return;
-  f.text().then((t) => { $("translate-input").value = t; });
+  f.text().then((t) => { $("translate-input").value = t; syncTranslateEmptyBanner(); });
+});
+// ---- Nối tab Dịch với Trích xuất ----
+// Dropdown chọn file vừa trích xuất (mặc định en.json nếu có); đổi lựa
+// chọn thì nạp nội dung file đó vào ô dịch qua bridge read_extracted.
+function refreshTranslateSourceSelect() {
+  const sel = $("translate-source-select");
+  if (!sel) return;
+  const files = (state.lastExtractFiles || []).filter((f) => f.exported && /\.json$/i.test(f.exported));
+  if (!files.length) {
+    sel.innerHTML = "<option value=\"\">— chưa có file trích xuất —</option>";
+    return;
+  }
+  let html = "";
+  for (const f of files) {
+    html += "<option value=\"" + esc(f.exported) + "\">" + esc(f.exported) +
+      (f.source ? " ← " + f.source : "") + "</option>";
+  }
+  sel.innerHTML = html;
+  const def = defaultTranslateFile();
+  if (def) sel.value = def;
+}
+function defaultTranslateFile() {
+  const files = (state.lastExtractFiles || []).filter((f) => f.exported && /\.json$/i.test(f.exported));
+  if (!files.length) return null;
+  const en = files.find((f) => f.locale === "en");
+  return (en || files[0]).exported;
+}
+$("translate-source-select").addEventListener("change", (ev) => {
+  loadExtractedToTranslate(ev.target.value);
+});
+// Nạp 1 file JSON đã trích xuất vào ô dịch (qua bridge read_extracted).
+// Dùng callWorker trực tiếp (KHÔNG dùng runOp): thao tác này không liên
+// quan file game, nên lỗi của nó không được reset cờ fileSentFor (hotfix
+// clone) và không hiện banner lỗi chung — chỉ ghi chú vào tab Dịch.
+async function loadExtractedToTranslate(name) {
+  if (!name) return;
+  try {
+    const msg = await callWorker("run", { fn: "read_extracted", args: [name], files: [] });
+    const parsed = JSON.parse(msg.result);
+    if (!parsed || parsed.ok !== true) {
+      $("translate-info").textContent = "Không nạp được " + name + ": " +
+        (parsed && (parsed.error || parsed.code) ? (parsed.error || parsed.code) : "lỗi không rõ") +
+        " — hãy dán JSON vào ô để dịch tay.";
+      return;
+    }
+    $("translate-input").value = parsed.text || "";
+    syncTranslateEmptyBanner();
+    $("translate-info").textContent = "Đã nạp " + name + " (" + fmtBytes(parsed.bytes || 0) +
+      ") — bấm Dịch để dịch sang tiếng Việt.";
+  } catch (e) {
+    $("translate-info").textContent = "Không nạp được " + name + " (" + e.message +
+      ") — hãy dán JSON vào ô để dịch tay.";
+  }
+}
+// Banner CỐ ĐỊNH khi ô dịch trống (phần tử DOM luôn hiện, không chỉ lỗi
+// thoáng qua): user mở tab Dịch mà chưa có nội dung thì thấy ngay phải làm gì.
+function syncTranslateEmptyBanner() {
+  const banner = $("translate-empty-banner");
+  const input = $("translate-input");
+  if (!banner || !input) return;
+  banner.hidden = (input.value || "").trim().length > 0;
+}
+$("translate-input").addEventListener("input", syncTranslateEmptyBanner);
+// ---- Dịch Google theo chunk + hàng đợi bền + bộ nhớ dịch (mục A) ----
+// TM (bộ nhớ dịch): value giống hệt trong các job ĐÃ XONG cùng ngôn ngữ
+// đích -> dùng luôn, khỏi gửi Google. KB game-profile KHÔNG chứa bản dịch
+// nên không dùng làm TM (đã kiểm tra sdk/kb.py — KB chỉ lưu hồ sơ game).
+// TM tra theo VALUE GỐC chính xác (không chuẩn hoá khoảng trắng — khớp
+// chính xác mới dùng, tránh dịch sai ngữ cảnh).
+async function buildTranslateTM(to) {
+  const tm = new Map();
+  if (!translateJobStore) return tm;
+  try {
+    const jobs = await translateJobStore.getAll();
+    const done = jobs.filter((j) => j && j.status === "done" && j.to === to &&
+      Array.isArray(j.tm));
+    done.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+    let pairs = 0;
+    for (const j of done.slice(0, 5)) {
+      for (const pair of j.tm) {
+        if (pairs >= 20000) break;
+        const src = pair && pair[0], dst = pair && pair[1];
+        if (typeof src === "string" && typeof dst === "string" && src && dst) {
+          if (!tm.has(src)) tm.set(src, dst);
+          pairs++;
+        }
+      }
+      if (pairs >= 20000) break;
+    }
+  } catch (e) { /* IndexedDB lỗi: bỏ qua TM, dịch như thường */ }
+  return tm;
+}
+// Dùng TM cho các key còn lại trong job (value khớp -> ghi results luôn).
+function applyJobTM(job, tm) {
+  if (!job.items.length || tm.size === 0) return;
+  const rest = [];
+  for (const pair of job.items) {
+    const hit = tm.get(pair[1]);
+    if (hit != null) {
+      job.results[pair[0]] = hit;
+      job.tmCount++;
+    } else rest.push(pair);
+  }
+  job.items = rest;
+}
+function currentTranslateSourceName() {
+  const sel = $("translate-source-select");
+  if (sel && sel.value) return sel.value;
+  return "dán tay";
+}
+async function startTranslateJob(text, to) {
+  let obj;
+  try { obj = JSON.parse(text); } catch (e) { showError("JSON dịch lỗi: " + e.message); return null; }
+  if (!obj || typeof obj !== "object" || Array.isArray(obj)) {
+    showError("File JSON phải là object key-value.");
+    return null;
+  }
+  const entries = Object.entries(obj).map(([k, v]) =>
+    [String(k), typeof v === "string" ? v : JSON.stringify(v)]);
+  const job = {
+    id: "tr-" + Date.now().toString(36) + "-" + Math.floor(Math.random() * 1e6).toString(36),
+    name: currentTranslateSourceName(),
+    to, status: "running",
+    items: entries, results: {}, tm: [],
+    order: entries.map(([k]) => k),
+    total: entries.length, tmCount: 0,
+    createdAt: Date.now(), updatedAt: Date.now(),
+  };
+  if (translateJobStore) {
+    try { await translateJobStore.save(job); } catch (e) { /* không lưu được: vẫn dịch, chỉ mất resume */ }
+  }
+  return job;
+}
+async function saveTranslateJob(job) {
+  if (!translateJobStore) return;
+  try { await translateJobStore.save(job); } catch (e) { /* mất resume, vẫn dịch tiếp */ }
+}
+// Vẽ output theo đúng thứ tự key gốc (chỉ những key đã có bản dịch).
+function renderTranslateOutput(job) {
+  const out = {};
+  for (const k of (job.order || Object.keys(job.results))) {
+    if (Object.prototype.hasOwnProperty.call(job.results, k)) out[k] = job.results[k];
+  }
+  for (const k of Object.keys(job.results)) {
+    if (!Object.prototype.hasOwnProperty.call(out, k)) out[k] = job.results[k];
+  }
+  $("translate-output").value = JSON.stringify(out, null, 2);
+}
+// Chạy 1 job dịch Google: chia chunk 500 key, mỗi chunk 1 lần gọi worker
+// (credit=false — gắn credit 1 lần ở cuối), lưu job sau mỗi chunk.
+async function runTranslateGoogleJob(job, to, credit) {
+  const btn = $("btn-translate-run");
+  const cancelBtn = $("btn-translate-cancel");
+  btn.disabled = true;
+  cancelBtn.hidden = false;
+  state.translateJob = job;
+  state.translateCancel = false;
+  let cancelled = false;
+  let googleCount = 0, glossaryCount = 0, deduped = 0;
+  let batchRequests = 0, singleRequests = 0;
+  let networkError = null;
+  let warnings = [];
+  let creditKey = null;
+  try {
+    const tm = await buildTranslateTM(to);
+    // TM của chính job này (chunk trước dịch xong) cũng dùng cho chunk sau
+    // — khỏi gửi lại value trùng ở chunk khác (dedupe của bridge chỉ
+    // trong 1 lần gọi).
+    for (const pair of job.tm) if (!tm.has(pair[0])) tm.set(pair[0], pair[1]);
+    applyJobTM(job, tm);
+    const chunksTotal = Math.max(1, Math.ceil(job.total / TRANSLATE_CHUNK_KEYS));
+    let chunkIdx = 0;
+    while (job.items.length) {
+      if (state.translateCancel) { cancelled = true; break; }
+      applyJobTM(job, tm);
+      if (!job.items.length) break;
+      const chunk = job.items.slice(0, TRANSLATE_CHUNK_KEYS);
+      const chunkObj = {};
+      for (const pair of chunk) chunkObj[pair[0]] = pair[1];
+      chunkIdx++;
+      state.translateChunk = { idx: chunkIdx, total: chunksTotal };
+      const { parsed } = await runOp("Dịch (Google)", "translate_json_google",
+        [JSON.stringify(chunkObj), to, false]);
+      // Key chưa dịch xong (hủy giữa chunk / Google lỗi) KHÔNG ghi vào
+      // results — đưa về đầu hàng đợi để dịch lại khi resume, thay vì
+      // ghi nhận là "đã xong" rồi bỏ qua vĩnh viễn.
+      const incomplete = new Set(parsed.incomplete_keys || []);
+      let completedInChunk = 0;
+      for (const pair of chunk) {
+        if (incomplete.has(pair[0])) continue;
+        completedInChunk++;
+        job.results[pair[0]] = parsed.translated[pair[0]];
+        if (typeof pair[1] === "string" && pair[1] &&
+            typeof parsed.translated[pair[0]] === "string") {
+          job.tm.push([pair[1], parsed.translated[pair[0]]]);
+          if (!tm.has(pair[1])) tm.set(pair[1], parsed.translated[pair[0]]);
+        }
+      }
+      const back = chunk.filter((pair) => incomplete.has(pair[0]));
+      job.items = back.concat(job.items.slice(chunk.length));
+      googleCount += parsed.google_count || 0;
+      glossaryCount += parsed.glossary_count || 0;
+      deduped += parsed.deduped || 0;
+      batchRequests += parsed.batch_requests || 0;
+      singleRequests += parsed.single_requests || 0;
+      if (parsed.network_error && !networkError) networkError = parsed.network_error;
+      if (parsed.warnings) warnings = warnings.concat(parsed.warnings);
+      if (parsed.cancelled) { cancelled = true; break; }
+      if (completedInChunk === 0 && job.items.length) {
+        // Chunk này không dịch được chuỗi nào (vd Google chết hẳn):
+        // dừng để khỏi lặp vô hạn — user kiểm tra mạng/proxy rồi bấm
+        // “Tiếp tục dịch” sau.
+        warnings.push("Chunk này không dịch được chuỗi nào — dừng để khỏi lặp lại vô hạn (kiểm tra mạng/proxy rồi bấm “Tiếp tục dịch”).");
+        cancelled = true;
+        break;
+      }
+      await saveTranslateJob(job);
+      renderTranslateOutput(job);
+    }
+    job.status = cancelled ? "cancelled" : (job.items.length ? "cancelled" : "done");
+    await saveTranslateJob(job);
+    if (job.status === "done" && credit) {
+      // Gắn credit 1 lần duy nhất (các chunk đều credit=false).
+      try {
+        const r = await runOp("Gắn credit", "apply_credit_only",
+          [JSON.stringify(job.results)]);
+        job.results = r.parsed.translated;
+        creditKey = r.parsed.credit_key || null;
+      } catch (e) { /* credit lỗi: giữ bản dịch không credit */ }
+    }
+    renderTranslateOutput(job);
+    const doneCount = Object.keys(job.results).length;
+    let info = "";
+    if (cancelled) info += "Đã hủy giữa chừng — ";
+    info += "Đã dịch " + doneCount + "/" + job.total + " chuỗi" +
+      " (Google: " + googleCount + " đoạn · từ điển offline: " + glossaryCount +
+      " đoạn · bộ nhớ dịch: " + job.tmCount + " chuỗi · khử trùng lặp: " + deduped +
+      " đoạn · batch: " + batchRequests + " request, từng chuỗi: " + singleRequests + ").";
+    if (networkError) {
+      info += " Lý do: " + networkError +
+        " Từ điển offline chỉ biết ~100 từ/cụm thông dụng nên hầu hết chuỗi sẽ giữ nguyên.";
+    }
+    if (job.status === "done") info += " Xong — bấm “Tải bản dịch (.json)” để lưu.";
+    else info += " Bản dịch dở dang đã lưu — tải lại trang rồi bấm “Tiếp tục dịch” để dịch tiếp.";
+    if (creditKey) info += " Đã gắn credit 'Việt Hoá Bởi Bear' vào key: " + creditKey + ".";
+    if (warnings.length) info += " Cảnh báo: " + warnings.slice(0, 5).join("; ");
+    $("translate-info").textContent = info;
+  } catch (e) {
+    // runOp đã báo lỗi (banner) — job vẫn "cancelled" (dở dang) để
+    // tiếp tục được, không mất phần đã dịch.
+    job.status = "cancelled";
+    await saveTranslateJob(job);
+    renderTranslateOutput(job);
+  } finally {
+    btn.disabled = false;
+    cancelBtn.hidden = true;
+    state.translateJob = null;
+    state.translateChunk = null;
+    refreshTranslateResumeBar();
+  }
+}
+// Thanh "Tiếp tục dịch" khi có job dở dang (tắt tab giữa chừng / đã hủy).
+async function refreshTranslateResumeBar() {
+  const bar = $("translate-resume-bar");
+  if (!bar) return;
+  let job = null;
+  if (translateJobStore) {
+    try { job = await translateJobStore.latestUnfinished(); } catch (e) { job = null; }
+  }
+  state.translateResumeJob = job || null;
+  if (!job) { bar.hidden = true; return; }
+  const done = Object.keys(job.results || {}).length;
+  $("translate-resume-text").textContent =
+    (job.name || "bản dịch") + " — đã dịch " + done + "/" + (job.total || done) + " chuỗi" +
+    (job.status === "cancelled" ? " (đã hủy/dở dang)" : " (đang dở)");
+  bar.hidden = false;
+}
+$("btn-translate-resume").addEventListener("click", async () => {
+  const job = state.translateResumeJob;
+  if (!job) return;
+  job.status = "running";
+  const input = $("translate-input");
+  if (!input.value.trim()) {
+    const rest = {};
+    for (const pair of job.items) rest[pair[0]] = pair[1];
+    input.value = JSON.stringify(rest, null, 2);
+    syncTranslateEmptyBanner();
+  }
+  $("translate-resume-bar").hidden = true;
+  const to = $("translate-to").value;
+  const credit = $("translate-credit").checked;
+  await runTranslateGoogleJob(job, to, credit);
+});
+$("btn-translate-discard").addEventListener("click", async () => {
+  const job = state.translateResumeJob;
+  if (job && translateJobStore) {
+    try { await translateJobStore.remove(job.id); } catch (e) {}
+  }
+  state.translateResumeJob = null;
+  $("translate-resume-bar").hidden = true;
 });
 $("btn-translate-run").addEventListener("click", async () => {
   const text = $("translate-input").value.trim();
@@ -931,45 +1393,41 @@ $("btn-translate-run").addEventListener("click", async () => {
   const to = $("translate-to").value;
   const credit = $("translate-credit").checked;
   const useGoogle = $("translate-google").checked;
-  const btn = $("btn-translate-run");
-  const cancelBtn = $("btn-translate-cancel");
-  btn.disabled = true;
-  if (useGoogle) cancelBtn.hidden = false;
-  try {
-    const fn = useGoogle ? "translate_json_google" : "translate_json";
-    const label = useGoogle ? "Dịch (Google)" : "Dịch offline";
-    const { parsed } = await runOp(label, fn, [text, to, credit]);
-    $("translate-output").value = JSON.stringify(parsed.translated, null, 2);
-    let info = "";
-    if (useGoogle) {
-      if (parsed.cancelled) info += "Đã hủy giữa chừng — ";
-      if (parsed.translated_by === "google") {
-        info += "Dịch bằng Google: " + parsed.google_count + " chuỗi.";
-      } else if (parsed.translated_by === "mixed") {
-        info += "Dịch bằng Google: " + parsed.google_count + " chuỗi · từ điển offline: " +
-          parsed.glossary_count + " chuỗi.";
-      } else {
-        info += "Google không dùng được — đã dịch bằng từ điển offline (" +
-          parsed.glossary_count + " chuỗi).";
-      }
-      if (parsed.network_error) info += " Lý do: " + parsed.network_error;
-    } else {
-      info += "Dịch bằng từ điển offline: " + parsed.total + " chuỗi.";
-    }
-    info += " Chưa dịch được " + parsed.untranslated + " chuỗi.";
-    if (parsed.credit_key) info += " Đã gắn credit 'Việt Hoá Bởi Bear' vào key: " + parsed.credit_key + ".";
-    if ((parsed.warnings || []).length) info += " Cảnh báo: " + parsed.warnings.join("; ");
-    $("translate-info").textContent = info;
-  } catch (e) { /* đã báo lỗi */ }
-  finally {
-    btn.disabled = false;
-    cancelBtn.hidden = true;
+  if (!useGoogle) {
+    // Offline: 1 lần gọi như trước (nhanh, không cần hàng đợi).
+    const btn = $("btn-translate-run");
+    btn.disabled = true;
+    try {
+      const { parsed } = await runOp("Dịch offline", "translate_json", [text, to, credit]);
+      $("translate-output").value = JSON.stringify(parsed.translated, null, 2);
+      let info = "Dịch bằng từ điển offline: " + parsed.total + " chuỗi.";
+      info += " Chưa dịch được " + parsed.untranslated + " chuỗi.";
+      if (parsed.credit_key) info += " Đã gắn credit 'Việt Hoá Bởi Bear' vào key: " + parsed.credit_key + ".";
+      if ((parsed.warnings || []).length) info += " Cảnh báo: " + parsed.warnings.join("; ");
+      $("translate-info").textContent = info;
+    } catch (e) { /* đã báo lỗi */ }
+    finally { btn.disabled = false; }
+    return;
   }
+  // File lớn + Google: cảnh báo TRƯỚC thời gian ước tính theo batch
+  // (100 chuỗi/request, ~1,5 giây/request) rồi dịch theo chunk + lưu job bền.
+  let nKeys = 0;
+  try { nKeys = Object.keys(JSON.parse(text)).length; } catch (e) { nKeys = 0; }
+  if (nKeys > 500) {
+    const batches = Math.ceil(nKeys / TRANSLATE_BATCH_STRINGS);
+    const estSec = batches * 1.5;
+    if (!confirm("File có " + nKeys + " chuỗi. Dịch Google theo batch " + TRANSLATE_BATCH_STRINGS + " chuỗi/request — ước tính khoảng " + fmtTime(estSec) + " (có thể lâu hơn nếu mạng chậm; nếu Google không nhận batch thì tool tự rơi về từng chuỗi, sẽ chậm hơn nhiều). Bấm OK để dịch tiếp, hoặc Hủy để dịch offline / chia nhỏ file.")) return;
+  }
+  const job = await startTranslateJob(text, to);
+  if (!job) return;
+  await runTranslateGoogleJob(job, to, credit);
 });
 $("btn-translate-cancel").addEventListener("click", () => {
-  // Worker đang chạy dịch async vẫn nhận được message này giữa các chuỗi.
+  // Worker đang chạy dịch async vẫn nhận được message này giữa các batch;
+  // app.js cũng dừng sau chunk hiện tại (không gọi chunk mới).
+  state.translateCancel = true;
   worker.postMessage({ op: "cancel_translate" });
-  $("translate-info").textContent = "Đang hủy… (dừng sau chuỗi hiện tại, giữ lại phần đã dịch)";
+  $("translate-info").textContent = "Đang hủy… (dừng sau batch hiện tại, giữ lại phần đã dịch)";
 });
 $("btn-translate-download").addEventListener("click", () => {
   const t = $("translate-output").value;

@@ -17,7 +17,9 @@
 // supported"). Vì vậy file này dùng import ES module, không dùng cách nạp
 // script của worker classic.
 import { loadPyodide } from "./pyodide/pyodide.mjs";
-import { setTranslateProxyUrl, translateOneWithFallbacks } from "./gt.js";
+import { setTranslateProxyUrl, translateOneWithFallbacks,
+         translateBatchWithFallbacks, abortGoogleTranslate,
+         resetGoogleTranslateAbort } from "./gt.js";
 
 const PYODIDE_INDEX = new URL("pyodide/", self.location.href).href;
 const PB3_ROOT = "/pb3web";
@@ -108,7 +110,10 @@ async function boot() {
   // translateOneWithFallbacks: proxy Cloudflare (nếu app.js đã gửi URL) ->
   // Google trực tiếp -> MyMemory -> ném lỗi để Python dùng từ điển offline.
   // Riêng proxy báo hết hạn mức tháng (quota) thì bỏ qua Google trực tiếp.
+  // translateBatchWithFallbacks: như trên nhưng cho cả batch (proxy-batch
+  // hoặc gtx joined-text), trả chuỗi JSON {"translations":[...], "mode":...}.
   globalThis.pb3_google_translate = translateOneWithFallbacks;
+  globalThis.pb3_google_translate_batch = translateBatchWithFallbacks;
   globalThis.pb3_google_cancelled = () => googleCancelled;
   pyodide.runPython(
     "import bridge\n" +
@@ -126,6 +131,9 @@ self.onmessage = async (ev) => {
   try {
     if (msg.op === "cancel_translate") {
       googleCancelled = true;
+      // Hủy cả fetch đang chạy trong gt.js (batch đang dịch dở sẽ ném
+      // lỗi kind "cancelled" để Python dừng và giữ phần đã dịch).
+      abortGoogleTranslate();
       postMessage({ type: "cancelled" });
       return;
     }
@@ -185,6 +193,7 @@ self.onmessage = async (ev) => {
       // Đợt dịch mới thì reset cờ hủy.
       if (typeof msg.fn === "string" && msg.fn.indexOf("translate") === 0) {
         googleCancelled = false;
+        resetGoogleTranslateAbort();
       }
       // HOTFIX clone: main thread chỉ gửi file 1 lần cho mỗi file đã chọn
       // (xem fileSentFor/batchSentFor trong app.js) — các lần sau msg.files

@@ -366,6 +366,29 @@
     (muốn lọc thì dùng bản iSH). Asset nhị phân (texture/âm thanh): chỉ đọc tên và
     chuỗi text, không giải mã — dùng bản iSH. Tên file xuất: <b>extract.zip</b> —
     lưu bằng nút “Lưu / Chia sẻ” ở thanh Lưu file bên dưới.</p>
+    <fieldset>
+      <legend>Chọn file trong IPA/ZIP</legend>
+      <label><input type="radio" name="extract-mode" id="extract-mode-auto" checked> Tự động (tool tự tìm file)</label>
+      <label><input type="radio" name="extract-mode" id="extract-mode-manual"> Chọn tay để thu hẹp</label>
+    </fieldset>
+    <p class="note">Mặc định <b>Tự động</b>: tool tự tìm đúng file (tự mở bundle
+    localization trong IPA, tự lấy en.json/zh.json ra) — không cần chọn tay.
+    Chỉ dùng <b>Chọn tay để thu hẹp</b> khi bạn muốn giới hạn phạm vi trích xuất;
+    ở chế độ này mặc định tick tất cả, bỏ tick để loại file.</p>
+    <div class="row">
+      <label>Ngôn ngữ:
+        <select id="extract-locales" style="width:auto">
+          <option value="both" selected>Cả Anh + Trung</option>
+          <option value="en">Tiếng Anh (en)</option>
+          <option value="zh">Tiếng Trung (zh)</option>
+        </select>
+      </label>
+    </div>
+    <p class="note">Lọc ngôn ngữ chỉ giữ entry tiếng Anh / tiếng Trung (mặc định
+    cả hai); entry ngôn ngữ khác hoặc không rõ ngôn ngữ sẽ bị bỏ qua và ghi rõ
+    lý do trong báo cáo — không fail cả đợt khi một ngôn ngữ vắng mặt.</p>
+    <div id="extract-file-list"><p class="note">Chưa có danh sách file — mở tab này khi đã chọn file IPA/ZIP.</p></div>
+    <button id="btn-extract-list" class="secondary">Tải lại danh sách file</button>
     <button id="btn-extract-run">Trích xuất</button>
     <div id="extract-result"></div>
   </div>
@@ -373,11 +396,11 @@
   <div id="tab-translate" class="card" hidden>
     <h2>Dịch (Google + từ điển offline)</h2>
     <p class="note">Chỉ dịch VALUE, giữ nguyên KEY. Bật Google Translate để dịch mọi
-    chuỗi qua Google (cần mạng; 1 chuỗi/request, cách 0,4 giây nên file lớn
-    sẽ chậm — file vài nghìn chuỗi có thể mất hàng giờ, dùng bản iSH cho
-    nhanh). Nếu Google không dùng được (mất mạng, bị giới hạn tốc độ,
-    trình duyệt chặn CORS) thì tự động thử MyMemory rồi dùng từ điển offline
-    (~40 cụm từ game thông dụng) và báo rõ lý do.</p>
+    chuỗi qua Google (cần mạng; dịch theo batch 100 chuỗi/request nên file
+    1000 chuỗi chỉ mất khoảng chục giây nếu mạng tốt; hàng đợi lưu bền nên
+    tắt tab vẫn tiếp tục được). Nếu Google không dùng được (mất mạng, bị
+    giới hạn tốc độ, trình duyệt chặn CORS) thì tự động thử MyMemory rồi
+    dùng từ điển offline (~100 từ/cụm thông dụng) và báo rõ lý do.</p>
     <div class="row">
       <label style="flex:1;min-width:220px">URL proxy dịch (Cloudflare Worker, không bắt buộc):
         <input type="text" id="translate-proxy" placeholder="vd: beartea-translate-proxy.<tên>.workers.dev">
@@ -392,7 +415,19 @@
     <div class="row">
       <label>Tải file JSON: <input type="file" id="translate-json-file" accept=".json"></label>
     </div>
-    <p class="note">Hoặc dán JSON key-value vào ô dưới:</p>
+    <div class="row">
+      <label style="flex:1;min-width:220px">File vừa trích xuất:
+        <select id="translate-source-select">
+          <option value="">— chưa có file trích xuất —</option>
+        </select>
+      </label>
+    </div>
+    <p class="note">Hoặc dán JSON key-value vào ô dưới (giữ lại cách dán/tải tay làm phương án dự phòng):</p>
+    <p id="translate-resume-bar" class="warn" hidden>Có bản dịch dở dang: <b id="translate-resume-text"></b>
+      <button id="btn-translate-resume" class="secondary">Tiếp tục dịch</button>
+      <button id="btn-translate-discard" class="secondary">Bỏ</button>
+    </p>
+    <p id="translate-empty-banner" class="warn">Chưa có nội dung để dịch — hãy chọn file vừa trích xuất hoặc dán JSON vào ô.</p>
     <textarea id="translate-input" placeholder='{"play": "Play", "quit": "Quit"}'></textarea>
     <div class="row">
       <label>Dịch sang:

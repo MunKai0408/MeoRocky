@@ -11,8 +11,8 @@
   },
   "date_test_after_touch": {
     "ok": true,
-    "detail": ".                                                                        [100%] 1 passed in 0.48s",
-    "seconds": 1
+    "detail": ".                                                                        [100%] 1 passed in 0.45s",
+    "seconds": 0.8
   },
   "pages_yml": {
     "ok": true,
@@ -31,8 +31,8 @@
   },
   "pyodide_pytest_smoke": {
     "ok": true,
-    "detail": "pyodide=314.0.8 lz4=OK micropip pytest=OK http_fetch=0 files=242 font=132948B pytest_smoke_exit=0 | . | . |                [100%] | 58 passed, 1508 deselected in 4.93s",
-    "seconds": 10.8
+    "detail": "pyodide=314.0.8 lz4=OK micropip pytest=OK http_fetch=0 files=242 font=132948B pytest_smoke_exit=0 | . | . |                [100%] | 58 passed, 1508 deselected in 4.79s",
+    "seconds": 10.5
   },
   "picker_ipa": {
     "ok": true,
