@@ -79,7 +79,7 @@ rec("no_http_fetch_during_load", httpFetchCount === 0, `http fetch trong lúc lo
   const bin = Buffer.from(b64, "base64");
   pyodide.FS.mkdirTree("/pb3web/fonts");
   pyodide.FS.writeFile("/pb3web/fonts/BeVietnamPro-Regular.ttf", new Uint8Array(bin));
-  rec("write_site_files", man.files.length === 88, `${man.files.length} file pb3/ + font b64 (${bin.length} byte) ghi vào /pb3web`, performance.now() - t0); // 88 = 87 + 1 (mục 7 thêm sdk/tmp_font.py, 2026-11-16)
+  rec("write_site_files", man.files.length === 89, `${man.files.length} file pb3/ + font b64 (${bin.length} byte) ghi vào /pb3web`, performance.now() - t0); // 89 = 88 + 1 (mục 8 thêm sdk/plan.py, 2026-11-16)
 }
 
 // progress callback: ghi lại event để chứng minh tiến độ chảy thật

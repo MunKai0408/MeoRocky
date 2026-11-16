@@ -1681,6 +1681,236 @@ $("btn-mod-op-text").addEventListener("click", () => {
   }
 });
 
+// ---- Kế hoạch Mod (plan JSON — mục 8) ----
+// Planner (bridge.plan_build) quét bundle và lập plan; executor
+// (bridge.plan_apply) áp plan; bridge.plan_undo hoàn tác theo before_sha.
+// Entry = 1 TextAsset, độc lập theo asset. Plan + checkpoint lưu vào
+// localStorage (tải lại trang vẫn mở lại được — bài học từ
+// translation_apply của studio: bản dịch chỉ trong bộ nhớ trang thì tải
+// lại là mất). Backup đơn vị gốc nằm trong FS worker (/tmp/plan_backup/)
+// nên chỉ tồn tại trong bộ nhớ trang — tải lại trang thì undo phải dùng
+// patch ngược (bridge tự thử khi không còn backup).
+const PLAN_LS_KEY = "pb3_plan_json";
+const PLAN_CKPT_LS_KEY = "pb3_plan_checkpoint";
+state.plan = null;            // plan JSON đang mở
+state.planSelected = null;    // Set(id entry) đã tick; null = chưa có plan
+state.planCheckpoint = null;  // checkpoint {plan_id, completed: [id]}
+function planSaveLs() {
+  try {
+    if (state.plan) localStorage.setItem(PLAN_LS_KEY, JSON.stringify(state.plan));
+    else localStorage.removeItem(PLAN_LS_KEY);
+    if (state.planCheckpoint) localStorage.setItem(PLAN_CKPT_LS_KEY, JSON.stringify(state.planCheckpoint));
+    else localStorage.removeItem(PLAN_CKPT_LS_KEY);
+  } catch (e) { /* localStorage không có: plan không giữ được qua lần tải lại trang */ }
+}
+function planLoadLs() {
+  try {
+    const t = localStorage.getItem(PLAN_LS_KEY);
+    if (!t) return;
+    const p = JSON.parse(t);
+    if (p && p.version === 1 && Array.isArray(p.entries) && p.entries.length) {
+      state.plan = p;
+      state.planSelected = new Set(p.entries.filter((e) => e.selected !== false).map((e) => e.id));
+      const c = localStorage.getItem(PLAN_CKPT_LS_KEY);
+      if (c) { try { state.planCheckpoint = JSON.parse(c); } catch (e) { state.planCheckpoint = null; } }
+    }
+  } catch (e) { /* plan lưu hỏng: bỏ qua, không crash */ }
+}
+function planEntryDiffHtml(e) {
+  const rows = (e.changes || []).slice(0, 3).map((c) =>
+    "<tr><td>" + esc(c.key) + "</td><td>" + esc(c.before) + "</td><td>→</td><td>" +
+    esc(c.after) + "</td></tr>").join("");
+  const more = (e.changes || []).length > 3
+    ? "<tr><td colspan=4>…còn " + ((e.changes || []).length - 3) + " thay đổi nữa</td></tr>" : "";
+  return "<table><tr><th>Key</th><th>Trước</th><th></th><th>Sau</th></tr>" + rows + more + "</table>";
+}
+function renderPlanList() {
+  const box = $("plan-list");
+  const has = !!(state.plan && state.plan.entries && state.plan.entries.length);
+  for (const id of ["btn-plan-select-all", "btn-plan-deselect-all", "btn-plan-download",
+                    "btn-plan-dryrun", "btn-plan-apply", "btn-plan-undo"]) {
+    const b = $(id); if (b) b.disabled = !has;
+  }
+  const rb = $("btn-plan-resume");
+  if (rb) rb.disabled = !(has && state.planCheckpoint && state.planCheckpoint.plan_id === state.plan.id &&
+    (state.planCheckpoint.completed || []).length > 0 &&
+    (state.planCheckpoint.completed || []).length < state.plan.entries.length);
+  if (!box) return;
+  if (!has) { box.innerHTML = "<p class=\"note\">Chưa có plan — nhập bản dịch rồi bấm “Lập kế hoạch”.</p>"; return; }
+  let html = "<p class=\"note\">Plan <b>" + esc(state.plan.id) + "</b> · từ <b>" +
+    esc(state.plan.source_bundle || "") + "</b> · " + state.plan.entries.length +
+    " entry · tick để chọn entry áp (mặc định tick tất cả)" +
+    (state.plan.rebuild_all ? " · <b>REBUILD_ALL: áp toàn bộ, bỏ qua tick</b>" : "") +
+    "</p><table><tr><th></th><th>Asset</th><th>Thay đổi</th><th>Diff trước → sau</th><th>SHA</th></tr>";
+  for (const e of state.plan.entries) {
+    const checked = !state.planSelected || state.planSelected.has(e.id);
+    html += "<tr><td><input type=\"checkbox\" data-plan-id=\"" + esc(e.id) + "\"" +
+      (checked ? " checked" : "") + "></td><td>" + esc(e.asset_path) +
+      "<br><span class=\"sub\">" + esc(e.op) + " · path_id " + e.object + "</span></td><td>" +
+      (e.changes || []).length + "</td><td>" + planEntryDiffHtml(e) + "</td><td class=\"sub\">" +
+      esc((e.before_sha || "").slice(0, 8)) + " →<br>" + esc((e.after_sha || "").slice(0, 8)) + "</td></tr>";
+    if ((e.warnings || []).length) html += "<tr><td colspan=5>Cảnh báo: " + esc(e.warnings.join("; ")) + "</td></tr>";
+  }
+  html += "</table>";
+  if ((state.plan.skipped || []).length) {
+    html += "<p class=\"note\">Đã bỏ qua " + state.plan.skipped.length + " asset: " +
+      esc(state.plan.skipped.map((s) => s.asset_path + " (" + s.reason + ")").join("; ")) + "</p>";
+  }
+  box.innerHTML = html;
+}
+function planSyncSelectedToPlan() {
+  if (!state.plan) return;
+  for (const e of state.plan.entries) e.selected = !state.planSelected || state.planSelected.has(e.id);
+  state.plan.rebuild_all = !!($("plan-rebuild-all") && $("plan-rebuild-all").checked);
+}
+function planApplyResultHtml(parsed) {
+  let html = "<p>Kết quả: <b>" + (parsed.dry_run ? "dry-run (CHƯA ghi file nào)" :
+    (parsed.status === "partial" ? "CHẠY DỞ (partial — còn checkpoint để tiếp tục)" : "ĐÃ GHI")) +
+    "</b> · " + (parsed.applied || []).length + " entry đã áp · " +
+    (parsed.errors || []).length + " lỗi</p>";
+  if ((parsed.applied || []).length) {
+    html += "<table><tr><th>Asset</th><th>Thay đổi</th><th>Chế độ</th><th>Verify</th></tr>";
+    for (const a of parsed.applied) html += "<tr><td>" + esc(a.asset_path) + "</td><td>" + a.changes +
+      "</td><td>" + esc(a.write_mode || "") + "</td><td>" + (a.verified ? "OK" : "LỖI") + "</td></tr>";
+    html += "</table>";
+  }
+  if ((parsed.skipped || []).length) html += "<p class=\"note\">Bỏ qua: " +
+    esc(parsed.skipped.map((s) => s.asset_path + " (" + s.reason + ")").join("; ")) + "</p>";
+  if ((parsed.errors || []).length) html += "<p>Lỗi: " + esc(parsed.errors.map((e) =>
+    "[" + (e.code || "") + "] " + e.asset_path + ": " + e.message).join("; ")) + "</p>";
+  if ((parsed.outputs || []).length) html += "<p>File đã ghi, đã sẵn sàng để lưu: <b>" + esc(parsed.outputs.join(", ")) + "</b> — bấm “Lưu / Chia sẻ” ở thanh Lưu file bên dưới để lưu về máy</p>";
+  if (parsed.checkpoint) html += "<p class=\"sub\">Checkpoint: " + (parsed.checkpoint.completed || []).length +
+    " entry xong" + (parsed.remaining && parsed.remaining.length ? " · còn " + parsed.remaining.length + " entry chưa xong — bấm “Tiếp tục từ checkpoint”" : "") + "</p>";
+  html += "<p class=note>" + esc(parsed.note || "") + "</p>";
+  return html;
+}
+$("plan-list").addEventListener("change", (ev) => {
+  const cb = ev.target;
+  if (!cb || cb.type !== "checkbox" || typeof cb.getAttribute !== "function") return;
+  const id = cb.getAttribute("data-plan-id");
+  if (!id) return;
+  if (!state.planSelected) state.planSelected = new Set();
+  if (cb.checked) state.planSelected.add(id);
+  else state.planSelected.delete(id);
+  planSyncSelectedToPlan();
+  planSaveLs();
+  renderPlanList();
+});
+$("btn-plan-select-all").addEventListener("click", () => {
+  if (!state.plan) return;
+  state.planSelected = new Set(state.plan.entries.map((e) => e.id));
+  planSyncSelectedToPlan(); planSaveLs(); renderPlanList();
+});
+$("btn-plan-deselect-all").addEventListener("click", () => {
+  if (!state.plan) return;
+  state.planSelected = new Set();
+  planSyncSelectedToPlan(); planSaveLs(); renderPlanList();
+});
+$("btn-plan-load-translate").addEventListener("click", () => {
+  const t = $("translate-output") && $("translate-output").value.trim();
+  if (!t) { showError("Tab Dịch chưa có bản dịch — dịch xong ở tab Dịch rồi bấm lại."); return; }
+  $("plan-translations").value = t;
+  clearError();
+});
+$("btn-plan-build").addEventListener("click", async () => {
+  if (!state.file) { showError("Chưa chọn file. Hãy chọn file ở trên trước."); return; }
+  const text = $("plan-translations").value.trim();
+  if (!text) { showError("Chưa có bản dịch — nhập JSON key → giá trị mới, hoặc bấm “Lấy từ tab Dịch”."); return; }
+  try { JSON.parse(text); } catch (e) { showError("Bản dịch không phải JSON hợp lệ: " + e.message); return; }
+  const assets = $("plan-assets").value.trim();
+  try {
+    const { parsed } = await runOp("Lập kế hoạch", "plan_build",
+      [inputPath(), text, $("plan-entry").value.trim() || null, "REBUILD_SECTION",
+       !!($("plan-rebuild-all") && $("plan-rebuild-all").checked),
+       assets ? JSON.stringify(assets.split(",").map((s) => s.trim()).filter(Boolean)) : null],
+      inputFileArgs());
+    state.plan = parsed.plan;
+    state.planSelected = new Set(state.plan.entries.filter((e) => e.selected !== false).map((e) => e.id));
+    state.planCheckpoint = null;
+    planSaveLs();
+    renderPlanList();
+    $("plan-result").innerHTML = "<p>Kế hoạch <b>" + esc(state.plan.id) + "</b>: " +
+      state.plan.entries.length + " entry · " + (state.plan.skipped || []).length +
+      " asset bỏ qua (xem dưới bảng).</p>";
+  } catch (e) { /* đã báo lỗi */ }
+});
+async function runPlanApply(dryRun, checkpointJson) {
+  if (!state.file) { showError("Chưa chọn file. Hãy chọn file ở trên trước."); return; }
+  if (!state.plan) { showError("Chưa có plan — lập kế hoạch trước."); return; }
+  planSyncSelectedToPlan();
+  if (!dryRun && !state.plan.rebuild_all &&
+      (!state.planSelected || state.planSelected.size === 0)) {
+    showError("Chưa chọn entry nào để áp — tick ít nhất 1 entry, hoặc tick “Áp dụng toàn bộ (REBUILD_ALL)” để áp hết.");
+    return;
+  }
+  if (!dryRun && !confirm("Áp plan lên file đã chọn? File gốc KHÔNG bị ghi đè; output chỉ là bundle/.assets, không phải IPA đóng gói lại.")) return;
+  try {
+    const label = dryRun ? "Xem trước plan (dry-run)" : "Áp dụng plan";
+    const { parsed } = await runOp(label, "plan_apply",
+      [JSON.stringify(state.plan), inputPath(), dryRun, checkpointJson || null, null],
+      inputFileArgs(), !dryRun);
+    state.planCheckpoint = parsed.checkpoint || null;
+    if (parsed.status === "done") state.planCheckpoint = null;
+    planSaveLs();
+    renderPlanList();
+    $("plan-result").innerHTML = planApplyResultHtml(parsed);
+  } catch (e) { /* đã báo lỗi */ }
+}
+$("btn-plan-dryrun").addEventListener("click", () => runPlanApply(true, null));
+$("btn-plan-apply").addEventListener("click", () => runPlanApply(false, null));
+$("btn-plan-resume").addEventListener("click", () => {
+  if (!state.planCheckpoint) { showError("Không có checkpoint để tiếp tục."); return; }
+  runPlanApply(false, JSON.stringify(state.planCheckpoint));
+});
+$("btn-plan-undo").addEventListener("click", async () => {
+  if (!state.file) { showError("Chưa chọn file. Hãy chọn file ở trên trước."); return; }
+  if (!state.plan) { showError("Chưa có plan — không biết hoàn tác về đâu."); return; }
+  if (!confirm("Hoàn tác plan (khôi phục đơn vị về đúng trước khi áp)? Cần file đầu vào là file ĐÃ ÁP plan, hoặc bản sao lưu còn trong phiên trang.")) return;
+  try {
+    const { parsed } = await runOp("Hoàn tác plan", "plan_undo",
+      [JSON.stringify(state.plan), inputPath()], inputFileArgs(), true);
+    let html = "<p>Hoàn tác: <b>" + (parsed.ok ? "XONG" : "CÓ LỖI") + "</b> · " +
+      (parsed.restored || []).length + " entry đã về trước khi áp</p>";
+    if ((parsed.restored || []).length) {
+      html += "<table><tr><th>Asset</th><th>Cách khôi phục</th><th>Verify</th></tr>";
+      for (const r of parsed.restored) html += "<tr><td>" + esc(r.asset_path) + "</td><td>" +
+        esc(r.how === "backup" ? "bản sao lưu" : "patch ngược") + "</td><td>" +
+        (r.verified ? "OK (đúng before_sha)" : "LỖI") + "</td></tr>";
+      html += "</table>";
+    }
+    if ((parsed.errors || []).length) html += "<p>Lỗi: " + esc(parsed.errors.map((e) =>
+      "[" + (e.code || "") + "] " + e.asset_path + ": " + e.message).join("; ")) + "</p>";
+    if ((parsed.outputs || []).length) html += "<p>File đã khôi phục, đã sẵn sàng để lưu: <b>" + esc(parsed.outputs.join(", ")) + "</b> — bấm “Lưu / Chia sẻ” ở thanh Lưu file bên dưới để lưu về máy</p>";
+    html += "<p class=note>" + esc(parsed.note || "") + "</p>";
+    $("plan-result").innerHTML = html;
+  } catch (e) { /* đã báo lỗi */ }
+});
+$("btn-plan-download").addEventListener("click", () => {
+  if (!state.plan) { showError("Chưa có plan để tải."); return; }
+  planSyncSelectedToPlan();
+  download("plan-" + state.plan.id + ".json",
+    [new TextEncoder().encode(JSON.stringify(state.plan, null, 2))]);
+});
+$("btn-plan-import").addEventListener("click", () => { $("plan-file").click(); });
+$("plan-file").addEventListener("change", async (ev) => {
+  const f = ev.target.files && ev.target.files[0];
+  if (!f) return;
+  try {
+    const p = JSON.parse(await f.text());
+    if (!p || p.version !== 1 || !Array.isArray(p.entries) || !p.entries.length) throw new Error("plan phải có version 1 và ít nhất 1 entry.");
+    state.plan = p;
+    state.planSelected = new Set(p.entries.filter((e) => e.selected !== false).map((e) => e.id));
+    state.planCheckpoint = null;
+    planSaveLs();
+    renderPlanList();
+    $("plan-result").innerHTML = "<p>Đã mở plan <b>" + esc(p.id) + "</b>: " + p.entries.length + " entry.</p>";
+  } catch (e) { showError("Mở plan lỗi: " + e.message); }
+  ev.target.value = "";
+});
+// Khôi phục plan đã lưu (localStorage) khi tải trang.
+planLoadLs();
+renderPlanList();
+
 // ---- Batch: pool 2 worker + checkpoint từng game vào IndexedDB + watchdog hợp tác (Mục 4) ----
 // Kiến trúc:
 //  - app.js tách manifest bằng bridge.batch_split (1 lần, worker đơn) rồi

@@ -501,6 +501,48 @@
     <button id="btn-mod-dryrun">Patch thử (dry-run)</button>
     <button id="btn-mod-write" class="secondary">Patch và ghi file</button>
     <div id="mod-result"></div>
+
+    <h3>Kế hoạch Mod (plan JSON — mục 8)</h3>
+    <p class="note">Tách planner/executor: lập plan từ bản dịch (JSON key → giá
+    trị mới, như đầu ra tab Dịch), xem diff từng asset rồi mới áp. Mỗi entry
+    là 1 TextAsset — bỏ tick entry nào thì entry đó giữ nguyên. Plan lưu
+    được (JSON) để mở lại sau; chạy dở thì bấm “Tiếp tục” để chạy tiếp từ
+    checkpoint; “Hoàn tác” khôi phục đúng trước khi áp (theo before_sha).
+    <b>Áp dụng toàn bộ (REBUILD_ALL)</b> ở đây là áp toàn bộ entry trong
+    plan — chế độ ghi REBUILD_ALL của Unity vẫn cần maturity M4 nên chưa
+    dùng được trên web (entry nào để op đó sẽ bị từ chối kèm lý do rõ ràng,
+    các entry khác vẫn áp).</p>
+    <div class="row">
+      <label style="flex:1;min-width:180px">Entry (vpath tới bundle/.assets, trống nếu file đã chọn chính là bundle/.assets):
+        <input type="text" id="plan-entry" placeholder="vd: Payload/9Kings.app/Data/Raw/aa/iOS/localization-locales_assets_all.bundle::CAB-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa">
+      </label>
+      <label style="min-width:180px">Chỉ áp cho asset (tên, cách nhau bằng dấu phẩy; trống = mọi asset JSON có key trùng):
+        <input type="text" id="plan-assets" placeholder="vd: en.json, menu.json">
+      </label>
+    </div>
+    <label>Bản dịch (JSON key → giá trị mới):
+      <textarea id="plan-translations" placeholder='{"hello": "Xin chào", "play": "Chơi"}'></textarea>
+    </label>
+    <div class="row">
+      <button id="btn-plan-build">Lập kế hoạch</button>
+      <button id="btn-plan-load-translate" class="secondary">Lấy từ tab Dịch</button>
+      <label><input type="checkbox" id="plan-rebuild-all"> Áp dụng toàn bộ (REBUILD_ALL — bỏ qua tick từng dòng)</label>
+    </div>
+    <div class="row">
+      <button id="btn-plan-select-all" class="secondary" disabled>Chọn tất cả</button>
+      <button id="btn-plan-deselect-all" class="secondary" disabled>Bỏ chọn tất cả</button>
+      <button id="btn-plan-download" class="secondary" disabled>Tải plan (.json)</button>
+      <button id="btn-plan-import" class="secondary">Mở plan (.json)</button>
+      <input type="file" id="plan-file" accept=".json,application/json" class="visually-hidden">
+    </div>
+    <div id="plan-list"></div>
+    <div class="row">
+      <button id="btn-plan-dryrun" class="secondary" disabled>Xem trước (dry-run)</button>
+      <button id="btn-plan-apply" disabled>Áp dụng plan</button>
+      <button id="btn-plan-resume" class="secondary" disabled>Tiếp tục từ checkpoint</button>
+      <button id="btn-plan-undo" class="secondary" disabled>Hoàn tác</button>
+    </div>
+    <div id="plan-result"></div>
   </div>
 
   <div id="tab-batch" class="card" hidden>

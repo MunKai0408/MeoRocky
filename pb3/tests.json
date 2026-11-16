@@ -131,6 +131,7 @@
   "pb3/tests/test_overall_keepalive.py",
   "pb3/tests/test_patch01.py",
   "pb3/tests/test_paths_safe.py",
+  "pb3/tests/test_plan.py",
   "pb3/tests/test_plugin_toggle.py",
   "pb3/tests/test_polish.py",
   "pb3/tests/test_progress_env_dialog.py",

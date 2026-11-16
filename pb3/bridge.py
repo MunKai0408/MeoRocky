@@ -1254,6 +1254,86 @@ def mod_patch(path, edits_json, allow_write=False):
 
 
 # ======================================================================
+# PLAN — mục 8 (sdk/plan.py): planner/executor tách rời cho Mod.
+# ======================================================================
+def plan_build(path, translations_json, entry=None, mode="REBUILD_SECTION",
+               rebuild_all=False, asset_names_json=None):
+    """Lập plan JSON từ bundle/assets: quét TextAsset JSON, đối key trong
+    translations (key -> giá trị mới, như đầu ra tab Dịch) thành entry
+    mỗi asset. Không ghi file nào."""
+    try:
+        from sdk import plan as plan_sdk
+
+        _check_size(path)
+        try:
+            translations = json.loads(translations_json)
+        except ValueError:
+            raise ValueError("translations phải là JSON object "
+                             "(key -> giá trị mới).")
+        asset_names = None
+        if asset_names_json:
+            asset_names = json.loads(asset_names_json)
+            if not isinstance(asset_names, list):
+                raise ValueError("asset_names phải là JSON list tên asset.")
+        data = open(path, "rb").read()
+        plan = plan_sdk.build_plan(
+            data, translations, source_bundle=os.path.basename(path),
+            entry=entry or None, mode=mode or "REBUILD_SECTION",
+            rebuild_all=bool(rebuild_all), asset_names=asset_names)
+        return json.dumps({"ok": True, "plan": plan}, ensure_ascii=False)
+    except Exception as e:  # noqa: BLE001
+        return _err(e)
+
+
+def plan_apply(plan_json, path, dry_run=True, checkpoint_json=None,
+               stop_after=None):
+    """Executor: áp plan lên file gốc. Mặc định dry-run (chỉ tính + verify,
+    không ghi). dry_run=False thì ghi đơn vị đã patch ra /tmp/plan_out/
+    (1 file -> dest, nhiều file -> /tmp/plan.zip) + backup đơn vị gốc vào
+    /tmp/plan_backup/<plan_id>/ để undo. checkpoint_json để resume;
+    stop_after=N để dừng sau N entry (trả checkpoint)."""
+    try:
+        from sdk import plan as plan_sdk
+
+        _check_size(path)
+        try:
+            plan = json.loads(plan_json)
+        except ValueError:
+            raise ValueError("plan_json không phải JSON hợp lệ.")
+        data = open(path, "rb").read()
+        # Pyodide 314: JS null qua bien thanh JsNull (chi undefined moi
+        # thanh None) nen KHONG duoc kiem `is not None` — JsNull la falsy
+        # nen dung truthiness.
+        stop_n = int(stop_after) if stop_after else None
+        res = plan_sdk.apply_plan(
+            data, plan, dry_run=bool(dry_run),
+            checkpoint_json=checkpoint_json or None,
+            stop_after=stop_n)
+        return json.dumps(res, ensure_ascii=False)
+    except Exception as e:  # noqa: BLE001
+        return _err(e)
+
+
+def plan_undo(plan_json, path):
+    """Hoàn tác plan: khôi phục đơn vị về đúng before_sha (ưu tiên bản sao
+    lưu trong phiên worker, nếu không còn thì patch ngược rồi verify).
+    Đầu vào phải là file ĐÃ ÁP plan (hoặc file gốc nếu dùng backup)."""
+    try:
+        from sdk import plan as plan_sdk
+
+        _check_size(path)
+        try:
+            plan = json.loads(plan_json)
+        except ValueError:
+            raise ValueError("plan_json không phải JSON hợp lệ.")
+        data = open(path, "rb").read()
+        res = plan_sdk.undo_plan(data, plan)
+        return json.dumps(res, ensure_ascii=False)
+    except Exception as e:  # noqa: BLE001
+        return _err(e)
+
+
+# ======================================================================
 # BATCH — menu [4] iSH (sdk/batch.py).
 # ======================================================================
 _BATCH_ROOT = "/tmp/batch"

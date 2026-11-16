@@ -21,12 +21,12 @@
 
 // ĐỔI SỐ NÀY MỖI KHI DEPLOY BẢN MỚI (bất kỳ file nào trong PRECACHE_URLS
 // đổi nội dung). Bản cũ sẽ bị xóa ở activate.
-const CACHE_VERSION = "v7-20261116";
+const CACHE_VERSION = "v8-20261116";
 const CACHE_NAME = "beartea-" + CACHE_VERSION;
 
 // Danh sách precache: shell tĩnh + Pyodide vendored + mã PB3 (khớp đúng
 // pb3/files.json mà worker.js tải lúc boot) + font đi kèm. Sinh từ đĩa
-// lúc viết file này (122 mục); thêm/bớt file vendored thì cập nhật cả
+// lúc viết file này (126 mục); thêm/bớt file vendored thì cập nhật cả
 // danh sách này, không thì lần thăm 2 offline sẽ thiếu file đó.
 const PRECACHE_URLS = [
   "./",
@@ -132,6 +132,7 @@ const PRECACHE_URLS = [
   "pb3/sdk/kb.py",
   "pb3/sdk/lz4pure.py",
   "pb3/sdk/manifest.py",
+  "pb3/sdk/plan.py",
   "pb3/sdk/support_matrix.py",
   "pb3/sdk/tmp_font.py",
   "pb3/sdk/translate.py",
