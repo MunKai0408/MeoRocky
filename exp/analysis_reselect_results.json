@@ -1,0 +1,212 @@
+{
+  "generated_at": "2026-11-16T16:47:12.196Z",
+  "total": 26,
+  "passed": 26,
+  "failed": 0,
+  "results": {
+    "static_counts_and_cache": {
+      "ok": true,
+      "detail": "files.json=92 (ky vong 92) · tests.json=162 (ky vong 162) · sw.js v17-20261116: true · file exp con sot v16: khong",
+      "ms": 69
+    },
+    "static_js_syntax": {
+      "ok": true,
+      "detail": "node --check app.js + worker.js + worker-pool.js OK",
+      "ms": 277
+    },
+    "pure_reselect_fns_and_rows": {
+      "ok": true,
+      "detail": "ham du: true · __PB3_RESELECT_STATE: true · dinh tuyen: {\"ipa\":\"list\",\"zip\":\"list\",\"unity3d\":\"list\",\"assets\":\"list\",\"tarxz\":\"list\",\"gz\":\"list\",\"json\":\"mod\",\"ttf\":\"font\"} · dong het phien: nut Chon lai=true, ghi chu het phien=true, khong co Tai lai=true · dong con trong phien: Tai lai=true, Chon lai=true",
+      "ms": 34
+    },
+    "static_home_note_honest": {
+      "ok": true,
+      "detail": "ghi chu File gan day mo ta dung 2 truong hop + co input #reselect-file-input: true",
+      "ms": 0
+    },
+    "game_9kings_reselect_insession": {
+      "ok": true,
+      "detail": "mo 9kings.ipa (173MB) -> dong recent co Chon lai/Tai lai/Xoa: true/true/true · bam Chon lai -> tab Danh sach hien: true · state.file van la 9kings.ipa · khong tran 390px (scrollW=390) · last truoc khi bam: null",
+      "ms": 3271
+    },
+    "game_passpartout_reselect_insession": {
+      "ok": true,
+      "detail": "mo passpartout.ipa (159MB) -> dong recent co Chon lai/Tai lai/Xoa: true/true/true · bam Chon lai -> tab Danh sach hien: true · state.file van la passpartout.ipa · khong tran 390px (scrollW=390) · last truoc khi bam: {\"at\":\"2026-11-16T16:20:22.188Z\",\"name\":\"9kings.ipa\",\"inSession\":true,\"from\":\"main\",\"matched\":true,\"tab\":\"list\"}",
+      "ms": 3071
+    },
+    "game_ek2_reselect_insession": {
+      "ok": true,
+      "detail": "mo exploding_kittens2.ipa (290MB) -> dong recent co Chon lai/Tai lai/Xoa: true/true/true · bam Chon lai -> tab Danh sach hien: true · state.file van la exploding_kittens2.ipa · khong tran 390px (scrollW=390) · last truoc khi bam: {\"at\":\"2026-11-16T16:20:25.493Z\",\"name\":\"passpartout.ipa\",\"inSession\":true,\"from\":\"main\",\"matched\":true,\"tab\":\"list\"}",
+      "ms": 3060
+    },
+    "game_pb3_reselect_insession": {
+      "ok": true,
+      "detail": "mo polybridge3.ipa (482MB) -> dong recent co Chon lai/Tai lai/Xoa: true/true/true · bam Chon lai -> tab Danh sach hien: true · state.file van la polybridge3.ipa · khong tran 390px (scrollW=390) · last truoc khi bam: {\"at\":\"2026-11-16T16:20:28.601Z\",\"name\":\"exploding_kittens2.ipa\",\"inSession\":true,\"from\":\"main\",\"matched\":true,\"tab\":\"list\"}",
+      "ms": 3608
+    },
+    "game_data_reselect_insession": {
+      "ok": true,
+      "detail": "mo data.unity3d (590MB) -> dong recent co Chon lai/Tai lai/Xoa: true/true/true · bam Chon lai -> tab Danh sach hien: true · state.file van la data.unity3d · khong tran 390px (scrollW=390) · last truoc khi bam: {\"at\":\"2026-11-16T16:20:32.230Z\",\"name\":\"polybridge3.ipa\",\"inSession\":true,\"from\":\"main\",\"matched\":true,\"tab\":\"list\"}",
+      "ms": 9882
+    },
+    "game_9kings_reselect_outsession": {
+      "ok": true,
+      "detail": "tai lai trang -> dong 9kings.ipa: Chon lai=true, khong Tai lai=true, ghi chu het phien=true · chon lai dung file -> tab Danh sach: true · state.file=9kings.ipa · khong tran 390px (scrollW=390)",
+      "ms": 6447
+    },
+    "game_passpartout_reselect_outsession": {
+      "ok": true,
+      "detail": "tai lai trang -> dong passpartout.ipa: Chon lai=true, khong Tai lai=true, ghi chu het phien=true · chon lai dung file -> tab Danh sach: true · state.file=passpartout.ipa · khong tran 390px (scrollW=390)",
+      "ms": 6133
+    },
+    "game_ek2_reselect_outsession": {
+      "ok": true,
+      "detail": "tai lai trang -> dong exploding_kittens2.ipa: Chon lai=true, khong Tai lai=true, ghi chu het phien=true · chon lai dung file -> tab Danh sach: true · state.file=exploding_kittens2.ipa · khong tran 390px (scrollW=390)",
+      "ms": 6169
+    },
+    "game_pb3_reselect_outsession": {
+      "ok": true,
+      "detail": "tai lai trang -> dong polybridge3.ipa: Chon lai=true, khong Tai lai=true, ghi chu het phien=true · chon lai dung file -> tab Danh sach: true · state.file=polybridge3.ipa · khong tran 390px (scrollW=390)",
+      "ms": 4764
+    },
+    "game_data_reselect_outsession": {
+      "ok": true,
+      "detail": "tai lai trang -> dong data.unity3d: Chon lai=true, khong Tai lai=true, ghi chu het phien=true · chon lai dung file -> tab Danh sach: true · state.file=data.unity3d · khong tran 390px (scrollW=390)",
+      "ms": 5207
+    },
+    "mismatch_reports_and_opens_new": {
+      "ok": true,
+      "detail": "chon passpartout thay cho 9kings -> banner hien: true · noi dung: Bạn chọn file passpartout.ipa (152 MB), khác với file gần đây 9kings.ipa (165 MB) — đã mở file vừa chọn thay cho file cũ. · state.file=passpartout.ipa · tab Danh sach: true",
+      "ms": 4218
+    },
+    "delete_button_still_works": {
+      "ok": true,
+      "detail": "truoc khi xoa dong passpartout co nut Xoa: true · sau khi xoa + tai lai trang: dong con khong: false",
+      "ms": 601
+    },
+    "json_reselect_insession": {
+      "ok": true,
+      "detail": "mo resources.monobehaviour.en.json -> bam Chon lai (con trong phien) -> tab Mod: true · info: Đã mở resources.monobehaviour.en.json · 11356 entry · Nguồn: file tải lên (resources.monobehaviour.en.json) — không rõ n · keys=11356",
+      "ms": 3122
+    },
+    "json_reselect_outsession": {
+      "ok": true,
+      "detail": "tai lai trang -> dong JSON: Chon lai=true, khong Tai lai=true · chon lai dung file -> tab Mod: true · info: Đã mở resources.monobehaviour.en.json · 11356 entry · Nguồn: file tải lên (resources.monobehaviour.en.json) — không rõ n",
+      "ms": 293
+    },
+    "ui_no_page_errors": {
+      "ok": true,
+      "detail": "khong co pageerror",
+      "ms": 174
+    },
+    "regress_module_worker": {
+      "ok": true,
+      "detail": "=== XONG: 17 mục, 0 FAIL — xem module_worker_results.md ===",
+      "ms": 5281
+    },
+    "regress_c2": {
+      "ok": true,
+      "detail": "==== TỔNG: 13 mục, 0 FAIL ====",
+      "ms": 21916
+    },
+    "regress_c9": {
+      "ok": true,
+      "detail": "===== KẾT QUẢ C9: 16/16 PASS (0 FAIL) =====",
+      "ms": 63291
+    },
+    "regress_translate_full_A": {
+      "ok": true,
+      "detail": "== TONG KET: 33/33 PASS, 0 FAIL (275.5s) ==",
+      "ms": 275639
+    },
+    "regress_mod_search_B": {
+      "ok": true,
+      "detail": "== TONG KET: 24/24 PASS, 0 FAIL (161.6s) ==",
+      "ms": 161776
+    },
+    "regress_item8_static": {
+      "ok": true,
+      "detail": "{\"fails\": []}",
+      "ms": 84
+    },
+    "regress_full_suite_python": {
+      "ok": true,
+      "detail": "1696 test, OK",
+      "ms": 56982
+    }
+  },
+  "five_games": {
+    "9kings": {
+      "file": "9kings.ipa",
+      "sizeMB": 173,
+      "inSession": {
+        "ok": true,
+        "tab": "list",
+        "ms": 3271
+      },
+      "outSession": {
+        "ok": true,
+        "matched": true,
+        "ms": 6447
+      }
+    },
+    "passpartout": {
+      "file": "passpartout.ipa",
+      "sizeMB": 159,
+      "inSession": {
+        "ok": true,
+        "tab": "list",
+        "ms": 3071
+      },
+      "outSession": {
+        "ok": true,
+        "matched": true,
+        "ms": 6133
+      }
+    },
+    "ek2": {
+      "file": "exploding_kittens2.ipa",
+      "sizeMB": 290,
+      "inSession": {
+        "ok": true,
+        "tab": "list",
+        "ms": 3060
+      },
+      "outSession": {
+        "ok": true,
+        "matched": true,
+        "ms": 6169
+      }
+    },
+    "pb3": {
+      "file": "polybridge3.ipa",
+      "sizeMB": 482,
+      "inSession": {
+        "ok": true,
+        "tab": "list",
+        "ms": 3608
+      },
+      "outSession": {
+        "ok": true,
+        "matched": true,
+        "ms": 4764
+      }
+    },
+    "data": {
+      "file": "data.unity3d",
+      "sizeMB": 590,
+      "inSession": {
+        "ok": true,
+        "tab": "list",
+        "ms": 9882
+      },
+      "outSession": {
+        "ok": true,
+        "matched": true,
+        "ms": 5207
+      }
+    }
+  },
+  "page_errors": [],
+  "notes": "Chromium sandbox khong co HTTPS ngoai: UI chay tren HTTP local 127.0.0.1 (dung code se day). KHONG phai Safari that. Data.unity3d 590MB + polybridge3.ipa 482MB >400MB nen hop thoai canh bao file lon (C4) hien khi mo — harness bam Tiep tuc."
+}

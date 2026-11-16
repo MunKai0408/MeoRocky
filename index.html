@@ -145,6 +145,7 @@
   .recent-row:last-child { border-bottom: 0; }
   .recent-name { font-weight: 600; word-break: break-all; flex: 1 1 140px; min-width: 120px; }
   .recent-meta { color: var(--sub); font-size: 12px; }
+  .recent-row button { white-space: nowrap; }
 
   /* ---- Lưới thao tác Mod (chỉ "Thay Text" là thật) ---- */
   .op-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 10px 0; }
@@ -270,6 +271,7 @@
       <p class="note">File chỉ được xử lý trên thiết bị của bạn.</p>
     </div>
     <input type="file" id="file-input" class="visually-hidden">
+    <input type="file" id="reselect-file-input" class="visually-hidden">
     <div class="row">
       <button id="btn-import-ipa" onclick="document.getElementById('file-input').click()">📲 Nhập file .ipa</button>
     </div>
@@ -300,9 +302,12 @@
     <h2>File gần đây</h2>
     <p class="note">Chỉ liệt kê file bạn đã chọn <b>trong phiên này</b> (tên, dung lượng, loại,
     thời gian). Metadata được lưu vào bộ nhớ trình duyệt để hiện lại sau khi tải lại trang —
-    <b>không lưu nội dung file</b>. Nút “Tải lại” chỉ hiện khi file còn trong phiên (dữ liệu
-    còn trong bộ nhớ); hết phiên thì dòng đó chỉ còn tên + gợi ý chọn lại file. Tắt lưu lịch
-    sử ở Cài đặt nếu không muốn lưu metadata.</p>
+    <b>không lưu nội dung file</b>. Nút “Chọn lại file” ở mỗi dòng: file còn trong phiên thì
+    mở lại ngay đúng tab làm việc (file game → tab Danh sách, file .json → tab Mod);
+    hết phiên thì mở hộp chọn file để bạn chọn lại file đó từ máy — nếu chọn nhầm file
+    khác, trang báo rõ rồi vẫn mở file vừa chọn. Nút “Tải lại” chỉ hiện khi file còn
+    trong phiên (tải 1 bản sao của file về máy). Tắt lưu lịch sử ở Cài đặt nếu không
+    muốn lưu metadata.</p>
     <div id="recent-list"><p class="note">Chưa có file nào trong phiên này — chọn 1 file game ở khung trên.</p></div>
   </div>
 

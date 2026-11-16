@@ -80,7 +80,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     else detail = "check_analysis_c9_static.py xanh: N cấu hình được 1–2 " +
       "(mặc định 2, tự động 1 khi deviceMemory ≤ 4, localStorage " +
       "pb3_pool_size, pool tôn trọng N, chuỗi cũ đã hết) + files.json=92 / " +
-      "tests.json=162 + CACHE_VERSION v16-20261116 + tiếng Việt đủ dấu";
+      "tests.json=162 + CACHE_VERSION v17-20261116 + tiếng Việt đủ dấu";
   } catch (e) { ok = false; detail = "không đọc được JSON: " + (r.stdout || "") + (r.stderr || ""); }
   rec("static_c9_checks", ok, detail, performance.now() - t0);
 }

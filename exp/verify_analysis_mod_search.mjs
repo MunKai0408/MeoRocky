@@ -106,13 +106,19 @@ async function openPage() {
   return page;
 }
 const elText = (id) => page.$eval("#" + id, (el) => el.textContent || "");
-async function importJson(files) {
+async function importJson(files, expectedEntries) {
   const name = path.basename(files[0]);
   await page.setInputFiles("#mod-json-file", files);
-  await page.waitForFunction((n) => {
+  // 5 game dùng CHUNG tên file resources.monobehaviour.en.json nên chỉ
+  // chờ "Đã mở <tên>" sẽ khớp ngay với info CŨ của game trước (race đã
+  // làm FAIL ek2/passpartout ở lần chạy 2026-11-16: info đọc được là
+  // 3834/6261 entry của game trước, trong khi số kết quả tìm vẫn đúng).
+  // Khi biết trước số entry thì chờ thêm đúng số đó trong info.
+  await page.waitForFunction((a) => {
     const el = document.querySelector("#mod-json-info");
-    return el && (el.textContent || "").includes("Đã mở " + n);
-  }, name, { timeout: 30000 });
+    const t = (el && el.textContent) || "";
+    return t.includes("Đã mở " + a.name) && (a.entries == null || t.includes(a.entries + " entry"));
+  }, { name, entries: expectedEntries == null ? null : expectedEntries }, { timeout: 30000 });
 }
 async function searchKw(kw, scope, caseSensitive) {
   await page.fill("#mod-search", kw);
@@ -216,7 +222,7 @@ if (want(2)) {
       rec("game_" + g.id + "_import_search", false, "thieu file trich xuat that: " + g.file, performance.now() - t);
       continue;
     }
-    await importJson([g.file]);
+    await importJson([g.file], g.entries);
     const info = await elText("mod-json-info");
     const entriesOk = info.includes(String(g.entries) + " entry") && info.includes(path.basename(g.file));
     const countTxt = await searchKw(g.kw);
@@ -246,7 +252,7 @@ if (want(2)) {
   {
     let t = performance.now();
     const g = GAMES[0];
-    await importJson([g.file]);
+    await importJson([g.file], g.entries);
     await searchKw("setting");
     const first = await page.evaluate(() => {
       const input = document.querySelector("#mod-search-results input[data-mod-edit]");
@@ -394,7 +400,7 @@ if (want(4)) {
       format: "beartea-translation-provenance/1",
       provenance: { origin: "extract", gameFile: "9kings.ipa", extractName: "resources.monobehaviour.en.json", source: "9kings.ipa::Payload/9Kings.app/Data/resources.assets", locale: "en", from: "en", to: "vi", keys: 2, at: "2026-11-16T00:00:00.000Z" },
     }, null, 2), "utf8");
-    await importJson([main, side]);
+    await importJson([main, side], 2);
     const info = await elText("mod-json-info");
     const prov = await page.evaluate(() => state.modJson && state.modJson.provenance);
     rec("import_with_sidecar_keeps_provenance",
@@ -407,7 +413,7 @@ if (want(4)) {
     let t = performance.now();
     const solo = OUT + "/solo.json";
     fs.writeFileSync(solo, JSON.stringify({ "Hello": "Xin chào" }, null, 1), "utf8");
-    await importJson([solo]);
+    await importJson([solo], 1);
     const info = await elText("mod-json-info");
     const prov = await page.evaluate(() => state.modJson && state.modJson.provenance);
     rec("import_without_sidecar_says_unknown_origin",
@@ -432,7 +438,7 @@ if (want(4)) {
       "JSON hong: " + errBad.slice(0, 100) + " · mang: " + errArr.slice(0, 100), performance.now() - t);
     t = performance.now();
     const solo = OUT + "/solo.json";
-    await importJson([solo]);
+    await importJson([solo], 1);
     await page.fill("#mod-search", "");
     await page.click("#btn-mod-search");
     await page.waitForSelector("#error:not([hidden])", { timeout: 10000 }).catch(() => null);

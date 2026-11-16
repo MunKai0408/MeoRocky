@@ -982,9 +982,42 @@ async function maybeShowIpaZipHint(el) {
 // ---- File gần đây (redesign) ----
 // CHỈ metadata trong phiên + localStorage (tên, dung lượng, loại, thời
 // gian) — KHÔNG lưu nội dung file (trình duyệt không giữ được file thật
-// sau khi tải lại trang). Nút “Tải lại” ở mỗi dòng chỉ hiện khi dữ liệu
-// file còn trong bộ nhớ phiên này (state.file / state.batchFiles); hết
-// phiên thì dòng đó chỉ còn tên + gợi ý chọn lại file. Không bịa file mẫu.
+// sau khi tải lại trang).
+//
+// Nút “Chọn lại file” (mục C) ở MỖI dòng, 2 trường hợp thật:
+//  - Còn trong phiên (dữ liệu còn trong state.file / state.batchFiles):
+//    mở lại NGAY, không mở hộp chọn file — file game (.ipa/.zip/.unity3d/
+//    .assets/.tar.xz/.gz) thành file hiện tại rồi mở tab Danh sách (không
+//    boot worker, xem nhanh được ngay); .ttf mở tab Font; .json mở trong
+//    tab Mod (đọc từ dữ liệu trong phiên, giữ thứ tự key gốc).
+//  - Hết phiên (chỉ còn metadata localStorage): mở hộp chọn file
+//    (#reselect-file-input, không accept — quirk picker iOS làm mờ .ipa
+//    như input chính) để user chọn lại file đó từ máy; so tên + dung
+//    lượng: khớp thì mở tiếp, KHÁC thì báo rõ tên/dung lượng file vừa
+//    chọn so với file gần đây rồi VẪN mở file vừa chọn (không im lặng
+//    dùng sai file, không giả vờ file cũ còn trong bộ nhớ).
+// Nút “Tải lại” giữ nguyên (chỉ hiện khi còn trong phiên): tải 1 bản
+// sao của file về máy. Nút “Xóa” giữ nguyên. Không bịa file mẫu.
+// Trạng thái lần chọn lại gần nhất để harness/chẩn đoán đọc.
+const reselectState = { pending: null, last: null };
+if (typeof window !== "undefined") {
+  window.__PB3_RESELECT_STATE = () => ({
+    pending: reselectState.pending
+      ? { name: reselectState.pending.name, size: reselectState.pending.size } : null,
+    last: reselectState.last,
+  });
+}
+function reselectRecord(r) {
+  reselectState.last = Object.assign({ at: new Date().toISOString() }, r || {});
+}
+// Tab làm việc của 1 file game/json khi chọn lại (không boot worker:
+// tab Danh sách chỉ đọc EOCD nhanh; tab Mod đọc JSON trong RAM).
+function reselectTargetTab(name) {
+  const n = (name || "").toLowerCase();
+  if (n.endsWith(".json")) return "mod";
+  if (n.endsWith(".ttf")) return "font";
+  return "list";
+}
 const RECENT_KEY = "pb3_recent_files";
 const RECENT_MAX = 8;
 let recentFiles = [];   // [{name, size, kind, time, key}]
@@ -1033,6 +1066,100 @@ function recentInSession(key) {
   const b = state.batchFiles.find((x) => recentKeyOf(x) === key);
   return b || null;
 }
+// Như recentInSession nhưng cho biết file lấy từ đâu: "main" (state.file)
+// hay "batch" (state.batchFiles) — để chọn lại đi đúng luồng làm việc.
+function recentInSessionEntry(key) {
+  if (state.file && recentKeyOf(state.file) === key) return { file: state.file, from: "main" };
+  const b = state.batchFiles.find((x) => recentKeyOf(x) === key);
+  return b ? { file: b, from: "batch" } : null;
+}
+// Mở 1 file .json trong tab Mod (mục B): f là File (có .text()) hoặc
+// object trong phiên {name, data: ArrayBuffer}. Giữ thứ tự key gốc,
+// provenance origin "upload" (không rõ trích từ đâu nếu không có sidecar).
+async function openJsonInMod(f) {
+  const name = f.name;
+  const text = typeof f.text === "function"
+    ? await f.text()
+    : new TextDecoder("utf-8").decode(f.data);
+  const { entries, keys } = modParseJsonObject(text);
+  modSetJson(name, entries, keys, {
+    origin: "upload", gameFile: state.file ? state.file.name : null,
+    extractName: name, source: null, locale: null,
+    from: null, to: null, keys: keys.length, at: new Date().toISOString(),
+  });
+  goTool("mod");
+  return { name, keys: keys.length };
+}
+// Chọn lại 1 dòng còn trong phiên: dữ liệu đã có trong RAM nên mở lại
+// ngay, không mở hộp chọn file. File game trong batch thì đưa lên làm
+// file hiện tại (batch vẫn giữ nguyên); file đã là state.file thì chỉ
+// điều hướng, không reset danh sách trích xuất đang có.
+async function reselectInSession(entry, found) {
+  const f = found.file;
+  try {
+    if (recentKind(f.name) === "JSON") {
+      const opened = await openJsonInMod(f);
+      reselectRecord({ name: f.name, inSession: true, from: found.from,
+        matched: true, tab: "mod", keys: opened.keys });
+      return;
+    }
+    if (!(found.from === "main" && f === state.file)) setCurrentGameFile(f);
+    else { syncFileChips(); }
+    const tab = reselectTargetTab(f.name);
+    goTool(tab);
+    reselectRecord({ name: f.name, inSession: true, from: found.from,
+      matched: true, tab });
+  } catch (e) {
+    showError("Chọn lại file " + f.name + " lỗi: " + (e && e.message ? e.message : e));
+    reselectRecord({ name: f.name, inSession: true, from: found.from,
+      matched: true, tab: null, error: String(e && e.message ? e.message : e) });
+  }
+}
+// Chọn lại 1 dòng đã hết phiên: user vừa chọn file từ hộp chọn.
+// expected = entry gần đây (tên + dung lượng kỳ vọng); khác file thì báo
+// rõ rồi vẫn mở file vừa chọn. Trả {name, matched, tab} hoặc null nếu
+// file không mở được (đuôi lạ / user huỷ file lớn).
+async function openPickedReselect(picked, expected) {
+  if (!picked) return null;
+  if (!gameExtOk(picked.name)) {
+    showError(gameExtError(picked.name));
+    reselectRecord({ name: picked.name, inSession: false, matched: false,
+      tab: null, error: "đuôi file không hỗ trợ" });
+    return null;
+  }
+  const matched = !!(expected && picked.name === expected.name && picked.size === expected.size);
+  try {
+    let tab;
+    if (recentKind(picked.name) === "JSON") {
+      const opened = await openJsonInMod(picked);
+      tab = "mod";
+      reselectRecord({ name: picked.name, inSession: false, matched, tab, keys: opened.keys });
+    } else {
+      const opened = await handleChosenFile(picked);
+      if (!opened) {
+        reselectRecord({ name: picked.name, inSession: false, matched,
+          tab: null, error: "đã huỷ mở file" });
+        return null;
+      }
+      tab = reselectTargetTab(picked.name);
+      goTool(tab);
+      reselectRecord({ name: picked.name, inSession: false, matched, tab });
+    }
+  } catch (e) {
+    showError("Chọn lại file " + picked.name + " lỗi: " + (e && e.message ? e.message : e));
+    reselectRecord({ name: picked.name, inSession: false, matched,
+      tab: null, error: String(e && e.message ? e.message : e) });
+    return null;
+  }
+  // Báo khác file SAU khi mở xong (handleChosenFile/modSetJson có
+  // clearError() nên báo trước sẽ bị xóa mất): user thấy rõ file nào
+  // đang mở, không tưởng là file gần đây cũ.
+  if (expected && !matched) {
+    showError("Bạn chọn file " + picked.name + " (" + fmtBytes(picked.size) + "), khác với file gần đây " +
+      expected.name + " (" + fmtBytes(expected.size) + ") — đã mở file vừa chọn thay cho file cũ.");
+  }
+  return { name: picked.name, matched, tab: reselectTargetTab(picked.name) };
+}
 function renderRecent() {
   const el = $("recent-list");
   if (!el) return;
@@ -1048,7 +1175,8 @@ function renderRecent() {
       "</span><span class=\"recent-meta\">" + fmtBytes(e.size) + " · " + esc(when) + "</span>" +
       (inSession
         ? "<button class=\"secondary\" data-act=\"dl\" data-key=\"" + esc(e.key) + "\">Tải lại</button>"
-        : "<span class=\"note\">hết phiên — chọn lại file</span>") +
+        : "<span class=\"note\">hết phiên — chọn lại file từ máy</span>") +
+      "<button class=\"secondary\" data-act=\"reselect\" data-key=\"" + esc(e.key) + "\">Chọn lại file</button>" +
       "<button class=\"secondary\" data-act=\"rm\" data-key=\"" + esc(e.key) + "\">Xóa</button></div>";
   }
   el.innerHTML = html;
@@ -1069,7 +1197,31 @@ $("recent-list").addEventListener("click", (ev) => {
     // Chỉ tải lại được khi dữ liệu file còn trong bộ nhớ phiên này.
     const f = recentInSession(key);
     if (f) download(f.name, f.data.slice(0));
+  } else if (act === "reselect") {
+    // Mục (C): còn trong phiên thì mở lại ngay; hết phiên thì mở hộp
+    // chọn file (input riêng #reselect-file-input — bấm nút là cử chỉ
+    // của user nên trình duyệt cho mở picker; KHÔNG đọc lại đường dẫn
+    // cũ vì trình duyệt không cho).
+    const entry = recentFiles.find((e) => e.key === key) || null;
+    const found = recentInSessionEntry(key);
+    if (found) reselectInSession(entry, found);
+    else {
+      reselectState.pending = entry;
+      const inp = $("reselect-file-input");
+      if (inp && typeof inp.click === "function") inp.click();
+      else showError("Không mở được hộp chọn file — hãy chọn file ở khung trên.");
+    }
   }
+});
+// Hộp chọn file của nút “Chọn lại file” (hết phiên): không có accept
+// (quirk picker iOS làm mờ .ipa như input chính) — kiểm tra đuôi bằng JS.
+$("reselect-file-input").addEventListener("change", (ev) => {
+  const picked = ev.target.files && ev.target.files[0];
+  ev.target.value = "";
+  const expected = reselectState.pending;
+  reselectState.pending = null;
+  if (!picked) return;   // user đóng hộp chọn mà không chọn file
+  openPickedReselect(picked, expected);
 });
 // “Lưu lịch sử gần đây” (Cài đặt): tắt thì không lưu metadata mới nữa,
 // xóa metadata đã lưu, danh sách chỉ còn trong phiên hiện tại.
@@ -1139,17 +1291,37 @@ function confirmLargeFile(files) {
 }
 
 // ---- Chọn file ----
+// Đặt 1 file đã có dữ liệu trong RAM (ArrayBuffer) làm file hiện tại —
+// dùng chung cho chọn file mới (handleChosenFile, sau khi đọc xong) và
+// chọn lại file game còn trong phiên (mục C, không đọc lại từ đĩa).
+// Trả state.file vừa đặt.
+function setCurrentGameFile(obj) {
+  state.file = { name: obj.name, size: obj.size, lastModified: obj.lastModified || 0, data: obj.data };
+  state.fileSentFor = null;   // HOTFIX clone: file mới thì gửi lại từ đầu
+  state.extractListFor = null;  // file mới -> danh sách chọn file cũ hết hạn
+  state.extractSelected = null;
+  state.extractEntries = [];
+  state.lastMod = null;       // file mới -> kết quả Mod cũ hết hạn (mục C7)
+  { const ppb = $("btn-mod-patch-pack"); if (ppb) ppb.disabled = true; }
+  $("file-info").textContent = obj.name + " · " + fmtBytes(obj.size);
+  $("file-info").hidden = false;
+  $("btn-clear-file").hidden = false;
+  clearError();
+  addRecent(state.file);
+  syncFileChips();
+  return state.file;
+}
 async function handleChosenFile(f) {
-  if (!f) return;
+  if (!f) return undefined;
   if (f.size > MAX_BYTES) {
     showError("File " + fmtBytes(f.size) + " quá lớn cho bản web (>2GB). Dùng bản iSH cho file này.");
-    return;
+    return undefined;
   }
   // Mục C4: file >400MB thì hỏi TRƯỚC KHI đọc vào RAM — "Hủy" thì dừng
   // hẳn (file cũ vẫn giữ nguyên, không boot, không đọc); "Tiếp tục" mới đọc.
   if (!(await confirmLargeFile([f]))) {
     showError("Đã huỷ mở file lớn — dùng bản iSH cho file này nếu cần.");
-    return;
+    return undefined;
   }
   // Mục 5: >600MB cảnh báo rõ, >800MB khuyên mạnh dùng iSH — vẫn cho tiếp tục.
   const warn = sizeWarningFor(f.size);
@@ -1157,24 +1329,12 @@ async function handleChosenFile(f) {
   // Mục 6 (lazy boot): chọn file lần đầu thì bắt đầu boot Pyodide ngay
   // (chạy nền trong lúc đọc file); đã boot rồi thì không làm gì thêm.
   ensureBoot().catch(() => { /* lỗi boot đã hiện ở banner + trạng thái */ });
-  f.arrayBuffer().then((buf) => {
-    state.file = { name: f.name, size: f.size, lastModified: f.lastModified || 0, data: buf };
-    state.fileSentFor = null;   // HOTFIX clone: file mới thì gửi lại từ đầu
-    state.extractListFor = null;  // file mới -> danh sách chọn file cũ hết hạn
-    state.extractSelected = null;
-    state.extractEntries = [];
-    state.lastMod = null;       // file mới -> kết quả Mod cũ hết hạn (mục C7)
-    { const ppb = $("btn-mod-patch-pack"); if (ppb) ppb.disabled = true; }
-    $("file-info").textContent = f.name + " · " + fmtBytes(f.size);
-    $("file-info").hidden = false;
-    $("btn-clear-file").hidden = false;
-    clearError();
-    // Cảnh báo kích thước phải còn hiện sau khi file đã nạp xong (trước
-    // đây clearError() ở đây xóa luôn cảnh báo vừa hiện).
-    if (warn.text) showError(warn.text);
-    addRecent(state.file);
-    syncFileChips();
-  });
+  const buf = await f.arrayBuffer();
+  const opened = setCurrentGameFile({ name: f.name, size: f.size, lastModified: f.lastModified || 0, data: buf });
+  // Cảnh báo kích thước phải còn hiện sau khi file đã nạp xong (trước
+  // đây clearError() ở đây xóa luôn cảnh báo vừa hiện).
+  if (warn.text) showError(warn.text);
+  return opened;
 }
 $("file-input").addEventListener("change", (ev) => {
   const f = ev.target.files && ev.target.files[0];
