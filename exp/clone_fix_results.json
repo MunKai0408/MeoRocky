@@ -42,12 +42,12 @@
   "pyodide_bridge_mojibake": {
     "ok": true,
     "detail": "entries=[\"‎ 9 Kings_v1.0.5-AppAssassin.ipa\",\"__MACOSX/._‎ 9 Kings_v1.0.5-AppAssassin.ipa\"] http_fetch=0 (bridge thật trong Pyodide, file site/pb3 đã sửa)",
-    "seconds": 3.4
+    "seconds": 3.9
   },
   "python_mojibake_regression": {
     "ok": true,
     "detail": "status=0, 4/4 test ok trong output unittest (4 dòng \"... ok\")",
-    "seconds": 0.2
+    "seconds": 0.3
   },
   "_failures": 0
 }

@@ -24,7 +24,7 @@
     },
     "node_copythrough_stored": {
       "ok": true,
-      "detail": "stored 3800 byte, byte-identical với Python zipfile: true; copiedThrough=true; heap delta Node khi trích: -568 KB (Blob Node vẫn giữ dữ liệu trong bộ nhớ riêng — con số này chỉ là heap JS, không phải RAM tab Safari)",
+      "detail": "stored 3800 byte, byte-identical với Python zipfile: true; copiedThrough=true; heap delta Node khi trích: -573 KB (Blob Node vẫn giữ dữ liệu trong bộ nhớ riêng — con số này chỉ là heap JS, không phải RAM tab Safari)",
       "seconds": 0
     },
     "node_decompress_deflate": {
@@ -59,7 +59,7 @@
     },
     "node_eocd_bigtest_measure": {
       "ok": true,
-      "detail": "bigtest.zip 558899 byte, 4000 entry deflate: EOCD liệt kê trong 15ms, heap delta 1624 KB (file đã nằm trong RAM từ trước — chỉ đo phần liệt kê, không đo phần đọc file; mức RAM tiết kiệm so với đường bridge trên Safari thật: CHƯA ĐO — cần Joseph đo trên iPhone)",
+      "detail": "bigtest.zip 558899 byte, 4000 entry deflate: EOCD liệt kê trong 17ms, heap delta 2169 KB (file đã nằm trong RAM từ trước — chỉ đo phần liệt kê, không đo phần đọc file; mức RAM tiết kiệm so với đường bridge trên Safari thật: CHƯA ĐO — cần Joseph đo trên iPhone)",
       "seconds": 0
     },
     "bridge_parity_ambig": {
@@ -90,12 +90,12 @@
     "browser_boot_390": {
       "ok": true,
       "detail": "status: \"Sẵn sàng — 20 plugin đang chạy · font đi kèm: đủ 142/142 (134 chữ cái + 8 dấu)\"; pageerror: không có; scrollWidth=390 clientWidth=390 (không tràn ngang)",
-      "seconds": 5.5
+      "seconds": 5.8
     },
     "browser_fast_list_and_entry_download": {
       "ok": true,
       "detail": "ghi chú EOCD: true; tải a/en.json: 40 byte, byte-identical với Python zipfile: true (deflate qua DecompressionStream, nút Tải trong tab Danh sách)",
-      "seconds": 0.4
+      "seconds": 0.3
     },
     "browser_entry_stored_and_deflate": {
       "ok": true,
@@ -110,12 +110,12 @@
     "browser_warn_600mb": {
       "ok": true,
       "detail": "file sparse 610MB: #error hiện=true, text: \"Lưu ý: file 610 MB khá lớn (>600MB), tab trình duyệt có thể tốn nhiều RAM. Vẫn thử chạy.\"; file-info: \"item5_610m.zip · 610 MB\" (cảnh báo còn hiện sau khi file đã nạp — trước đây bị clearError xóa)",
-      "seconds": 1
+      "seconds": 0.7
     },
     "browser_warn_800mb_ish": {
       "ok": true,
       "detail": "file sparse 810MB: #error hiện=true, text: \"File 810 MB rất lớn (>800MB). Tab trình duyệt trên iPhone có thể hết RAM và bị tắt giữa chừng — nên dùng bản iSH cho file này. Vẫn có thể thử tiếp trên web, nhưng hãy đóng các tab khác trước.\"",
-      "seconds": 2.8
+      "seconds": 5.9
     },
     "browser_reject_2gb": {
       "ok": true,

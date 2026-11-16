@@ -6,7 +6,21 @@
 // Khi tổng chưa biết (vd bước inventory của extract) thì chỉ hiện số đã xong
 // và thời gian đã chạy, không bịa ETA.
 
-const worker = new Worker("worker.js", { type: "module" });
+// ---- Worker lười (Mục 6: lazy boot) ----
+// Worker (module) + Pyodide CHỈ được tạo khi user chọn file lần đầu hoặc
+// gọi thao tác cần PB3 (ensureBoot). Trước đó trang chỉ là shell tĩnh:
+// không tải worker.js, pyodide.mjs, Pyodide hay mã PB3.
+let worker = null;
+let bootPromise = null; // promise boot đang chạy (để 2 lần gọi không boot đúp)
+function getWorker() {
+  if (worker) return worker;
+  worker = new Worker("worker.js", { type: "module" });
+  wireWorker(worker);
+  // URL proxy dịch (đọc từ localStorage): gửi ngay khi worker vừa tạo,
+  // trước cả khi boot — worker nhận được cả trước khi Pyodide boot xong.
+  sendProxyUrlToWorker();
+  return worker;
+}
 const $ = (id) => document.getElementById(id);
 
 const state = {
@@ -168,50 +182,61 @@ function progDone(label) {
 }
 
 // ---- Worker ----
-worker.onmessage = (ev) => {
-  const msg = ev.data || {};
-  if (msg.type === "status") { setStatus(msg.text); return; }
-  if (msg.type === "progress") {
-    const p = [...state.pending.values()][0];
-    if (msg.kind === "load") {
-      progSet(100 * msg.done / Math.max(1, msg.total), msg.done, msg.total);
+// Gắn message/error cho worker vừa tạo (gọi từ getWorker, Mục 6).
+function wireWorker(w) {
+  w.onmessage = (ev) => {
+    const msg = ev.data || {};
+    if (msg.type === "status") { setStatus(msg.text); return; }
+    if (msg.type === "progress") {
+      const p = [...state.pending.values()][0];
+      if (msg.kind === "load") {
+        progSet(100 * msg.done / Math.max(1, msg.total), msg.done, msg.total);
+        return;
+      }
+      if (!p) return;
+      // Tiến trình dịch: hiện số chuỗi đã dịch/tổng số + tốc độ + thời gian
+      // còn lại ngay trong tab Dịch (khi tab đang mở), để user thấy tool
+      // đang chạy chứ không tưởng đứng im.
+      if (msg.kind === "translate" && msg.total > 0) {
+        const info = $("translate-info");
+        const tab = $("tab-translate");
+        if (info && tab && !tab.hidden) {
+          const elapsed = (performance.now() - progT0) / 1000;
+          const rate = elapsed > 0 ? msg.done / elapsed : 0;
+          const eta = rate > 0 ? (msg.total - msg.done) / rate : null;
+          info.textContent = "Đang dịch: " + msg.done + "/" + msg.total + " chuỗi" +
+            (rate > 0 ? " · ~" + rate.toFixed(1) + " chuỗi/giây" : "") +
+            (eta != null ? " · còn khoảng " + fmtTime(eta) : "") +
+            (state.translateChunk && state.translateChunk.total > 1
+              ? " · đợt " + state.translateChunk.idx + "/" + state.translateChunk.total : "");
+        }
+      }
+      if (msg.total > 0) progSet(100 * msg.done / msg.total, msg.done, msg.total);
+      else progSet(progLastPct < 0 ? 0 : progLastPct, msg.done, -1);
       return;
     }
-    if (!p) return;
-    // Tiến trình dịch: hiện số chuỗi đã dịch/tổng số + tốc độ + thời gian
-    // còn lại ngay trong tab Dịch (khi tab đang mở), để user thấy tool
-    // đang chạy chứ không tưởng đứng im.
-    if (msg.kind === "translate" && msg.total > 0) {
-      const info = $("translate-info");
-      const tab = $("tab-translate");
-      if (info && tab && !tab.hidden) {
-        const elapsed = (performance.now() - progT0) / 1000;
-        const rate = elapsed > 0 ? msg.done / elapsed : 0;
-        const eta = rate > 0 ? (msg.total - msg.done) / rate : null;
-        info.textContent = "Đang dịch: " + msg.done + "/" + msg.total + " chuỗi" +
-          (rate > 0 ? " · ~" + rate.toFixed(1) + " chuỗi/giây" : "") +
-          (eta != null ? " · còn khoảng " + fmtTime(eta) : "") +
-          (state.translateChunk && state.translateChunk.total > 1
-            ? " · đợt " + state.translateChunk.idx + "/" + state.translateChunk.total : "");
-      }
+    if (msg.id != null && state.pending.has(msg.id)) {
+      const p = state.pending.get(msg.id);
+      state.pending.delete(msg.id);
+      if (msg.ok) p.resolve(msg);
+      else p.reject(new Error(msg.error || "Lỗi không rõ"));
     }
-    if (msg.total > 0) progSet(100 * msg.done / msg.total, msg.done, msg.total);
-    else progSet(progLastPct < 0 ? 0 : progLastPct, msg.done, -1);
-    return;
-  }
-  if (msg.id != null && state.pending.has(msg.id)) {
-    const p = state.pending.get(msg.id);
-    state.pending.delete(msg.id);
-    if (msg.ok) p.resolve(msg);
-    else p.reject(new Error(msg.error || "Lỗi không rõ"));
-  }
-};
+  };
 
-worker.onerror = (e) => {
-  showError("Worker lỗi: " + (e.message || e));
-};
+  w.onerror = (e) => {
+    showError("Worker lỗi: " + (e.message || e));
+  };
+}
 
-function callWorker(op, payload) {
+// Mọi op trừ "boot" đều cần Pyodide đã boot: boot lười ở đây (lần đầu
+// user gọi thao tác thì boot, đã boot rồi thì đi thẳng). Op "boot" do
+// ensureBoot gọi trực tiếp qua callWorkerRaw để khỏi đệ quy.
+async function callWorker(op, payload) {
+  if (op !== "boot") await ensureBoot();
+  return callWorkerRaw(op, payload);
+}
+
+function callWorkerRaw(op, payload) {
   return new Promise((resolve, reject) => {
     const id = state.nextId++;
     state.pending.set(id, { resolve, reject, t0: performance.now(), lastPct: -1 });
@@ -235,7 +260,7 @@ function callWorker(op, payload) {
       } else if (files.length) {
         toSend = files.map((f) => ({ name: f.name, data: f.data.slice(0) }));
       }
-      worker.postMessage(Object.assign({ id, op }, payload, { files: toSend }),
+      getWorker().postMessage(Object.assign({ id, op }, payload, { files: toSend }),
         toSend.map((f) => f.data));
     } catch (e) {
       // postMessage ném lỗi (vd transfer thất bại): cờ vừa đặt phải bỏ để
@@ -726,6 +751,9 @@ function handleChosenFile(f) {
   // Mục 5: >600MB cảnh báo rõ, >800MB khuyên mạnh dùng iSH — vẫn cho tiếp tục.
   const warn = sizeWarningFor(f.size);
   if (warn.text) showError(warn.text);
+  // Mục 6 (lazy boot): chọn file lần đầu thì bắt đầu boot Pyodide ngay
+  // (chạy nền trong lúc đọc file); đã boot rồi thì không làm gì thêm.
+  ensureBoot().catch(() => { /* lỗi boot đã hiện ở banner + trạng thái */ });
   f.arrayBuffer().then((buf) => {
     state.file = { name: f.name, size: f.size, lastModified: f.lastModified || 0, data: buf };
     state.fileSentFor = null;   // HOTFIX clone: file mới thì gửi lại từ đầu
@@ -1188,6 +1216,7 @@ $("extract-result").addEventListener("click", (ev) => {
 function sendProxyUrlToWorker() {
   let url = "";
   try { url = (localStorage.getItem("pb3_translate_proxy") || "").trim(); } catch (e) { /* localStorage không có */ }
+  if (!worker) return; // worker lười (Mục 6): chưa tạo thì thôi — getWorker() gửi lại ngay khi tạo worker.
   worker.postMessage({ op: "set_translate_proxy", url });
 }
 sendProxyUrlToWorker();
@@ -1544,7 +1573,7 @@ $("btn-translate-cancel").addEventListener("click", () => {
   // Worker đang chạy dịch async vẫn nhận được message này giữa các batch;
   // app.js cũng dừng sau chunk hiện tại (không gọi chunk mới).
   state.translateCancel = true;
-  worker.postMessage({ op: "cancel_translate" });
+  if (worker) worker.postMessage({ op: "cancel_translate" });
   $("translate-info").textContent = "Đang hủy… (dừng sau batch hiện tại, giữ lại phần đã dịch)";
 });
 $("btn-translate-download").addEventListener("click", () => {
@@ -1746,8 +1775,8 @@ function makeSingleExecutor() {
     status() {
       return [{ index: 0, alive: true, ready: state.booted, busy: this._busy, label: this._currentLabel || "" }];
     },
-    beginBatch(budgetSeconds) { worker.postMessage({ op: "batch_begin", budgetSeconds }); },
-    requestStop() { worker.postMessage({ op: "batch_stop" }); },
+    beginBatch(budgetSeconds) { getWorker().postMessage({ op: "batch_begin", budgetSeconds }); },
+    requestStop() { getWorker().postMessage({ op: "batch_stop" }); },
     cancelQueued() {
       const q = this._queue.splice(0);
       for (const j of q) j.reject(new Error("E_BATCH_STOPPED: job chờ đã bị hủy (dừng an toàn)."));
@@ -1926,6 +1955,8 @@ async function handleBatchFiles(list) {
   renderBatchFiles();
   syncBatchRunLabel();
   if (state.batchFiles.length) {
+    // Mục 6 (lazy boot): đã có file batch hợp lệ thì boot Pyodide nền.
+    ensureBoot().catch(() => { /* lỗi boot đã hiện ở banner + trạng thái */ });
     if (!rejected) clearError();
     if (batchWarn) showError(batchWarn.w.text);
     for (const f of state.batchFiles) addRecent(f);
@@ -2464,45 +2495,92 @@ function esc(s) {
     { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
 
-// ---- Khởi động ----
-setStatus("Đang khởi động… (tải Pyodide + PB3, lần đầu cần mạng)");
-progStart("Khởi động PB3");
-callWorker("boot", {}).then((msg) => {
-  const r = JSON.parse(msg.result);
-  progDone("Khởi động xong");
-  if (!r.boot.ok) { showError("Khởi động lỗi: " + r.boot.error); setStatus("Khởi động lỗi."); return; }
-  state.booted = true;
-  state.bootInfo = r.boot;
-  state.donor = r.donor;
-  setStatus("Sẵn sàng — " + r.boot.plugins + " plugin đang chạy · font đi kèm: " +
-    (r.donor && r.donor.is_full ? "đủ 142/142 (134 chữ cái + 8 dấu)" : "xem chi tiết ở tab Font"));
-  // Mục 3: nạp KB đã lưu từ IndexedDB (nếu có), xin lưu trữ bền vững,
-  // rồi cập nhật dòng trạng thái KB + nhắc sao lưu.
-  restoreKbFromIdb().then((kb) => {
-    refreshKbPersistStatus();
-    refreshKbStatus(kb.restored
-      ? "Đã khôi phục " + kb.games + " game từ lần dùng trước."
-      : (kb.reason && kb.reason !== "empty"
-        ? "Không khôi phục được KB đã lưu (" + kb.reason + ") — bắt đầu với KB trống; nút “Nhập KB (.sqlite)” vẫn khôi phục được từ file sao lưu."
-        : null));
-  });
-  // Mục 4: preload checkpoint batch từ IndexedDB (nếu tab bị kill giữa
-  // chừng lần trước) để user thấy ngay là có thể "Tiếp tục từ checkpoint".
-  loadMergedCkpt().then((loaded) => {
-    if (loaded.found) {
-      state.loadedCheckpoint = ckptToJson(loaded.ckpt);
-      state.lastCheckpoint = state.loadedCheckpoint;
-      const done = Object.keys(loaded.ckpt.games).filter((k) => loaded.ckpt.games[k].status === "ok").length;
-      $("batch-ckpt-info").textContent = "Có checkpoint đã lưu từ lần trước (" + loaded.from + ", " +
-        done + " game đã xong) — tick “Tiếp tục từ checkpoint” rồi bấm Chạy batch để chạy tiếp, không làm lại từ đầu.";
+// ---- Khởi động lười (Mục 6) ----
+// Pyodide + PB3 CHỈ boot khi user chọn file lần đầu (handleChosenFile /
+// handleBatchFiles gọi ensureBoot) hoặc khi gọi thao tác cần PB3
+// (callWorker/runOp đều đi qua ensureBoot). Trước đó trang chỉ hiện
+// shell tĩnh + dòng trạng thái dưới đây. Boot hỏng thì lần gọi sau thử
+// lại được (bootPromise reset về null); đã boot rồi thì gọi lại không
+// tốn gì.
+async function ensureBoot() {
+  if (state.booted) return state.bootInfo;
+  if (bootPromise) return bootPromise;
+  bootPromise = (async () => {
+    setStatus("Đang khởi động… (tải Pyodide + PB3, lần đầu cần mạng)");
+    progStart("Khởi động PB3");
+    let msg;
+    try {
+      msg = await callWorkerRaw("boot", {});
+    } catch (e) {
+      bootPromise = null;
+      progDone("Khởi động — lỗi");
+      setStatus("Khởi động lỗi.");
+      showError("Không khởi động được PB3: " + e.message + " Kiểm tra mạng rồi tải lại trang.");
+      throw e;
     }
-  });
-  if ((r.boot.problems || []).length) {
-    $("boot-problems").textContent = "Lưu ý khởi động: " + r.boot.problems.join("; ");
-    $("boot-problems").hidden = false;
-  }
-}).catch((e) => {
-  progDone("Khởi động — lỗi");
-  setStatus("Khởi động lỗi.");
-  showError("Không khởi động được PB3: " + e.message + " Kiểm tra mạng rồi tải lại trang.");
-});
+    const r = JSON.parse(msg.result);
+    progDone("Khởi động xong");
+    if (!r.boot.ok) {
+      bootPromise = null;
+      showError("Khởi động lỗi: " + r.boot.error);
+      setStatus("Khởi động lỗi.");
+      throw new Error("Khởi động lỗi: " + r.boot.error);
+    }
+    state.booted = true;
+    state.bootInfo = r.boot;
+    state.donor = r.donor;
+    setStatus("Sẵn sàng — " + r.boot.plugins + " plugin đang chạy · font đi kèm: " +
+      (r.donor && r.donor.is_full ? "đủ 142/142 (134 chữ cái + 8 dấu)" : "xem chi tiết ở tab Font"));
+    // Mục 3: nạp KB đã lưu từ IndexedDB (nếu có), xin lưu trữ bền vững,
+    // rồi cập nhật dòng trạng thái KB + nhắc sao lưu.
+    restoreKbFromIdb().then((kb) => {
+      refreshKbPersistStatus();
+      refreshKbStatus(kb.restored
+        ? "Đã khôi phục " + kb.games + " game từ lần dùng trước."
+        : (kb.reason && kb.reason !== "empty"
+          ? "Không khôi phục được KB đã lưu (" + kb.reason + ") — bắt đầu với KB trống; nút “Nhập KB (.sqlite)” vẫn khôi phục được từ file sao lưu."
+          : null));
+    });
+    // Mục 4: preload checkpoint batch từ IndexedDB (nếu tab bị kill giữa
+    // chừng lần trước) để user thấy ngay là có thể "Tiếp tục từ checkpoint".
+    loadMergedCkpt().then((loaded) => {
+      if (loaded.found) {
+        state.loadedCheckpoint = ckptToJson(loaded.ckpt);
+        state.lastCheckpoint = state.loadedCheckpoint;
+        const done = Object.keys(loaded.ckpt.games).filter((k) => loaded.ckpt.games[k].status === "ok").length;
+        $("batch-ckpt-info").textContent = "Có checkpoint đã lưu từ lần trước (" + loaded.from + ", " +
+          done + " game đã xong) — tick “Tiếp tục từ checkpoint” rồi bấm Chạy batch để chạy tiếp, không làm lại từ đầu.";
+      }
+    });
+    if ((r.boot.problems || []).length) {
+      $("boot-problems").textContent = "Lưu ý khởi động: " + r.boot.problems.join("; ");
+      $("boot-problems").hidden = false;
+    }
+    return state.bootInfo;
+  })();
+  return bootPromise;
+}
+
+// Hook cho harness/debug (giống window.__PB3_WATCHDOG_SECONDS): trạng
+// thái boot để kiểm chứng lazy boot mà không cần đoán qua mạng.
+if (typeof window !== "undefined") {
+  window.__PB3_BOOT_STATE = () => ({ booted: state.booted, workerCreated: worker !== null });
+}
+
+// Trạng thái ban đầu: CHƯA boot — chờ user chọn file (Mục 6).
+setStatus("Chưa khởi động — chọn file để bắt đầu (Pyodide + PB3 chỉ tải khi cần; lần đầu cần mạng, lần sau dùng được offline).");
+
+// ---- Service Worker (Mục 6) ----
+// Precache Pyodide + shell để lần thăm sau chạy offline. Đăng ký lỗi
+// (trình duyệt không hỗ trợ / sw.js bị chặn) thì IM LẶNG — trang vẫn
+// chạy bình thường, chỉ không có offline. Hook window.__PB3_NO_SW
+// (đặt trước khi app.js chạy) để tắt hẳn SW khi cần kiểm chứng.
+function registerServiceWorker() {
+  try {
+    if (typeof navigator === "undefined" || !("serviceWorker" in navigator)) return;
+    if (typeof window !== "undefined" && window.__PB3_NO_SW) return;
+    const p = navigator.serviceWorker.register("sw.js");
+    if (p && typeof p.catch === "function") p.catch(() => { /* im lặng: không SW vẫn chạy */ });
+  } catch (e) { /* im lặng: không SW vẫn chạy */ }
+}
+registerServiceWorker();

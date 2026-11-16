@@ -460,6 +460,8 @@ try {
   { // D0. Boot 390px: Sẵn sàng, không lỗi console, không tràn ngang
     const t0 = performance.now();
     await page.goto("http://127.0.0.1:" + PORT + "/index.html");
+    // Mục 6 (lazy boot): boot chỉ chạy khi chọn file.
+    await selectFile(FLAT);
     await waitReady();
     const overflow = await page.evaluate(() => ({ sw: document.documentElement.scrollWidth, cw: document.documentElement.clientWidth }));
     const status = await elText("status");

@@ -1,5 +1,5 @@
 {
-  "when": "2026-11-16T07:58:43.542Z",
+  "when": "2026-11-16T08:27:28.362Z",
   "failures": 0,
   "results": {
     "pool_runall_2slots_order": {
@@ -50,7 +50,7 @@
     "bridge_batch_split_keys": {
       "ok": true,
       "detail": "split 2 item (game1 null/en) -> key[0]=f875111249d4… khớp sha256 Python-style: true; key[1] khác key[0]: true",
-      "seconds": 0
+      "seconds": 0.1
     },
     "bridge_batch_run_per_game": {
       "ok": true,
@@ -64,12 +64,12 @@
     },
     "bridge_batch_merge_finalize_2workers": {
       "ok": true,
-      "detail": "A(game1 null) ok + B(game1 en) ok; zip B 1428B -> merge vào A: 1 file; finalize batch.zip 1610B chứa cả 2 thư mục game (game_01_game1, game_02_game1) + checkpoint gộp 2 game + index.csv 3 dòng",
-      "seconds": 4.1
+      "detail": "A(game1 null) ok + B(game1 en) ok; zip B 1426B -> merge vào A: 1 file; finalize batch.zip 1610B chứa cả 2 thư mục game (game_01_game1, game_02_game1) + checkpoint gộp 2 game + index.csv 3 dòng",
+      "seconds": 4
     },
     "bridge_batch_run_legacy_compat": {
       "ok": true,
-      "detail": "batch_run(manifest, true, null, false, null, false, true) vẫn chạy: total=2 ok=2, zip 1857B, checkpoint 2 game (harness cũ verify_parity dùng đường này)",
+      "detail": "batch_run(manifest, true, null, false, null, false, true) vẫn chạy: total=2 ok=2, zip 1856B, checkpoint 2 game (harness cũ verify_parity dùng đường này)",
       "seconds": 0
     },
     "bridge_batch_split_csv": {
@@ -79,13 +79,13 @@
     },
     "bridge_batch_bad_outdir_fallback": {
       "ok": true,
-      "detail": "out_dir_name '../evil' bị từ chối, dùng thư mục theo giờ /tmp/batch/20261116-075743, vẫn ok=1",
+      "detail": "out_dir_name '../evil' bị từ chối, dùng thư mục theo giờ /tmp/batch/20261116-082628, vẫn ok=1",
       "seconds": 0
     },
     "bridge_bigtest_extract_time": {
       "ok": true,
-      "detail": "bigtest (4000 file text) extract -> failed/E_NO_CANDIDATE sau 2033ms (>800ms: đủ chậm để watchdog 0,5s ở phần D bắt được game thứ 3)",
-      "seconds": 2
+      "detail": "bigtest (4000 file text) extract -> failed/E_NO_CANDIDATE sau 2069ms (>800ms: đủ chậm để watchdog 0,5s ở phần D bắt được game thứ 3)",
+      "seconds": 2.1
     },
     "bridge_batch_split_mod_fields": {
       "ok": true,
@@ -95,7 +95,7 @@
     "static_node_check": {
       "ok": true,
       "detail": "node --check xanh: app.js, worker.js, worker-pool.js, kb-store.js, gt.js",
-      "seconds": 0.5
+      "seconds": 0.4
     },
     "static_no_coi_no_pthreads": {
       "ok": true,
@@ -110,32 +110,32 @@
     "browser_boot_batch_tab": {
       "ok": true,
       "detail": "status=Sẵn sàng; tab Batch mở được; #batch-pool-info ban đầu: \"Pool chưa khởi động (bấm “Chạy batch” để khởi động pool 2 worker).\"",
-      "seconds": 5.5
+      "seconds": 5.8
     },
     "browser_pool_2games_ckpt_zip": {
       "ok": true,
       "detail": "kết quả: 2 ok qua pool 2 worker, phân công worker 0: 1 game · worker 1: 1 game; #batch-pool-info hiện cả Worker 0 và Worker 1; checkpoint IndexedDB: 2 game, 2 ok; download batch.zip: batch.zip",
-      "seconds": 7.5
+      "seconds": 7.2
     },
     "browser_ckpt_survives_reload_resume": {
       "ok": true,
       "detail": "sau reload: \"Có checkpoint đã lưu từ lần trước (IndexedDB, 2 game đã xong) — tick “Tiếp tục từ checkpoint” rồi bấm Chạy bat\"…; chạy lại với resume -> \"Batch dry-run · không cần chạy (đã xong hết theo checkpoint) · 2 ok / 0 lỗi / 2 bỏ qua / 2\"…",
-      "seconds": 5.3
+      "seconds": 5.4
     },
     "browser_stop_safe_and_continue": {
       "ok": true,
       "detail": "dừng giữa chừng: kết quả có 'dừng an toàn', checkpoint IndexedDB giữ 4 game (2 ok + 2 failed bigtest, 4 game chưa chạy); Tiếp tục -> xong hết 0 ok / 4 lỗi / 2 bỏ qua / 8 game (2 game ok cũ tính skipped theo semantics resume), 2 dòng incomplete (ambig), nút Tiếp tục đã ẩn",
-      "seconds": 16.5
+      "seconds": 15.9
     },
     "browser_watchdog_stop_and_continue": {
       "ok": true,
-      "detail": "ngưỡng 0,5s (test hook): 2 game bigtest chạy song song ~2s, game thứ 3 bị từ chối E_WATCHDOG_STOP -> '0 ok / 2 lỗi / 1 bỏ qua / 3 game' + 'watchdog đã dừng an toàn', checkpoint giữ 2 game; Tiếp tục (ngưỡng trả về 25s như production, không thì hook 0,5s dừng lại lần nữa) -> game 3 chạy hết: \"Batch dry-run · pool 2 worker · 0 ok / 3 lỗi / 0 bỏ qua / 3 game · 4.9 giây · đã\"…, nút Tiếp tục đã ẩn",
-      "seconds": 21.2
+      "detail": "ngưỡng 0,5s (test hook): 2 game bigtest chạy song song ~2s, game thứ 3 bị từ chối E_WATCHDOG_STOP -> '0 ok / 2 lỗi / 1 bỏ qua / 3 game' + 'watchdog đã dừng an toàn', checkpoint giữ 2 game; Tiếp tục (ngưỡng trả về 25s như production, không thì hook 0,5s dừng lại lần nữa) -> game 3 chạy hết: \"Batch dry-run · pool 2 worker · 0 ok / 3 lỗi / 0 bỏ qua / 3 game · 5 giây · đã t\"…, nút Tiếp tục đã ẩn",
+      "seconds": 22.3
     },
     "browser_fallback_single_worker": {
       "ok": true,
       "detail": "bỏ chọn pool -> kết quả ghi '1 worker', phân công worker 0: 2 game, vẫn 2 ok; \"Batch dry-run · 1 worker (pool tắt theo lựa chọn). · 2 ok / 0 lỗi / 0 bỏ qua / 2 game · 0.5 giây · file batch.zip đã sẵn\"…",
-      "seconds": 0.6
+      "seconds": 0.7
     },
     "browser_no_pageerrors": {
       "ok": true,

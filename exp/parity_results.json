@@ -52,7 +52,7 @@
   },
   "batch_sequential_2jobs": {
     "ok": true,
-    "detail": "total=2 ok=2 failed=0 jobs=1 ckpt_games=2 zip=2076B progress_batch_2_2=true games=[ok:game_01_game1,ok:game_02_resources]",
+    "detail": "total=2 ok=2 failed=0 jobs=1 ckpt_games=2 zip=2077B progress_batch_2_2=true games=[ok:game_01_game1,ok:game_02_resources]",
     "seconds": 0.1
   },
   "batch_resume_checkpoint": {

@@ -49,6 +49,7 @@ const SITE = "/home/hatch/workspace/pb3_web/site";
 const EXP = "/home/hatch/workspace/pb3_web/exp";
 const FX1000 = EXP + "/fixtures/translate_1000.json";
 const FX1000_META = EXP + "/fixtures/translate_1000_meta.json";
+const GAME1 = "/home/hatch/workspace/pb3_fix/pb3/tests/fixtures/extract/game1.zip";
 const GT_EP = "https://translate.googleapis.com/translate_a/single";
 const UA_IPHONE = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1";
 const sec = (ms) => Math.round(ms / 100) / 10;
@@ -538,6 +539,9 @@ try {
   let dialogText = null;
   page.on("dialog", async (d) => { dialogText = d.message(); await d.accept(); });
   const waitReady = async () => {
+    // Mục 6 (lazy boot): boot chỉ chạy khi chọn file — chọn 1 file nhỏ
+    // trước rồi mới chờ "Sẵn sàng".
+    await page.setInputFiles("#file-input", GAME1);
     await page.waitForFunction(
       () => { const el = document.getElementById("status"); return el && el.textContent.includes("Sẵn sàng"); },
       null, { timeout: 240000 });
@@ -673,6 +677,8 @@ try {
     pageB.on("pageerror", (e) => pageBErrors.push(String(e && e.message ? e.message : e)));
     const t0 = performance.now();
     await pageB.goto("http://127.0.0.1:" + PORT + "/index.html");
+    // Mục 6 (lazy boot): boot chỉ chạy khi chọn file.
+    await pageB.setInputFiles("#file-input", GAME1);
     await pageB.waitForFunction(
       () => { const el = document.getElementById("status"); return el && el.textContent.includes("Sẵn sàng"); },
       null, { timeout: 240000 });

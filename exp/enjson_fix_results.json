@@ -1,11 +1,11 @@
 {
-  "when": "2026-11-16T07:55:58.670Z",
+  "when": "2026-11-16T08:24:41.367Z",
   "failures": 0,
   "results": {
     "old_evidence_log_empty_bundle_missing": {
       "ok": true,
       "detail": "extract.zip thật: log=[] (rỗng), files=36, skipped=105, total_entries=23741; bundle localization trong files=false, skipped=false, candidates=false — đúng lỗi cần sửa",
-      "seconds": 0.1
+      "seconds": 0.2
     },
     "fixture_parses_with_web_parser": {
       "ok": true,

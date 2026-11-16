@@ -1,5 +1,5 @@
 {
-  "when": "2026-11-16T07:56:17.616Z",
+  "when": "2026-11-16T08:25:02.087Z",
   "failures": 0,
   "results": {
     "node_google_mock_success_progress": {
@@ -19,18 +19,18 @@
     },
     "node_offline_1000_time": {
       "ok": true,
-      "detail": "dịch offline 1000 chuỗi xong trong 22ms (0s) — total=1000, untranslated=1000 (từ điển offline chỉ biết ~100 từ/cụm nên hầu hết giữ nguyên là ĐÚNG, không phải lỗi)",
+      "detail": "dịch offline 1000 chuỗi xong trong 21ms (0s) — total=1000, untranslated=1000 (từ điển offline chỉ biết ~100 từ/cụm nên hầu hết giữ nguyên là ĐÚNG, không phải lỗi)",
       "seconds": 0
     },
     "node_live_google_real_result": {
       "ok": true,
       "detail": "Google trả HTTP 200, JSON dịch được: [[[\"chơi\",\"play\",null,null,4]],null,\"en\",null,null,null,null,[]] — Google dịch được từ IP máy chủ",
-      "seconds": 0.7
+      "seconds": 1
     },
     "browser_boot_proxy_set": {
       "ok": true,
-      "detail": "boot tới Sẵn sàng; proxy dịch giả đặt qua localStorage + ô nhập: http://127.0.0.1:44199/translate-proxy",
-      "seconds": 5.6
+      "detail": "boot tới Sẵn sàng; proxy dịch giả đặt qua localStorage + ô nhập: http://127.0.0.1:38089/translate-proxy",
+      "seconds": 7.2
     },
     "browser_extract_connects_translate": {
       "ok": true,
@@ -40,7 +40,7 @@
     "browser_translate_button_loads_zh": {
       "ok": true,
       "detail": "bấm nút Dịch trên Chinese.json -> tab Dịch mở, ô dịch chứa 你好, dropdown chuyển sang: Chinese.json",
-      "seconds": 0
+      "seconds": 0.1
     },
     "browser_empty_banner": {
       "ok": true,
@@ -54,7 +54,7 @@
     },
     "browser_google_1000_estimate_and_cancel": {
       "ok": true,
-      "detail": "dialog ước tính: \"File có 1000 chuỗi. Dịch Google theo batch 100 chuỗi/request — ước tính khoảng 15 giây (có thể lâu hơn nếu mạng chậm; nếu Google không nhận batch thì tool tự rơi về từng chuỗi, sẽ chậm hơn nhiều). Bấm OK để dịch tiếp, hoặc Hủy để dịch offline / chia nhỏ file.\" (cần \"1000 chuỗi\" + \"ước tính khoảng\" + \"batch\" + \"15 giây\"); tốc độ thật: 100 chuỗi/0.3s ≈ 306.09 chuỗi/giây -> 1000 chuỗi ≈ 3.3 giây; sau Hủy: 100/1000 chuỗi đã dịch (giữ lại phần đã dịch, không mất); tải phần đã dịch: translated.vi.json với 100 chuỗi VI:",
+      "detail": "dialog ước tính: \"File có 1000 chuỗi. Dịch Google theo batch 100 chuỗi/request — ước tính khoảng 15 giây (có thể lâu hơn nếu mạng chậm; nếu Google không nhận batch thì tool tự rơi về từng chuỗi, sẽ chậm hơn nhiều). Bấm OK để dịch tiếp, hoặc Hủy để dịch offline / chia nhỏ file.\" (cần \"1000 chuỗi\" + \"ước tính khoảng\" + \"batch\" + \"15 giây\"); tốc độ thật: 100 chuỗi/0.3s ≈ 306.60 chuỗi/giây -> 1000 chuỗi ≈ 3.3 giây; sau Hủy: 100/1000 chuỗi đã dịch (giữ lại phần đã dịch, không mất); tải phần đã dịch: translated.vi.json với 100 chuỗi VI:",
       "seconds": 0.6
     },
     "browser_390_no_overflow_no_errors": {
@@ -63,7 +63,7 @@
       "seconds": 0
     }
   },
-  "offline1000Ms": 22,
-  "googleRate": 306.08561626065944,
-  "googleEta1000": 3.2670597599999933
+  "offline1000Ms": 21,
+  "googleRate": 306.5952137936266,
+  "googleEta1000": 3.2616295199999876
 }

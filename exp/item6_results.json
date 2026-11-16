@@ -1,0 +1,88 @@
+{
+  "total": 16,
+  "failures": [
+    "shell_raw_under_100kb"
+  ],
+  "results": {
+    "static_node_check": {
+      "ok": true,
+      "detail": "node --check OK: sw.js, app.js, worker.js, worker-pool.js, stream.js, kb-store.js, gt.js; CACHE_VERSION=v6-20261116",
+      "seconds": 0.6
+    },
+    "shell_gzip_under_100kb": {
+      "ok": true,
+      "detail": "shell lần tải đầu (index.html + 5 JS giao diện, KHÔNG tính Pyodide): index.html raw=47769B gzip=13782B; kb-store.js raw=8192B gzip=3212B; worker-pool.js raw=14404B gzip=5058B; stream.js raw=18092B gzip=6017B; app.js raw=133375B gzip=38699B; gt.js raw=20760B gzip=6387B | TỔNG gzip=73155B (71.4KB) < 100KB; index.html riêng raw=47769B (46.6KB) < 100KB",
+      "seconds": 0
+    },
+    "shell_raw_under_100kb": {
+      "ok": false,
+      "detail": "TỔNG raw=242592B (236.9KB) > 100KB — KHÔNG ĐẠT ngưỡng raw. Nguyên nhân: app.js là monolith 133375B (handler cả 8 tab) + index.html 47769B (CSS inline + HTML 8 tab). Tách app.js thành chunk lazy theo tab mới đạt ngưỡng raw, nhưng đó là refactor lớn chạm mọi harness (17 harness nạp app.js trực tiếp) nên để làm riêng sau mục 5–9 + audit; trên dây (gzip, GitHub Pages nén) shell chỉ 71.4KB và lần thăm 2 SW phục vụ từ cache nên không tốn mạng.",
+      "seconds": 0
+    },
+    "sw_precache_list_matches_disk": {
+      "ok": true,
+      "detail": "precache 122 mục (kỳ vọng 122, gồm './' trỏ scope root), tổng 18383641B (17.5MiB: Pyodide ~16,5MB + PB3 ~1,4MB + shell ~0,24MB + font 0,18MB); thiếu so với đĩa: không có; thừa: không có; không có trên đĩa: không có; file lõi thiếu: không có",
+      "seconds": 0
+    },
+    "static_no_coi_passthrough": {
+      "ok": true,
+      "detail": "dùng thật bị cấm: không có (chữ COI/SAB/pthreads chỉ còn trong comment 'KHÔNG dùng'); SW có đủ guard: chỉ GET + cùng origin + không Range + chỉ URL precache + skipWaiting + xóa cache cũ + GET_VERSION = đủ",
+      "seconds": 0
+    },
+    "vm_no_boot_at_load": {
+      "ok": true,
+      "detail": "sau khi nạp app.js: Worker đã tạo=0, message đã post=0, __PB3_BOOT_STATE={\"booted\":false,\"workerCreated\":false}, #status=\"Chưa khởi động — chọn file để bắt đầu (Pyodide + PB3 chỉ tải khi cần; lần đầu cần mạng, lần sau dùng được offline).\"",
+      "seconds": 0
+    },
+    "vm_lazy_boot_once": {
+      "ok": true,
+      "detail": "ensureBoot lần 1: worker=1, boot đã post=1; status=\"Sẵn sàng — 20 plugin đang chạy · font đi kèm: đủ 142/142 (134 chữ cái + 8 dấu)\"; gọi lại: worker vẫn 1, boot vẫn 1 (không boot đúp)",
+      "seconds": 0.1
+    },
+    "vm_callworker_bootstraps": {
+      "ok": true,
+      "detail": "thứ tự message đã post: [\"set_translate_proxy\",\"boot\",\"run\",\"run\"]; callWorker run resolve ok=true; booted=true",
+      "seconds": 0.1
+    },
+    "vm_boot_retry_after_fail": {
+      "ok": true,
+      "detail": "lần 1 lỗi: \"boot boom\"; status sau lần 1: \"Khởi động lỗi.\"; số lần boot đã post: 2; lần 2 tới Sẵn sàng, booted=true",
+      "seconds": 0
+    },
+    "static_sw_register_silent_fail": {
+      "ok": true,
+      "detail": "registerServiceWorker có: guard \"serviceWorker\" in navigator + try/catch + .catch(()=>{}) im lặng + hook __PB3_NO_SW; tìm thấy hàm",
+      "seconds": 0
+    },
+    "browser_visit1_lazy_no_pyodide_sw_precache": {
+      "ok": true,
+      "detail": "status sau tải trang: \"Chưa khởi động — chọn file để bắt đầu (Pyodide + PB3 chỉ tải khi cần; lần đầu cần mạng, lần sau dùng được offline).\"; __PB3_BOOT_STATE={\"booted\":false,\"workerCreated\":false}; request Pyodide/worker.js/pb3 trước khi chọn file: KHÔNG CÓ (tổng request lúc đó: 5); SW controlling=true; cache beartea-v6-20261116: 122/122 mục; đủ key lõi (asm.wasm, stdlib, pyodide.mjs, bridge.py, files.json, index.html, app.js, worker.js, font)",
+      "seconds": 2.2
+    },
+    "browser_visit1_boot_and_list": {
+      "ok": true,
+      "detail": "status: \"Sẵn sàng — 20 plugin đang chạy · font đi kèm: đủ 142/142 (134 chữ cái + 8 dấu)\"; list-result có data/en.json: true; scrollWidth=390 clientWidth=390 (không tràn ngang)",
+      "seconds": 5.1
+    },
+    "browser_visit2_offline_boot_and_list": {
+      "ok": true,
+      "detail": "offline reload: status về \"Chưa khởi động\", booted=false; chọn file offline -> status: \"Sẵn sàng — 20 plugin đang chạy · font đi kèm: đủ 142/142 (134 chữ cái + 8 dấu)\"; list có data/en.json: true; probe dịch khác origin khi offline: cache=miss, fetch=rejected:TypeError (SW không chặn/cache request dịch)",
+      "seconds": 4.4
+    },
+    "browser_sw_register_fail_fallback": {
+      "ok": true,
+      "detail": "sw.js hỏng cú pháp: status ban đầu \"Chưa khởi động — chọn file để bắt đầu (Pyodide + PB3 chỉ tải khi cần; lần đầu cần mạng, lần sau dùng được offline).\"; SW registration: {\"hasReg\":false,\"controller\":false} (cần hasReg=false = đăng ký lỗi, bắt im lặng); chọn file vẫn boot tới \"Sẵn sàng — 20 plugin đang chạy · font đi kèm: đủ 142/142 (134 chữ cái + 8 dấu)\"; pageerror: không có",
+      "seconds": 7.6
+    },
+    "browser_cache_version_switch": {
+      "ok": true,
+      "detail": "caches.keys sau khi SW v7 kích hoạt: [\"beartea-v7-20261116-test\"]; trang có marker v7: true (cần: có bear tea-v7-20261116-test, KHÔNG còn beartea-v6-20261116, marker bản mới hiện)",
+      "seconds": 1.1
+    },
+    "browser_390_no_overflow_no_errors": {
+      "ok": true,
+      "detail": "scrollWidth=390 clientWidth=390; pageerror/console-error thật cả phiên (thăm 1 + offline thăm 2): không có (đã lọc 1 dòng Failed to load resource do probe offline cố ý)",
+      "seconds": 0
+    }
+  }
+}

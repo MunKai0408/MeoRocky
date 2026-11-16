@@ -150,6 +150,10 @@ sandbox.window = sandbox;   // app.js dùng window.addEventListener("pagehide", 
 sandbox.addEventListener = () => {};
 vm.createContext(sandbox);
 vm.runInContext(fs.readFileSync(SITE + "/app.js", "utf8"), sandbox, { filename: "app.js" });
+// Mục 6 (lazy boot): app.js không còn boot lúc tải trang — kích hoạt boot
+// tường minh ở đây (ensureBoot là hàm toàn cục trong vm; phần đồng bộ của
+// nó tạo FakeWorker + post boot ngay), rồi mới lấy worker.
+vm.runInContext("ensureBoot()", sandbox);
 const nodeWorker = fakeWorkers[0].nodeWorker;
 
 let probeSeq = 0;

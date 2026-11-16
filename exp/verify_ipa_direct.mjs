@@ -91,14 +91,18 @@ try {
   const page = await ctx.newPage();
   page.on("pageerror", (e) => pageErrors.push(String(e && e.message ? e.message : e)));
   const waitReady = async () => {
-    // Agent anh em có thể đang ghi đè stream.js/app.js giữa chừng (file
-    // phục vụ dở -> boot kẹt): thử tải lại trang 1 lần nếu boot quá lâu.
+    // Mục 6 (lazy boot): boot chỉ chạy khi chọn file — chọn 1 file nhỏ
+    // trước rồi mới chờ "Sẵn sàng". Agent anh em có thể đang ghi đè
+    // stream.js/app.js giữa chừng (file phục vụ dở -> boot kẹt): thử tải
+    // lại trang 1 lần nếu boot quá lâu (chọn lại file sau khi tải lại).
     try {
+      await page.setInputFiles("#file-input", FX_ZIP);
       await page.waitForFunction(
         () => { const el = document.getElementById("status"); return el && el.textContent.includes("Sẵn sàng"); },
         null, { timeout: 120000 });
     } catch (e) {
       await page.goto("http://127.0.0.1:" + PORT + "/index.html");
+      await page.setInputFiles("#file-input", FX_ZIP);
       await page.waitForFunction(
         () => { const el = document.getElementById("status"); return el && el.textContent.includes("Sẵn sàng"); },
         null, { timeout: 240000 });

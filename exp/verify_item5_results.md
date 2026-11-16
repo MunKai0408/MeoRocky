@@ -1,6 +1,6 @@
 # Mục 5 — streaming reader + copy-through + DecompressionStream + cảnh báo file lớn
 
-Ngày kiểm chứng: 2026-11-16T07:55:53.330Z (giờ UTC). Chạy: `node verify_item5.mjs`.
+Ngày kiểm chứng: 2026-11-16T08:24:34.856Z (giờ UTC). Chạy: `node verify_item5.mjs`.
 
 ## Kết quả: 25/25 PASS
 
@@ -17,7 +17,7 @@ game1.zip: nested=true, inner.zip kind=container, tổng entry JS=10 (bridge s�
 kinds JS: data/big-stored.txt=file, data/en.json=file, data/sharedassets0.assets=unity, data/font.ttf=excluded, logs/debug.log=excluded, test/x.txt=excluded, data/bz2.bin=file; kỳ vọng: data/big-stored.txt=file, data/en.json=file, data/sharedassets0.assets=unity, data/font.ttf=excluded, logs/debug.log=excluded, test/x.txt=excluded, data/bz2.bin=file; methods stored/deflate/bzip2: big-stored.txt=m0, en.json=m8, bz2.bin=m12
 
 ### node_copythrough_stored: PASS (0s)
-stored 3800 byte, byte-identical với Python zipfile: true; copiedThrough=true; heap delta Node khi trích: -568 KB (Blob Node vẫn giữ dữ liệu trong bộ nhớ riêng — con số này chỉ là heap JS, không phải RAM tab Safari)
+stored 3800 byte, byte-identical với Python zipfile: true; copiedThrough=true; heap delta Node khi trích: -573 KB (Blob Node vẫn giữ dữ liệu trong bộ nhớ riêng — con số này chỉ là heap JS, không phải RAM tab Safari)
 
 ### node_decompress_deflate: PASS (0s)
 deflate en.json 34 byte, khớp Python zipfile và khớp zlib.inflateRawSync: true
@@ -38,7 +38,7 @@ JSON 200030 ký tự -> 4 part (mỗi part ≤64KB), Blob 200031 byte, round-tri
 bytes lạ -> {"ok":false,"reason":"not-zip"}; ZIP cắt cụt 100 byte -> ok=false reason=not-zip; EOCD báo ZIP64 -> zip64=true (fallback bridge)
 
 ### node_eocd_bigtest_measure: PASS (0s)
-bigtest.zip 558899 byte, 4000 entry deflate: EOCD liệt kê trong 15ms, heap delta 1624 KB (file đã nằm trong RAM từ trước — chỉ đo phần liệt kê, không đo phần đọc file; mức RAM tiết kiệm so với đường bridge trên Safari thật: CHƯA ĐO — cần Joseph đo trên iPhone)
+bigtest.zip 558899 byte, 4000 entry deflate: EOCD liệt kê trong 17ms, heap delta 2169 KB (file đã nằm trong RAM từ trước — chỉ đo phần liệt kê, không đo phần đọc file; mức RAM tiết kiệm so với đường bridge trên Safari thật: CHƯA ĐO — cần Joseph đo trên iPhone)
 
 ### bridge_parity_ambig: PASS (0s)
 bridge kind=zip total=2; JS total=2, nested=false; khớp path/size/kind từng entry: true
@@ -61,10 +61,10 @@ bridge total=11 (có entry lồng dạng :: : true, vd inner.zip::en.json); JS n
 ✓ bridge.py không thêm op mới (không có def liên quan stream)
 ✓ worker.js không đổi protocol (vẫn send-once/files + dest/zip_path)
 
-### browser_boot_390: PASS (5.5s)
+### browser_boot_390: PASS (5.8s)
 status: "Sẵn sàng — 20 plugin đang chạy · font đi kèm: đủ 142/142 (134 chữ cái + 8 dấu)"; pageerror: không có; scrollWidth=390 clientWidth=390 (không tràn ngang)
 
-### browser_fast_list_and_entry_download: PASS (0.4s)
+### browser_fast_list_and_entry_download: PASS (0.3s)
 ghi chú EOCD: true; tải a/en.json: 40 byte, byte-identical với Python zipfile: true (deflate qua DecompressionStream, nút Tải trong tab Danh sách)
 
 ### browser_entry_stored_and_deflate: PASS (0.2s)
@@ -73,10 +73,10 @@ ghi chú EOCD: true; stored big-stored.txt: 3800 byte, khớp: true (copy-throug
 ### browser_gzip_member_download: PASS (1s)
 nút gzip hiện: true; bản giải nén: 12900 byte, byte-identical với Python gzip: true
 
-### browser_warn_600mb: PASS (1s)
+### browser_warn_600mb: PASS (0.7s)
 file sparse 610MB: #error hiện=true, text: "Lưu ý: file 610 MB khá lớn (>600MB), tab trình duyệt có thể tốn nhiều RAM. Vẫn thử chạy."; file-info: "item5_610m.zip · 610 MB" (cảnh báo còn hiện sau khi file đã nạp — trước đây bị clearError xóa)
 
-### browser_warn_800mb_ish: PASS (2.8s)
+### browser_warn_800mb_ish: PASS (5.9s)
 file sparse 810MB: #error hiện=true, text: "File 810 MB rất lớn (>800MB). Tab trình duyệt trên iPhone có thể hết RAM và bị tắt giữa chừng — nên dùng bản iSH cho file này. Vẫn có thể thử tiếp trên web, nhưng hãy đóng các tab khác trước."
 
 ### browser_reject_2gb: PASS (0.6s)

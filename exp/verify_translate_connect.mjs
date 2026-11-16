@@ -233,6 +233,9 @@ try {
   let dialogText = null;
   page.on("dialog", async (d) => { dialogText = d.message(); await d.accept(); });
   const waitReady = async () => {
+    // Mục 6 (lazy boot): boot chỉ chạy khi chọn file — chọn 1 file nhỏ
+    // trước rồi mới chờ "Sẵn sàng".
+    await page.setInputFiles("#file-input", FX);
     await page.waitForFunction(
       () => { const el = document.getElementById("status"); return el && el.textContent.includes("Sẵn sàng"); },
       null, { timeout: 240000 });

@@ -547,6 +547,9 @@ try {
   const pageErrors = [];
   page.on("pageerror", (e) => pageErrors.push(String(e && e.message ? e.message : e)));
   const waitReady = async () => {
+    // Mục 6 (lazy boot): boot chỉ chạy khi chọn file — chọn 1 file nhỏ
+    // trước rồi mới chờ "Sẵn sàng".
+    await page.setInputFiles("#file-input", GAME1);
     await page.waitForFunction(
       () => { const el = document.getElementById("status"); return el && el.textContent.includes("Sẵn sàng"); },
       null, { timeout: 240000 });
@@ -688,6 +691,8 @@ try {
       window.__PB3_WATCHDOG_SECONDS = 0.5;
     });
     await page2.goto("http://127.0.0.1:" + PORT + "/index.html");
+    // Mục 6 (lazy boot): boot chỉ chạy khi chọn file.
+    await page2.setInputFiles("#file-input", GAME1);
     await page2.waitForFunction(
       () => { const el = document.getElementById("status"); return el && el.textContent.includes("Sẵn sàng"); },
       null, { timeout: 240000 });

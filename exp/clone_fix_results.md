@@ -38,8 +38,8 @@ transfer list thật — đúng chuỗi đã lỗi trên Safari (list → inspec
 | batch_sent_once_second_run_reuses | PASS | 0.1 | batch1=true batch2=true worker_nhan_sau_lan1=5 sau_lan2=5 (kỳ vọng bằng nhau) b1.zip=1 lần (kỳ vọng 1) b2.zip=0 lần (kỳ vọng 0 — không trong manifest) log=["game.zip","game2.zip","game.zip","game.zip","b1.zip"] buffer_batch_nguyen=true |
 | ipa_hint_negative_cases | PASS | 0.2 | zip_1_ipa_thang_hint_an=true; zip_thuong_khong_ipa_hint_an=true |
 | static_hotfix_markers | PASS | 0 | fileSentFor/batchSentFor=true slice(0)=true khong_con_transfer_goc=true hint_fn=true hint_els_html=true worker_ghi_chu=true |
-| pyodide_bridge_mojibake | PASS | 3.4 | entries=["‎ 9 Kings_v1.0.5-AppAssassin.ipa","__MACOSX/._‎ 9 Kings_v1.0.5-AppAssassin.ipa"] http_fetch=0 (bridge thật trong Pyodide, file site/pb3 đã sửa) |
-| python_mojibake_regression | PASS | 0.2 | status=0, 4/4 test ok trong output unittest (4 dòng "... ok") |
+| pyodide_bridge_mojibake | PASS | 3.9 | entries=["‎ 9 Kings_v1.0.5-AppAssassin.ipa","__MACOSX/._‎ 9 Kings_v1.0.5-AppAssassin.ipa"] http_fetch=0 (bridge thật trong Pyodide, file site/pb3 đã sửa) |
+| python_mojibake_regression | PASS | 0.3 | status=0, 4/4 test ok trong output unittest (4 dòng "... ok") |
 
 Thất bại: 0
 
