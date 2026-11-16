@@ -1,0 +1,47 @@
+{
+  "when": "2026-11-16T09:12:56.696Z",
+  "failures": 0,
+  "results": {
+    "U1_nolocale_filter_both_files_out": {
+      "ok": true,
+      "detail": "ok=true decision=done; exported=[\"BuildSettings.json\",\"settings.json\"] (cần settings.json + BuildSettings.json); trước fix: ok=false, 0 file, banner \"Lỗi không rõ\"",
+      "seconds": 0.4
+    },
+    "U2_nolocale_filter_en_only_files_out": {
+      "ok": true,
+      "detail": "ok=true decision=done; exported=[\"BuildSettings.json\",\"settings.json\"]",
+      "seconds": 0
+    },
+    "U3_full_fixture_filter_en_only_english_out": {
+      "ok": true,
+      "detail": "ok=true decision=done; exported=[\"English.json\",\"settings.json\"] (cần English.json + settings.json, không Chinese.json); trên fixture en-only chạy được -> lỗi en-only trên IPA thật nằm ở parse bundle thật trên Safari, không phải ở filter",
+      "seconds": 0
+    },
+    "U4_true_zero_files_real_error": {
+      "ok": true,
+      "detail": "ok=false decision=none files=0; error=\"[E_NO_CANDIDATE] không còn ứng viên nào sau bước lọc: bộ lọc ngôn ngữ zh đã loại 1 mục (xem skipped trong báo cáo); thử tắt bộ lọc ngôn ngữ rồi trích xuất lại\"; errors[0].code=\"E_NO_CANDIDATE\"",
+      "seconds": 0
+    },
+    "U5_ask_trap_real_error": {
+      "ok": true,
+      "detail": "ok=false decision=ask; error=\"[E_ASK_NEEDED] cần chọn tay: 1 nhóm chưa quyết được vì các định dạng/plugin ngang điểm (locale: en); bản web chưa hỗ trợ chọn tay ở bước này — thử chọn đúng file ở chế độ Chọn tay\"; errors[0].code=\"E_ASK_NEEDED\"",
+      "seconds": 0
+    },
+    "U6_every_failed_bridge_result_has_real_error": {
+      "ok": true,
+      "detail": "đã kiểm 2 kết quả ok:false, tất cả đều có error khác rỗng và khác \"Lỗi không rõ\"",
+      "seconds": 0
+    },
+    "D1_browser_nolocale_default_filter_shows_files": {
+      "ok": true,
+      "detail": "extract-result có settings.json + BuildSettings.json: true; banner #error ẩn: true; nội dung banner: \"\"",
+      "seconds": 6.4
+    },
+    "D2_browser_true_zero_files_banner_shows_real_reason": {
+      "ok": true,
+      "detail": "banner #error: \"Trích xuất text lỗi: [E_NO_CANDIDATE] không còn ứng viên nào sau bước lọc: bộ lọc ngôn ngữ en/zh đã loại 1 mục (xem skipped trong báo cáo); thử tắt bộ lọc ngôn ngữ rồi trích xuất lại\\n(quyết định: none; đã bỏ qua 5 mục — xem extraction_report.txt)\"",
+      "seconds": 5.6
+    }
+  },
+  "pageErrors": []
+}

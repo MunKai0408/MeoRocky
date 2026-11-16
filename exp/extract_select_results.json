@@ -1,20 +1,20 @@
 {
-  "when": "2026-11-16T08:24:46.181Z",
+  "when": "2026-11-16T09:13:01.592Z",
   "failures": 0,
   "results": {
     "B1a_locale_filter_en_only": {
       "ok": true,
-      "detail": "decision=done; exported=[\"English.json\"] (cần [\"English.json\"]); fr.json skipped \"không phải en\": true; zh.json skipped: true",
+      "detail": "decision=done; exported=[\"English.json\",\"settings.json\"] (cần [\"English.json\", \"settings.json\"]); fr.json skipped \"không phải en\": true; zh.json skipped: true",
       "seconds": 0.4
     },
     "B1b_locale_filter_zh_only": {
       "ok": true,
-      "detail": "decision=done; exported=[\"Chinese.json\"] (cần [\"Chinese.json\"]); en.json skipped \"không phải zh\": true",
+      "detail": "decision=done; exported=[\"Chinese.json\",\"settings.json\"] (cần [\"Chinese.json\", \"settings.json\"]); en.json skipped \"không phải zh\": true",
       "seconds": 0
     },
     "B1c_locale_filter_both": {
       "ok": true,
-      "detail": "decision=done; exported=[\"Chinese.json\",\"English.json\"] (cần en+zh, không fr/de/settings); skipped fr=\"locale fr không phải en/zh\" de=\"locale de không phải en/zh\" settings=\"locale không xác định không phải en/zh\"",
+      "detail": "decision=done; exported=[\"Chinese.json\",\"English.json\",\"settings.json\"] (cần en+zh+settings, không fr/de); skipped fr=\"locale fr không phải en/zh\" de=\"locale de không phải en/zh\" settings=undefined (settings không rõ locale phải được GIỮ, không còn trong skipped)",
       "seconds": 0
     },
     "B2a_select_bundle_only_en": {
@@ -24,12 +24,12 @@
     },
     "B2b_select_resources_zh_none": {
       "ok": true,
-      "detail": "decision=none (đúng: không có file zh nào trong resources.assets); files=0; bundle skipped \"không được chọn\": true; resources en skipped \"không phải zh\": true",
+      "detail": "decision=none (đúng: không có file zh nào trong resources.assets); files=0; bundle skipped \"không được chọn\": true; resources en skipped \"không phải zh\": true; bridge error=\"[E_NO_CANDIDATE] không còn ứng viên nào sau bước lọc: bộ lọc ngôn ngữ zh đã loại 1 mục (xem skipped trong báo cáo); thử tắt bộ lọc ngôn ngữ rồi trích xuất lại\"; errors[0].code=\"E_NO_CANDIDATE\"",
       "seconds": 0
     },
     "B3_unselected_bundle_skipped": {
       "ok": true,
-      "detail": "bundle (không được tick) skipped: \"không được chọn (chỉ trích xuất file đã chọn)\"; decision=none; exported=[] — TextAsset en duy nhất còn lại (resources.assets) kẹt ASK giữa json_text/generic_strings (hành vi trọng tài có sẵn), de/settings/readme đều bị lọc/loại nên đợt này không ra file",
+      "detail": "bundle (không được tick) skipped: \"không được chọn (chỉ trích xuất file đã chọn)\"; decision=done; exported=[\"settings.json\"] (cần [\"settings.json\"] — settings không rõ locale được giữ); TextAsset en duy nhất còn lại (resources.assets) kẹt ASK giữa json_text/generic_strings (hành vi trọng tài có sẵn), de bị lọc",
       "seconds": 0
     },
     "B4_source_reporting": {
@@ -40,7 +40,7 @@
     "B5_read_extracted": {
       "ok": true,
       "detail": "English.json đọc được (hello=Hello, 117 byte): true; file chưa trích xuất: \"Không tìm thấy French.json trong kết quả trích xuất vừa rồi. Hãy chạy Trích xuất trước.\"; traversal \"../secret.json\": \"Tên file không hợp lệ: '../secret.json'.\"; file 5MB: \"File big.json quá lớn (5.0 MB) để nạp vào ô dịch (giới hạn 4.0 MB). Hãy tải extract.zip về rồi dán từng phần vào ô dịch.\"; file không phải JSON: ok=false",
-      "seconds": 0
+      "seconds": 0.1
     }
   }
 }

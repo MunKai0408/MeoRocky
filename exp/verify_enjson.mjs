@@ -144,13 +144,16 @@ json.dumps(res, ensure_ascii=False)`);
   const zipOk = names.includes("English.json") && names.includes("Chinese.json") &&
     names.includes("extraction_report.json") && names.includes("extraction_report.txt");
   const frAbsent = !outExists("French.json") && !outExists("German.json");
-  rec("A1_auto_extract_enjson_present", r.decision === "done" && enOk && zhOk && srcOk && logOk && txtOk && zipOk && frAbsent,
+  // Đổi kỳ vọng 2026-11-16 (lệnh mới của parent ghi đè đặc tả 13:27):
+  // settings.json không rõ locale nay vẫn được GIỮ khi lọc en+zh.
+  const settingsOk = outExists("settings.json");
+  rec("A1_auto_extract_enjson_present", r.decision === "done" && enOk && zhOk && srcOk && logOk && txtOk && zipOk && frAbsent && settingsOk,
     `decision=${r.decision} files=${(r.files || []).map((f) => f.exported).join(",")}; ` +
     `en.json nội dung hello=Hello: ${enOk}; zh hello=你好: ${zhOk}; ` +
     `source English.json=${JSON.stringify(enFile.source)} (cần đúng bundle); ` +
     `log ${rep.log.length} dòng, Unity: ${JSON.stringify(unityLog)}; ` +
     `txt có "English.json ← ...bundle": ${txtOk}; extract.zip chứa report: ${zipOk}; ` +
-    `không có French/German.json: ${frAbsent}`, performance.now() - t0);
+    `không có French/German.json: ${frAbsent}; settings.json (không rõ locale) vẫn được giữ: ${settingsOk}`, performance.now() - t0);
 }
 
 // ---- 3. A2a: bundle hỏng + locales en+zh -> skipped kèm lý do, log không rỗng ----
@@ -167,11 +170,16 @@ json.dumps(res, ensure_ascii=False)`);
     log.some((l) => l.includes("localization-locales_assets_all.bundle -> 0 TextAsset") && l.includes("E_CORRUPT")) &&
     log.some((l) => l.includes("resources.assets -> 1 TextAsset")) &&
     log.some((l) => l.includes("huge.bundle") && l.includes("giới hạn"));
-  rec("A2a_broken_bundle_skipped_with_reason", bundleOk && hugeOk && logOk,
-    `decision=${r.decision} (không còn "done" vì bundle hỏng + TextAsset en duy nhất kẹt ASK giữa json_text 0,71/csv_table 0,61 — xem báo cáo); ` +
+  // settings.json không rõ locale nay vẫn được GIỮ khi lọc (đổi kỳ vọng
+  // 2026-11-16) nên decision là done thay vì none; TextAsset en duy nhất
+  // trong resources.assets vẫn kẹt ASK nhưng không làm hỏng cả đợt nữa.
+  const settingsOk = outExists("settings.json");
+  rec("A2a_broken_bundle_skipped_with_reason", bundleOk && hugeOk && logOk && settingsOk,
+    `decision=${r.decision} (settings.json không rõ locale được giữ nên đợt này done; ` +
+    `TextAsset en duy nhất trong resources.assets vẫn kẹt ASK giữa json_text 0,71/csv_table 0,61 — xem báo cáo); ` +
     `bundle skipped: ${JSON.stringify(bundleSk && bundleSk.reason)}; ` +
     `huge.bundle skipped: ${JSON.stringify(hugeSk && hugeSk.reason)}; ` +
-    `log bridge ${log.length} dòng, có Unity 0 TextAsset + E_CORRUPT: ${logOk}`,
+    `log bridge ${log.length} dòng, có Unity 0 TextAsset + E_CORRUPT: ${logOk}; settings.json được giữ: ${settingsOk}`,
     performance.now() - t0);
 }
 

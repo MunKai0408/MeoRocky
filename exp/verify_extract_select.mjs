@@ -5,9 +5,12 @@
 // Kết quả: extract_select_results.md + extract_select_results.json
 //
 // Bridge thật trên Pyodide Node (fixture extract_select_fixture.zip):
-//  B1. Lọc locale: en -> chỉ English.json; zh -> chỉ Chinese.json;
-//      cả hai -> đủ en+zh, KHÔNG có fr/de/settings; skipped ghi lý do
-//      "locale X không phải en/zh".
+//  B1. Lọc locale: en -> chỉ English.json (+settings vì không rõ locale);
+//      zh -> chỉ Chinese.json (+settings); cả hai -> đủ en+zh+settings,
+//      KHÔNG có fr/de; skipped ghi lý do "locale X không phải en/zh".
+//      (Đổi kỳ vọng 2026-11-16 theo lệnh mới của parent — ghi đè đặc tả
+//      13:27: entry KHÔNG xác định được locale không còn bị loại khi lọc,
+//      vì trên IPA thật điều đó làm ra 0 file + banner "Lỗi không rõ".)
 //  B2. Chọn chỉ bundle + lọc en -> chỉ English.json từ bundle;
 //      chọn resources.assets + lọc zh -> không ra file nào, báo rõ lý do.
 //  B3. Chọn tay nhưng bỏ chọn bundle -> bundle ghi skipped "không được chọn".
@@ -58,30 +61,33 @@ pyodide.FS.writeFile("/tmp/input/fixture.zip", new Uint8Array(fs.readFileSync(FX
 const readOut = (name) => new TextDecoder().decode(pyodide.FS.readFile("/tmp/pb3out/" + name));
 const exportedNames = (r) => (r.files || []).map((f) => f.exported).sort();
 
-{ // B1a. Lọc en -> chỉ English.json
+{ // B1a. Lọc en -> English.json + settings.json (settings không rõ
+  // locale vẫn giữ — đổi kỳ vọng 2026-11-16, xem chú thích B1)
   const t0 = performance.now();
   const r = call("extract", "/tmp/input/fixture.zip", null, ["en"]);
   const got = exportedNames(r);
   const sk = r.skipped || [];
   const frSk = sk.some((s) => /fr\.json/.test(s.path) && /không phải en/.test(s.reason));
   const zhSk = sk.some((s) => /zh\.json/.test(s.path) && /không phải en/.test(s.reason));
-  rec("B1a_locale_filter_en_only", r.decision === "done" && JSON.stringify(got) === JSON.stringify(["English.json"]) && frSk && zhSk,
-    `decision=${r.decision}; exported=${JSON.stringify(got)} (cần ["English.json"]); ` +
+  rec("B1a_locale_filter_en_only", r.decision === "done" && JSON.stringify(got) === JSON.stringify(["English.json", "settings.json"]) && frSk && zhSk,
+    `decision=${r.decision}; exported=${JSON.stringify(got)} (cần ["English.json", "settings.json"]); ` +
     `fr.json skipped "không phải en": ${frSk}; zh.json skipped: ${zhSk}`,
     performance.now() - t0);
 }
-{ // B1b. Lọc zh -> chỉ Chinese.json
+{ // B1b. Lọc zh -> Chinese.json + settings.json (như B1a)
   const t0 = performance.now();
   const r = call("extract", "/tmp/input/fixture.zip", null, ["zh"]);
   const got = exportedNames(r);
   const sk = r.skipped || [];
   const enSk = sk.some((s) => /en\.json/.test(s.path) && /không phải zh/.test(s.reason));
-  rec("B1b_locale_filter_zh_only", r.decision === "done" && JSON.stringify(got) === JSON.stringify(["Chinese.json"]) && enSk,
-    `decision=${r.decision}; exported=${JSON.stringify(got)} (cần ["Chinese.json"]); ` +
+  rec("B1b_locale_filter_zh_only", r.decision === "done" && JSON.stringify(got) === JSON.stringify(["Chinese.json", "settings.json"]) && enSk,
+    `decision=${r.decision}; exported=${JSON.stringify(got)} (cần ["Chinese.json", "settings.json"]); ` +
     `en.json skipped "không phải zh": ${enSk}`,
     performance.now() - t0);
 }
-{ // B1c. Lọc cả hai -> đủ en+zh, KHÔNG có fr/de/settings
+{ // B1c. Lọc cả hai -> đủ en+zh+settings (settings không rõ locale
+  // vẫn GIỮ — đổi kỳ vọng 2026-11-16, xem chú thích B1 ở đầu file),
+  // KHÔNG có fr/de
   const t0 = performance.now();
   const r = call("extract", "/tmp/input/fixture.zip", null, ["en", "zh"]);
   const got = exportedNames(r);
@@ -92,12 +98,12 @@ const exportedNames = (r) => (r.files || []).map((f) => f.exported).sort();
     if (/de\.json/.test(s.path)) reasons.de = s.reason;
     if (s.path === SETTINGS) reasons.settings = s.reason;
   }
-  const ok = r.decision === "done" && JSON.stringify(got) === JSON.stringify(["Chinese.json", "English.json"]) &&
+  const ok = r.decision === "done" && JSON.stringify(got) === JSON.stringify(["Chinese.json", "English.json", "settings.json"]) &&
     /không phải en\/zh/.test(reasons.fr || "") && /không phải en\/zh/.test(reasons.de || "") &&
-    /không xác định không phải en\/zh/.test(reasons.settings || "");
+    !reasons.settings;
   rec("B1c_locale_filter_both", ok,
-    `decision=${r.decision}; exported=${JSON.stringify(got)} (cần en+zh, không fr/de/settings); ` +
-    `skipped fr=${JSON.stringify(reasons.fr)} de=${JSON.stringify(reasons.de)} settings=${JSON.stringify(reasons.settings)}`,
+    `decision=${r.decision}; exported=${JSON.stringify(got)} (cần en+zh+settings, không fr/de); ` +
+    `skipped fr=${JSON.stringify(reasons.fr)} de=${JSON.stringify(reasons.de)} settings=${JSON.stringify(reasons.settings)} (settings không rõ locale phải được GIỮ, không còn trong skipped)`,
     performance.now() - t0);
 }
 { // B2a. Chọn chỉ bundle + lọc en -> chỉ English.json từ bundle
@@ -115,25 +121,34 @@ const exportedNames = (r) => (r.files || []).map((f) => f.exported).sort();
     performance.now() - t0);
 }
 { // B2b. Chọn resources.assets + lọc zh -> không ra file nào, báo rõ lý do
+  // (bridge phải có trường error + errors[0] mã E_NO_FILES, không còn
+  // "Lỗi không rõ" — fix 2026-11-16)
   const t0 = performance.now();
   const r = call("extract", "/tmp/input/fixture.zip", [RES], ["zh"]);
   const sk = r.skipped || [];
   const bundleSk = sk.some((s) => s.path === BUNDLE && /không được chọn/.test(s.reason));
   const enSk = sk.some((s) => /resources\.assets::en/.test(s.path) && /không phải zh/.test(s.reason));
-  rec("B2b_select_resources_zh_none", r.decision === "none" && (r.files || []).length === 0 && bundleSk && enSk,
+  const errOk = typeof r.error === "string" && /không còn ứng viên nào sau bước lọc/.test(r.error) &&
+    !/Lỗi không rõ/.test(r.error) && (r.errors || [])[0] && (r.errors || [])[0].code === "E_NO_CANDIDATE";
+  rec("B2b_select_resources_zh_none", r.decision === "none" && (r.files || []).length === 0 && bundleSk && enSk && errOk,
     `decision=${r.decision} (đúng: không có file zh nào trong resources.assets); files=0; ` +
-    `bundle skipped "không được chọn": ${bundleSk}; resources en skipped "không phải zh": ${enSk}`,
+    `bundle skipped "không được chọn": ${bundleSk}; resources en skipped "không phải zh": ${enSk}; ` +
+    `bridge error=${JSON.stringify(r.error)}; errors[0].code=${JSON.stringify((r.errors || [])[0] && (r.errors || [])[0].code)}`,
     performance.now() - t0);
 }
 { // B3. Chọn tay nhưng bỏ chọn bundle -> bundle ghi skipped "không được chọn"
+  // (settings.json không rõ locale nay VẪN ĐƯỢC GIỮ nên đợt này ra
+  // settings.json thay vì 0 file — đổi kỳ vọng 2026-11-16, xem chú thích B1)
   const t0 = performance.now();
   const r = call("extract", "/tmp/input/fixture.zip", [RES, LVL, SETTINGS, README], ["en", "zh"]);
   const sk = r.skipped || [];
   const bundleSk = sk.find((s) => s.path === BUNDLE);
-  rec("B3_unselected_bundle_skipped", bundleSk && /không được chọn/.test(bundleSk.reason),
+  const got = exportedNames(r);
+  rec("B3_unselected_bundle_skipped", bundleSk && /không được chọn/.test(bundleSk.reason) &&
+    JSON.stringify(got) === JSON.stringify(["settings.json"]),
     `bundle (không được tick) skipped: ${JSON.stringify(bundleSk && bundleSk.reason)}; ` +
-    `decision=${r.decision}; exported=${JSON.stringify(exportedNames(r))} — ` +
-    `TextAsset en duy nhất còn lại (resources.assets) kẹt ASK giữa json_text/generic_strings (hành vi trọng tài có sẵn), de/settings/readme đều bị lọc/loại nên đợt này không ra file`,
+    `decision=${r.decision}; exported=${JSON.stringify(got)} (cần ["settings.json"] — settings không rõ locale được giữ); ` +
+    `TextAsset en duy nhất còn lại (resources.assets) kẹt ASK giữa json_text/generic_strings (hành vi trọng tài có sẵn), de bị lọc`,
     performance.now() - t0);
 }
 { // B4. Báo nguồn gốc: bridge + report JSON + report txt

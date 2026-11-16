@@ -453,8 +453,8 @@ def run_extraction(req: ExtractionRequest) -> ExtractionResult:
     # "w::..." của một entry đã chọn, vd file trong ZIP đã chọn). Entry
     # không được chọn ghi skipped kèm lý do, không biến mất lặng lẽ.
     # Rỗng/None = tự động (xét hết như cũ — tool tự tìm đúng file).
-    if req.source_paths:
-        wanted_paths = {str(p) for p in req.source_paths}
+    wanted_paths = {str(p) for p in req.source_paths} if req.source_paths else None
+    if wanted_paths:
         kept_inv = []
         for e in inv:
             if e.kind == "excluded":
@@ -468,6 +468,23 @@ def run_extraction(req: ExtractionRequest) -> ExtractionResult:
                                    "reason": "không được chọn (chỉ trích xuất file đã chọn)"})
             log("bỏ qua %s: không được chọn" % e.path)
         inv = kept_inv
+
+    def _is_selected(full: str) -> bool:
+        """Đường dẫn ứng viên có nằm trong phạm vi đã chọn không.
+
+        Lỗi 2026-11-16 (phát hiện khi sửa lọc locale): lọc `inv` ở trên
+        chỉ loại entry khỏi inventory, nhưng vòng sinh ứng viên vẫn quét
+        lớp gốc (toàn bộ ZIP) nên file thường KHÔNG được chọn vẫn lọt vào
+        làm ứng viên (vd chọn chỉ bundle vẫn ra settings.json — trước đây
+        bị lọc locale che mất vì settings không rõ locale). Chặn ở đây:
+        chỉ giữ ứng viên đúng bằng đường dẫn đã chọn, hoặc là entry con
+        `w::...` của đường dẫn đã chọn (TextAsset trong bundle đã chọn,
+        file trong container đã chọn). Lớp Unity ảo chỉ dựng từ `inv` đã
+        lọc nên TextAsset của bundle không chọn không tới được đây.
+        """
+        if wanted_paths is None:
+            return True
+        return any(full == w or full.startswith(w + "::") for w in wanted_paths)
 
     # -- bước 2: engine hints ----------------------------------------------
     names = [e.path for e in inv]
@@ -555,6 +572,10 @@ def run_extraction(req: ExtractionRequest) -> ExtractionResult:
                 if full in excluded_paths:
                     _add_skipped(full, excluded_paths[full])
                     continue
+                # Chọn file: ứng viên ngoài phạm vi đã chọn thì loại (xem
+                # _is_selected — lọc inv không đủ vì lớp gốc quét cả ZIP).
+                if not _is_selected(full):
+                    continue
                 key = (rec.plugin_id, full)
                 if key in raw:
                     continue
@@ -585,6 +606,8 @@ def run_extraction(req: ExtractionRequest) -> ExtractionResult:
             _report_lag("sniff", _sniff_i, _sniff_total)
             full = layer.prefix + rel
             if full in claimed_by_format or full in excluded_paths:
+                continue
+            if not _is_selected(full):
                 continue
             try:
                 head = bytes(layer.vfs.slice(rel, 0, 4096))
@@ -721,6 +744,22 @@ def run_extraction(req: ExtractionRequest) -> ExtractionResult:
             kept_probed.append(item)
         probed = kept_probed
     if not probed:
+        # KHÔNG BAO GIỜ trả ok=False mà errors rỗng (lỗi 2026-11-16:
+        # banner web chỉ đọc parsed.error/code nên hiện "Lỗi không rõ").
+        n_loc = sum(1 for s in (result.skipped or [])
+                    if "không phải" in (s.get("reason") or ""))
+        if locales is not None:
+            result.errors.append({"path": "", "code": "E_NO_CANDIDATE",
+                                  "message": "không còn ứng viên nào sau bước lọc: "
+                                             "bộ lọc ngôn ngữ %s đã loại %d mục "
+                                             "(xem skipped trong báo cáo); thử tắt bộ lọc "
+                                             "ngôn ngữ rồi trích xuất lại"
+                                             % (wanted_txt, n_loc)})
+        else:
+            result.errors.append({"path": "", "code": "E_NO_CANDIDATE",
+                                  "message": "không tìm thấy ứng viên trích xuất nào "
+                                             "trong file (đã bỏ qua %d mục; xem skipped/log "
+                                             "trong báo cáo)" % len(result.skipped or [])})
         result.decision = "none"
         result.report = _build_report(req, result, logs, t0)
         return result
@@ -765,11 +804,23 @@ def run_extraction(req: ExtractionRequest) -> ExtractionResult:
             log("người dùng chọn %s cho locale %s" % (pick["full"], grp["locale"] or "?"))
         ask_groups = [g for g in ask_groups if g not in answered]
     if ask_groups and not chosen:
+        # Web không có ask_fn nên kẹt ASK cũng phải báo rõ lý do, không
+        # được trả ok=False mà errors rỗng (banner "Lỗi không rõ").
+        need = ", ".join(sorted(str(g.get("locale") or "?") for g in ask_groups))
+        result.errors.append({"path": "", "code": "E_ASK_NEEDED",
+                              "message": "cần chọn tay: %d nhóm chưa quyết được vì các "
+                                         "định dạng/plugin ngang điểm (locale: %s); bản web "
+                                         "chưa hỗ trợ chọn tay ở bước này — thử chọn đúng "
+                                         "file ở chế độ Chọn tay"
+                                         % (len(ask_groups), need)})
         result.decision = "ask"
         result.candidates = ask_groups
         result.report = _build_report(req, result, logs, t0)
         return result
     if not chosen:
+        result.errors.append({"path": "", "code": "E_NO_CANDIDATE",
+                              "message": "không ứng viên nào vượt ngưỡng trọng tài "
+                                         "(xem skipped trong báo cáo)"})
         result.decision = "none"
         result.report = _build_report(req, result, logs, t0)
         return result
@@ -810,7 +861,13 @@ def run_extraction(req: ExtractionRequest) -> ExtractionResult:
                 tables.append(LocTable.from_key_values(
                     dict(kv), adapter_id=rec.plugin_id,
                     locale=loc_code, source=src))
-                if locales is not None and loc_code not in locales:
+                # Lọc mềm nhiều locale (req.locales): chỉ loại entry có
+                # locale ĐÃ XÁC ĐỊNH mà không thuộc tập lọc; entry không rõ
+                # locale (loc_code None — vd file config/plist) vẫn GIỮ
+                # LẠI (lỗi 2026-11-16: trước đây `None not in {en,zh}`
+                # loại cả file không có ngôn ngữ, khiến IPA thật chỉ còn
+                # config thì ra 0 file + banner "Lỗi không rõ").
+                if locales is not None and loc_code is not None and loc_code not in locales:
                     result.skipped.append({"path": item["full"],
                                            "reason": "locale %s không phải %s"
                                                      % (loc_code or "không xác định", wanted_txt)})
@@ -846,10 +903,14 @@ def run_extraction(req: ExtractionRequest) -> ExtractionResult:
         for loc, entries in sorted(by_locale.items(), key=lambda kv: (kv[0] or "")):
             all_locales.add(loc)
             # Lọc mềm nhiều locale (req.locales): chỉ trích xuất entry có
-            # locale thuộc tập lọc; locale khác hoặc không xác định được thì
-            # bỏ qua kèm lý do — KHÔNG fail cả đợt khi một locale vắng mặt
-            # (khác req.locale cứng ở dưới).
-            if locales is not None and loc not in locales:
+            # locale thuộc tập lọc; locale ĐÃ XÁC ĐỊNH mà khác thì bỏ qua
+            # kèm lý do — KHÔNG fail cả đợt khi một locale vắng mặt (khác
+            # req.locale cứng ở dưới). Entry KHÔNG XÁC ĐỊNH được locale
+            # (loc None — vd file config/plist) vẫn GIỮ LẠI: file không có
+            # ngôn ngữ không thể gọi là "không phải en/zh" (lỗi 2026-11-16:
+            # trước đây lọc loại cả config, IPA thật chỉ còn config thì ra
+            # 0 file + banner "Lỗi không rõ").
+            if locales is not None and loc is not None and loc not in locales:
                 result.skipped.append({"path": item["full"],
                                        "reason": "locale %s không phải %s"
                                                  % (loc or "không xác định", wanted_txt)})
@@ -876,6 +937,20 @@ def run_extraction(req: ExtractionRequest) -> ExtractionResult:
             result.report = _build_report(req, result, logs, t0)
             return result
     if not result.files:
+        # 0 file KHÔNG phải lỗi khó hiểu: ghi rõ vì sao + gợi ý sửa
+        # (lỗi 2026-11-16: nhánh này return mà không append error nào
+        # nên banner web hiện "Lỗi không rõ").
+        n_sk = len(result.skipped or [])
+        n_loc = sum(1 for s in (result.skipped or [])
+                    if "không phải" in (s.get("reason") or ""))
+        hint = ("; thử tắt bộ lọc ngôn ngữ rồi trích xuất lại"
+                if n_loc else "; xem skipped/log trong extraction_report.txt")
+        filt = ("; trong đó %d mục do bộ lọc ngôn ngữ %s"
+                % (n_loc, wanted_txt)) if locales is not None else ""
+        result.errors.append({"path": "", "code": "E_NO_FILES",
+                              "message": "không trích xuất được file nào (quyết định: "
+                                         "none; đã bỏ qua %d mục%s%s)"
+                                         % (n_sk, filt, hint)})
         result.decision = "none"
         result.report = _build_report(req, result, logs, t0)
         return result

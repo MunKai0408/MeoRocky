@@ -291,7 +291,21 @@ async function runOp(label, fn, args, files, fileOut) {
     // handler tự kiểm tra parsed.ok rồi showError("Lỗi: " + ...) nên banner
     // mất nhãn, không biết thao tác nào lỗi.
     if (parsed && parsed.ok === false) {
-      throw new Error(parsed.error || parsed.code || "Lỗi không rõ");
+      // Hiện lý do THẬT thay vì "Lỗi không rõ" (lỗi 2026-11-16): bridge
+      // tổng hợp trường error; cộng thêm từng lỗi trong parsed.errors
+      // (code + message) và decision + số mục đã bỏ qua để chẩn đoán
+      // được trên máy thật. #error có white-space: pre-wrap nên \n
+      // hiện thành từng dòng trong banner.
+      let msg = parsed.error || parsed.code || "Lỗi không rõ";
+      const details = (parsed.errors || [])
+        .map((e) => (e && e.code ? "[" + e.code + "] " : "") + (e && (e.message || e.error || "")))
+        .filter((d) => d && msg.indexOf(d) === -1);
+      if (details.length) msg += "\n" + details.join("\n");
+      if (parsed.decision && msg.indexOf(String(parsed.decision)) === -1) {
+        msg += "\n(quyết định: " + parsed.decision + "; đã bỏ qua " +
+          ((parsed.skipped || []).length) + " mục — xem extraction_report.txt)";
+      }
+      throw new Error(msg);
     }
     progDone(label);
     if (fileOut && msg.file) download(msg.file.name, msg.file.data);
@@ -1118,7 +1132,15 @@ async function maybeRefreshExtractFileList() {
 function renderExtractFileList() {
   const box = $("extract-file-list");
   if (!box) return;
+  // Nút "Chọn tất cả" / "Bỏ chọn tất cả" chỉ có nghĩa ở chế độ chọn tay
+  // (chế độ tự động checkbox đang disabled): disable cả 2 khi không ở
+  // manual hoặc chưa có danh sách file (Joseph 2026-11-16).
   const manual = $("extract-mode-manual") && $("extract-mode-manual").checked;
+  const selAll = $("btn-extract-select-all");
+  const desAll = $("btn-extract-deselect-all");
+  const dis = !manual || !state.extractEntries.length;
+  if (selAll) selAll.disabled = dis;
+  if (desAll) desAll.disabled = dis;
   if (!state.extractEntries.length) {
     box.innerHTML = "<p class=\"note\">Không thấy file nào trích xuất được trong file này.</p>";
     return;
@@ -1154,6 +1176,19 @@ $("btn-extract-list").addEventListener("click", () => {
   state.extractListFor = null;
   maybeRefreshExtractFileList();
 });
+// Nút "Chọn tất cả" / "Bỏ chọn tất cả" (Joseph 2026-11-16): cập nhật
+// TRỰC TIẾP state.extractSelected (Set — nguồn thật duy nhất cho
+// source_paths) rồi vẽ lại bằng renderExtractFileList(); không đọc DOM
+// lúc chạy (theo đúng quy ước của checkbox ở trên).
+$("btn-extract-select-all").addEventListener("click", () => {
+  if (!state.extractEntries.length) return;
+  state.extractSelected = new Set(state.extractEntries.map((e) => e.path));
+  renderExtractFileList();
+});
+$("btn-extract-deselect-all").addEventListener("click", () => {
+  state.extractSelected = new Set();
+  renderExtractFileList();
+});
 // Đổi chế độ chọn file: chỉ vẽ lại (bật/tắt checkbox), không tải lại danh sách.
 $("extract-mode-auto").addEventListener("change", renderExtractFileList);
 $("extract-mode-manual").addEventListener("change", renderExtractFileList);
@@ -1164,6 +1199,14 @@ $("btn-extract-run").addEventListener("click", async () => {
     const manual = $("extract-mode-manual") && $("extract-mode-manual").checked;
     let sourcePaths = null;
     if (manual && state.extractSelected && state.extractEntries.length) {
+      // Bỏ chọn tất cả rồi bấm Trích xuất: Set rỗng KHÔNG có nghĩa là tự
+      // động — bridge coi list rỗng là None (= tự động) nên nếu gửi đi thì
+      // nút "Bỏ chọn tất cả" vô tác dụng. Chặn lại và báo rõ ngay tại UI
+      // (Joseph 2026-11-16), không gửi source_paths rỗng lên bridge.
+      if (state.extractSelected.size === 0) {
+        showError("Chưa chọn file nào để trích xuất — tick ít nhất 1 file trong danh sách, hoặc chuyển về chế độ Tự động.");
+        return;
+      }
       // Chọn tay: gửi đúng danh sách đã tick. Chưa tải danh sách thì coi
       // như tự động (không gửi gì) — không bắt user phải tải danh sách.
       sourcePaths = [...state.extractSelected];
@@ -2474,6 +2517,80 @@ $("btn-font-replace").addEventListener("click", async () => {
     $("font-result").innerHTML =
       "<p>File <b>BeVietnamPro-Regular.ttf</b> đã sẵn sàng — bấm “Lưu / Chia sẻ” ở thanh Lưu file bên dưới để lưu về máy (" + fmtBytes(parsed.size) +
       ") — font đầy đủ tiếng Việt, dùng thay cho font của game.</p>";
+  } catch (e) { /* đã báo lỗi */ }
+});
+
+// ---- Đọc TMP_FontAsset (mục 7) ----
+// Chỉ đọc tham số atlas SDF từ file .assets/.unity3d/IPA đã chọn: FaceInfo,
+// bảng glyph, độ phủ tiếng Việt, tham chiếu Material/Texture. Kế hoạch glyph
+// (chuỗi ký tự thiếu + tham số atlas cần giữ) được tải về dạng
+// tmp_glyph_plan.json để nạp vào Unity Editor — atlas SDF chỉ tái tạo
+// được trong Editor, web không sinh được SDF.
+$("btn-font-tmp").addEventListener("click", async () => {
+  try {
+    const { parsed } = await runOp("Đọc TMP_FontAsset", "tmp_font_read",
+      [inputPath()], inputFileArgs(), true);
+    const s = parsed.summary || {};
+    let html = "<p><b>" + (s.assets || 0) + " TMP_FontAsset</b> (đọc đủ " +
+      (s.parsed || 0) + ", một phần " + (s.partial || 0) + ", không đọc được bảng glyph " +
+      (s.not_found || 0) + ") · tiếng Việt đủ " + (s.vietnamese_full || 0) +
+      ", thiếu " + (s.vietnamese_partial || 0) + ", không có " + (s.vietnamese_none || 0) +
+      " · file đã quét: " + (parsed.files_scanned || []).map(esc).join(", ") +
+      (parsed.bundle_nodes ? " · node bundle đã đọc: " + parsed.bundle_nodes : "") + "</p>";
+    for (const it of (parsed.assets || [])) {
+      const fi = it.font_info || {};
+      const vi = it.vietnamese || {};
+      const gt = it.glyph_table || {};
+      html += "<h3>" + esc(it.name || ("TMP #" + it.path_id)) + " — " + esc(it.status || "?") + "</h3>";
+      if (fi.name != null) {
+        html += "<p>Font nguồn: <b>" + esc(fi.name) + "</b> · PointSize " + fi.point_size +
+          " · Scale " + fi.scale + " · LineHeight " + fi.line_height +
+          " · Padding " + (fi.padding != null ? fi.padding : "?") +
+          " · atlas <b>" + fi.atlas_width + "×" + fi.atlas_height + "</b>" +
+          (fi.atlas_basis ? " (" + esc(fi.atlas_basis) + ")" : "") +
+          " · glyph " + (gt.count != null ? gt.count : "?") + "/" + fi.declared_char_count + "</p>";
+      } else {
+        html += "<p>" + esc(it.reason || "Không đọc được FaceInfo.") + "</p>";
+      }
+      if (vi.required) {
+        html += "<p>Tiếng Việt: <b>" + vi.covered + "/" + vi.required + " (" + vi.level + ")</b>" +
+          " · dấu kết hợp: " + (vi.marks ? vi.marks.covered + "/" + vi.marks.required : "?") +
+          (vi.missing && vi.missing.length ? " · thiếu: " + esc(vi.missing.join(" ")) : "") + "</p>";
+      }
+      const refs = it.refs || {};
+      const refTxt = ["texture", "material", "font", "tmp_font_asset"]
+        .map((k) => (refs[k] || []).map((r) => esc(r.name || ("#" + r.path_id))).join(", "))
+        .filter((t) => t);
+      if (refTxt.length) html += "<p>Tham chiếu: " + refTxt.join(" · ") + "</p>";
+      if (it.problems && it.problems.length) {
+        html += "<p class=warn>Vấn đề: " + it.problems.map(esc).join("; ") + "</p>";
+      }
+      if (it.status === "glyph_table_not_found" || it.status === "layout_unknown") {
+        html += "<p class=warn>Bố cục TMP của bản này có thể khác giả định — xem chẩn đoán trong file kế hoạch glyph; không bịa danh sách ký tự.</p>";
+      }
+    }
+    if (parsed.candidates && parsed.candidates.length) {
+      html += "<p class=warn>Ứng viên chưa xác nhận class script (" + parsed.candidates.length +
+        " MonoBehaviour, script ngoài file hoặc không đọc được) — chưa đưa vào kết quả, cần đối chiếu thủ công.</p>";
+    }
+    const plan = parsed.glyph_plan || {};
+    if (plan.targets && plan.targets.length) {
+      html += "<h3>Kế hoạch glyph cho Unity Editor</h3><p>Còn thiếu (gộp mọi asset): <b>" +
+        (plan.missing_total || 0) + " ký tự</b> (" +
+        (plan.missing_letters || []).join(" ") +
+        (plan.missing_marks && plan.missing_marks.length ? " · dấu: " + plan.missing_marks.join(" ") : "") +
+        ")</p><p>Chuỗi ký tự thiếu (dán vào ô Custom Characters của TMP Font Asset Creator):<br><b>" +
+        esc(plan.chars_text || "") + "</b></p>" +
+        "<p>File <b>tmp_glyph_plan.json</b> đã sẵn sàng để tải về — nạp vào script " +
+        "<b>unity_editor/TMP_VietnameseAtlas.cs</b> (chạy trong Unity Editor, không chạy trên web). " +
+        "Mức rẻ nhất: giữ nguyên material, chỉ đổi texture atlas + bảng glyph.</p>";
+    } else {
+      html += "<p>Không có asset nào đủ dữ liệu để lập kế hoạch glyph.</p>";
+    }
+    if (parsed.warnings && parsed.warnings.length) {
+      html += "<p class=warn>Cảnh báo: " + parsed.warnings.map(esc).join("; ") + "</p>";
+    }
+    $("font-result").innerHTML = html;
   } catch (e) { /* đã báo lỗi */ }
 });
 

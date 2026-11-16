@@ -312,12 +312,40 @@ def extract(path, source_paths=None, locales=None):
                 for fn in sorted(fns):
                     fp = os.path.join(root, fn)
                     zf.write(fp, os.path.relpath(fp, out_dir))
+        # Lỗi 2026-11-16 ("Trích xuất text lỗi: Lỗi không rõ"): bridge
+        # TRƯỚC ĐÂY trả ok:false mà không có trường error/code khi
+        # run_extraction return theo đường thành công (0 file, kẹt ASK...),
+        # nên runOp bên app.js chỉ còn "Lỗi không rõ" để hiện. Nay tổng
+        # hợp error từ r.errors; khi errors rỗng thì dựng từ decision +
+        # số skipped (trong đó bao nhiêu do bộ lọc ngôn ngữ) để banner
+        # luôn đọc được lý do thật.
+        err_text = ""
+        if not r.ok:
+            errs = list(r.errors or [])
+            if errs:
+                first = errs[0] or {}
+                err_text = ((("[" + str(first.get("code")) + "] ")
+                             if first.get("code") else "")
+                            + str(first.get("message") or first.get("error") or ""))
+                if len(errs) > 1:
+                    err_text += " (+%d lỗi khác)" % (len(errs) - 1)
+            else:
+                n_sk = len(r.skipped or [])
+                n_loc = sum(1 for s in (r.skipped or [])
+                            if "không phải" in str((s or {}).get("reason") or ""))
+                err_text = ("Không trích xuất được file nào (quyết định: %s; "
+                            "đã bỏ qua %d mục, trong đó %d mục do bộ lọc ngôn ngữ; "
+                            "xem skipped/log trong extraction_report.txt của extract.zip)"
+                            % (r.decision, n_sk, n_loc))
+                if n_loc:
+                    err_text += " — thử tắt bộ lọc ngôn ngữ rồi trích xuất lại."
         return json.dumps({
             "ok": bool(r.ok), "decision": str(r.decision),
             "total_entries": int(r.total_entries), "files": files,
             "skipped": list(r.skipped or []),
             "log": list((r.report or {}).get("log") or []),
             "errors": list(r.errors or []), "zip_path": zpath,
+            "error": err_text,
             "zip_bytes": os.path.getsize(zpath),
         }, ensure_ascii=False)
     except Exception as e:  # noqa: BLE001
@@ -981,6 +1009,39 @@ def font_merge(path, donor_path):
             "glyphs_copied": int(res.glyphs_copied),
             "glyphs_total": int(res.glyphs_total),
             "warnings": list(res.warnings or [])[:20],
+        }, ensure_ascii=False)
+    except Exception as e:  # noqa: BLE001
+        return _err(e)
+
+
+def tmp_font_read(path):
+    """Đọc tham số TMP_FontAsset (TextMeshPro) — mục 7.
+
+    Chỉ đọc: FaceInfo (tên font, PointSize, Scale, CharacterCount,
+    LineHeight, Padding, kích thước atlas), bảng glyph 36 byte, độ phủ
+    tiếng Việt (134 chữ + 8 dấu), tham chiếu Material/Texture2D/Font.
+    Ghi kế hoạch glyph ra /tmp/tmp_glyph_plan.json để JS tải về nạp vào
+    Unity Editor. Atlas SDF KHÔNG tái tạo được trên web — sinh lại atlas
+    bắt buộc làm trong Unity Editor (script site/unity_editor/).
+    """
+    try:
+        from sdk import tmp_font as tf
+
+        _check_size(path)
+        res = tf.scan_source(path)
+        plan = res["glyph_plan"]
+        out = "/tmp/tmp_glyph_plan.json"
+        with open(out, "w", encoding="utf-8") as fh:
+            json.dump(plan, fh, ensure_ascii=False, indent=1)
+        return json.dumps({
+            "ok": True, "dest": out, "filename": "tmp_glyph_plan.json",
+            "assets": res["items"],
+            "candidates": res["candidates"],
+            "summary": res["summary"],
+            "warnings": list(res["warnings"] or []),
+            "files_scanned": list(res["files_scanned"] or []),
+            "bundle_nodes": int(res["bundle_nodes"]),
+            "glyph_plan": plan,
         }, ensure_ascii=False)
     except Exception as e:  # noqa: BLE001
         return _err(e)

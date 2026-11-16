@@ -298,7 +298,7 @@
     <h2>Giới hạn của bản web (đo thật, xem README)</h2>
     <ul>
       <li>Không dùng UnityPy (không cài được trên Pyodide — thiếu wheel etcpak). Inspect Unity dùng parser thuần của PB3.</li>
-      <li><b>Batch chỉ chạy tuần tự</b> (không có threading trên web, không có chế độ song song như bản iSH); extract cũng chạy tuần tự.</li>
+      <li><b>Batch chạy song song trên pool 2 worker</b> (2 thread hệ điều hành thật, mỗi worker chạy một game; bên trong một worker, Python chạy tuần tự vì Pyodide không có pthreads). Trích xuất từng game vẫn chạy tuần tự trong worker của nó.</li>
       <li><b>KB tự lưu vào IndexedDB</b> sau mỗi thay đổi và khôi phục khi mở lại trang; Safari vẫn có thể xóa dữ liệu web sau ~7 ngày không mở trang nếu chưa cài vào Màn hình chính — xuất file .sqlite sao lưu định kỳ (tab KB nhắc khi quá 7 ngày hoặc chưa từng xuất).</li>
       <li><b>Mod</b> chỉ xuất đơn vị nhỏ nhất đã patch (bundle/.assets), không đóng gói lại IPA; mặc định dry-run, chỉ ghi khi bạn bấm nút ghi rõ ràng.</li>
       <li>Ma trận hỗ trợ: cột “ngày test” hiện “chưa có” vì bản web không kèm file bằng chứng tests/corpus/*.json.</li>
@@ -380,7 +380,8 @@
     <p class="note">Mặc định <b>Tự động</b>: tool tự tìm đúng file (tự mở bundle
     localization trong IPA, tự lấy en.json/zh.json ra) — không cần chọn tay.
     Chỉ dùng <b>Chọn tay để thu hẹp</b> khi bạn muốn giới hạn phạm vi trích xuất;
-    ở chế độ này mặc định tick tất cả, bỏ tick để loại file.</p>
+    ở chế độ này mặc định tick tất cả, bỏ tick để loại file (có nút
+    <b>Chọn tất cả</b> / <b>Bỏ chọn tất cả</b> phía trên danh sách).</p>
     <div class="row">
       <label>Ngôn ngữ:
         <select id="extract-locales" style="width:auto">
@@ -391,8 +392,13 @@
       </label>
     </div>
     <p class="note">Lọc ngôn ngữ chỉ giữ entry tiếng Anh / tiếng Trung (mặc định
-    cả hai); entry ngôn ngữ khác hoặc không rõ ngôn ngữ sẽ bị bỏ qua và ghi rõ
-    lý do trong báo cáo — không fail cả đợt khi một ngôn ngữ vắng mặt.</p>
+    cả hai); entry ngôn ngữ khác sẽ bị bỏ qua và ghi rõ lý do trong báo cáo —
+    entry không rõ ngôn ngữ (vd file config) vẫn được giữ lại. Không fail cả
+    đợt khi một ngôn ngữ vắng mặt.</p>
+    <div class="row">
+      <button id="btn-extract-select-all" class="secondary" disabled>Chọn tất cả</button>
+      <button id="btn-extract-deselect-all" class="secondary" disabled>Bỏ chọn tất cả</button>
+    </div>
     <div id="extract-file-list"><p class="note">Chưa có danh sách file — mở tab này khi đã chọn file IPA/ZIP.</p></div>
     <button id="btn-extract-list" class="secondary">Tải lại danh sách file</button>
     <button id="btn-extract-run">Trích xuất</button>
@@ -573,10 +579,15 @@
     <p class="note">Quét font TTF xem thiếu bao nhiêu ký tự tiếng Việt (142 mục chuẩn:
     134 chữ cái + 8 dấu kết hợp),
     gộp glyph từ font Be Vietnam Pro đi kèm, hoặc lấy luôn font đi kèm về dùng.
-    Giới hạn thật: atlas SDF của TextMeshPro không tái tạo được.</p>
+    Nút “Đọc TMP_FontAsset” đọc tham số atlas SDF (FaceInfo, bảng glyph, độ phủ
+    tiếng Việt) từ file .assets/.unity3d hoặc IPA rồi xuất kế hoạch glyph
+    (chuỗi ký tự thiếu + tham số atlas) để tái tạo atlas trong Unity Editor.
+    Giới hạn thật: atlas SDF của TextMeshPro không tái tạo được trên web —
+    chỉ tái tạo được trong Unity Editor (script kèm theo).</p>
     <button id="btn-font-scan">Quét font đã chọn</button>
     <button id="btn-font-merge">Gộp glyph tiếng Việt (tải merged.ttf về)</button>
     <button id="btn-font-replace" class="secondary">Lấy font Be Vietnam Pro về</button>
+    <button id="btn-font-tmp">Đọc TMP_FontAsset (atlas SDF)</button>
     <div id="font-result"></div>
   </div>
 

@@ -240,7 +240,13 @@ function loadApp({ canShare, shareImpl }) {
     ck("pagehide_revoke", /addEventListener\("pagehide", revokeLastDownloadUrl\)/.test(a));
     ck("share_primary", /canShareFile\(blob, name\)/.test(a) && /navigator\.share\(\{\s*files:\s*\[file\]\s*\}\)/.test(a));
     ck("no_unlabeled_error", !/^[^/]*showError\("Lỗi: "\s*\+\s*parsed\.error\)/m.test(a) && !/showError\("Lỗi: " \+ parsed\.error\)/.test(a));
-    ck("runop_throws_labeled", /if \(parsed && parsed\.ok === false\) \{\s*throw new Error\(parsed\.error/.test(a) && /showError\(label \+ " lỗi: " \+ e\.message\)/.test(a));
+    // runOp ném lỗi CÓ NHÃN khi bridge trả ok:false; message được dựng từ
+    // parsed.error (+ chi tiết parsed.errors, decision, số skipped — fix lỗi
+    // "Lỗi không rõ" 2026-11-16) rồi mới throw, nên KHÔNG kiểm hình thức
+    // "throw new Error(parsed.error" ngay sau "{" nữa mà kiểm hành vi:
+    // nhánh ok===false có throw Error + message lấy từ parsed.error/code +
+    // có đọc parsed.errors + catch hiện "label lỗi: message".
+    ck("runop_throws_labeled", /if \(parsed && parsed\.ok === false\) \{[\s\S]{0,1500}?throw new Error\(/.test(a) && /parsed\.error \|\| parsed\.code/.test(a) && /parsed\.errors/.test(a) && /showError\(label \+ " lỗi: " \+ e\.message\)/.test(a));
     ck("decompress_guard", /File giải nén phải là \.tar\.xz/.test(a));
     ck("compress_guard", /File \.tar\.xz đã là file nén/.test(a));
     ck("unity_picker", /unity-bundle-select/.test(a) && /unity_inspect_entry/.test(a) && /inspectUnityEntry/.test(a));
@@ -387,10 +393,16 @@ function call(fn, ...args) {
 // ============ Part D: render bảng ở 390px (Chromium headless) ============
 // Đối chứng âm: CSS CŨ (word-break: break-all mọi ô) phải vỡ chữ thật — chứng
 // minh phép đo phát hiện được lỗi; CSS MỚI phải giữ cột ngắn 1 dòng.
+// Trang test bọc nội dung trong <main> như trang thật (redesign 2026-11-16:
+// body padding 0 + main padding 0 12px để header sticky tràn full-width;
+// không bọc <main> thì card rộng hơn trang thật 24px, bảng plugin (nội dung
+// ~341–364px) vừa khít 364px và phép đo cuộn ngang sai thành "không cuộn"
+// dù trên trang thật (bảng 340px) nó vẫn cuộn — lỗi hình học của trang test,
+// không phải lỗi sản phẩm).
 function tablePage(css) {
   return `<!DOCTYPE html><html lang="vi"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<style>${css}</style></head><body>
+<style>${css}</style></head><body><main>
 <div class="card"><table id="list-table"><tr><th>Đường dẫn</th><th>Loại</th><th>Kích thước</th></tr>
 <tr><td>Payload/9Kings.app/Frameworks/AppleCoreNative.framework/_CodeSignature/CodeResources</td><td>file</td><td>1,2 MB</td></tr>
 <tr><td>Payload/9Kings.app/Data/sharedassets0.assets</td><td>file</td><td>95,6 MB</td></tr>
@@ -398,7 +410,7 @@ function tablePage(css) {
 <tr><td>Payload/9Kings.app/Data</td><td>thư mục</td><td>—</td></tr></table></div>
 <div class="card"><table id="plugin-table"><tr><th>Plugin</th><th>Loại</th><th>Engine</th><th>Maturity hiệu lực</th></tr>
 <tr><td>json</td><td>Format</td><td>Unity</td><td>stable — đã test trên game thật</td></tr></table></div>
-</body></html>`;
+</main></body></html>`;
 }
 function extractStyle(html) {
   const m = html.match(/<style>([\s\S]*?)<\/style>/);

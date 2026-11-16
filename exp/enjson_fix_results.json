@@ -1,11 +1,11 @@
 {
-  "when": "2026-11-16T08:24:41.367Z",
+  "when": "2026-11-16T08:57:49.022Z",
   "failures": 0,
   "results": {
     "old_evidence_log_empty_bundle_missing": {
       "ok": true,
       "detail": "extract.zip thật: log=[] (rỗng), files=36, skipped=105, total_entries=23741; bundle localization trong files=false, skipped=false, candidates=false — đúng lỗi cần sửa",
-      "seconds": 0.2
+      "seconds": 0.1
     },
     "fixture_parses_with_web_parser": {
       "ok": true,
@@ -14,12 +14,12 @@
     },
     "A1_auto_extract_enjson_present": {
       "ok": true,
-      "detail": "decision=done files=English.json,Chinese.json; en.json nội dung hello=Hello: true; zh hello=你好: true; source English.json=\"Payload/9Kings.app/Data/Raw/aa/iOS/localization-locales_assets_all.bundle\" (cần đúng bundle); log 13 dòng, Unity: [\"Unity: Payload/9Kings.app/Data/Raw/aa/iOS/localization-locales_assets_all.bundle -> 3 TextAsset\",\"Unity: Payload/9Kings.app/Data/level1.unity3d -> 1 TextAsset\",\"Unity: Payload/9Kings.app/Data/resources.assets -> 1 TextAsset\"]; txt có \"English.json ← ...bundle\": true; extract.zip chứa report: true; không có French/German.json: true",
+      "detail": "decision=done files=settings.json,English.json,Chinese.json; en.json nội dung hello=Hello: true; zh hello=你好: true; source English.json=\"Payload/9Kings.app/Data/Raw/aa/iOS/localization-locales_assets_all.bundle\" (cần đúng bundle); log 13 dòng, Unity: [\"Unity: Payload/9Kings.app/Data/Raw/aa/iOS/localization-locales_assets_all.bundle -> 3 TextAsset\",\"Unity: Payload/9Kings.app/Data/level1.unity3d -> 1 TextAsset\",\"Unity: Payload/9Kings.app/Data/resources.assets -> 1 TextAsset\"]; txt có \"English.json ← ...bundle\": true; extract.zip chứa report: true; không có French/German.json: true; settings.json (không rõ locale) vẫn được giữ: true",
       "seconds": 0.1
     },
     "A2a_broken_bundle_skipped_with_reason": {
       "ok": true,
-      "detail": "decision=none (không còn \"done\" vì bundle hỏng + TextAsset en duy nhất kẹt ASK giữa json_text 0,71/csv_table 0,61 — xem báo cáo); bundle skipped: \"parse bundle lỗi [E_CORRUPT]: Tệp hỏng hoặc bị cắt cụt.\"; huge.bundle skipped: \"file Unity 73400320 byte > giới hạn entry 67108864 byte — không mở bundle/.assets (cần nâng giới hạn Unity nếu bundle thật vượt ngưỡng này)\"; log bridge 10 dòng, có Unity 0 TextAsset + E_CORRUPT: true",
+      "detail": "decision=done (settings.json không rõ locale được giữ nên đợt này done; TextAsset en duy nhất trong resources.assets vẫn kẹt ASK giữa json_text 0,71/csv_table 0,61 — xem báo cáo); bundle skipped: \"parse bundle lỗi [E_CORRUPT]: Tệp hỏng hoặc bị cắt cụt.\"; huge.bundle skipped: \"file Unity 73400320 byte > giới hạn entry 67108864 byte — không mở bundle/.assets (cần nâng giới hạn Unity nếu bundle thật vượt ngưỡng này)\"; log bridge 10 dòng, có Unity 0 TextAsset + E_CORRUPT: true; settings.json được giữ: true",
       "seconds": 0
     },
     "A2b_broken_bundle_report_on_disk": {

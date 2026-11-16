@@ -1,0 +1,32 @@
+{
+  "when": "2026-11-16T08:56:53.932Z",
+  "failures": 0,
+  "results": {
+    "S1_auto_mode_buttons_disabled": {
+      "ok": true,
+      "detail": "\"Chọn tất cả\" disabled=true; \"Bỏ chọn tất cả\" disabled=true (chế độ tự động mặc định)",
+      "seconds": 0
+    },
+    "S2_manual_mode_buttons_enabled_all_checked": {
+      "ok": true,
+      "detail": "\"Chọn tất cả\" disabled=false; \"Bỏ chọn tất cả\" disabled=false; checkbox 5/5 tick (mặc định tick tất cả)",
+      "seconds": 0.1
+    },
+    "S3_deselect_all_then_select_all": {
+      "ok": true,
+      "detail": "bỏ tick tay 1 file: 4/5; sau \"Bỏ chọn tất cả\": 0/5; sau \"Chọn tất cả\": 5/5",
+      "seconds": 0.1
+    },
+    "S4_extract_with_empty_selection_blocked_clearly": {
+      "ok": true,
+      "detail": "checkbox tick trước khi bấm Trích xuất: 0; banner: \"Chưa chọn file nào để trích xuất — tick ít nhất 1 file trong danh sách, hoặc chuyển về chế độ Tự động.\"; extract-result vẫn trống (không chạy ngầm): true",
+      "seconds": 0.1
+    },
+    "S5_select_all_then_extract_works": {
+      "ok": true,
+      "detail": "checkbox 5/5 tick; extract-result có English.json: true; banner ẩn: true",
+      "seconds": 0.5
+    }
+  },
+  "pageErrors": []
+}
