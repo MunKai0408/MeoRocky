@@ -40,9 +40,13 @@ GitHub API không bật được Pages nên bước này cần bấm tay:
      mặc định dry-run (không ghi file nào); bấm “Patch và ghi file” mới
      tải đơn vị đã patch về (bundle/.assets, không đóng gói lại IPA).
    - **Batch**: chạy hàng loạt theo manifest JSON/CSV (menu [4] bản iSH)
-     — **chỉ chạy tuần tự** (không có threading trên web, luôn jobs=1);
-     dry-run trước, checkpoint/resume (checkpoint lưu vào trình duyệt,
-     tải về `batch.zip` gồm summary + checkpoint + từng game).
+     — **pool 2 worker song song** (mỗi worker 1 Pyodide + PB3 riêng, không
+     dùng threading/SharedArrayBuffer; trong 1 worker mỗi game vẫn tuần tự);
+     dry-run trước, checkpoint từng game lưu ngay vào IndexedDB sau mỗi game
+     xong (resume bỏ qua game đã xong, kể cả sau khi tải lại trang), watchdog
+     hợp tác 25 giây (dừng an toàn sau game hiện tại, bấm “Tiếp tục” chạy
+     tiếp), tải về `batch.zip` gồm summary + checkpoint + từng game.
+     2 worker tốn ~2x RAM; pool lỗi thì tự rơi về 1 worker.
    - **KB**: kho tri thức game (menu [3] bản iSH) — thêm/tra cứu/liệt kê/
      quên game, tải file KB (.sqlite) về, nhập lại file KB đã tải về bằng
      nút “Nhập KB (.sqlite)”. **Chỉ sống trong phiên**: tải lại trang là
@@ -71,7 +75,9 @@ GitHub API không bật được Pages nên bước này cần bấm tay:
   vào trình duyệt — tests chỉ chạy ở CI (xem mục CI), corpus chỉ là bằng
   chứng ngày test cho ma trận hỗ trợ.
 - `pb3/bridge.py`: thêm `mod_patch` (sdk.unity.apply_patch),
-  `batch_run` (sdk.batch.BatchRunner, jobs=1 tuần tự),
+  `batch_run` (sdk.batch.BatchRunner, jobs=1 tuần tự trong 1 worker),
+  `batch_split`/`batch_zip`/`batch_merge_zip`/`batch_finalize`/`batch_checkpoint`
+  (pool 2 worker, Mục 4),
   `kb_add`/`kb_query`/`kb_list`/`kb_forget`/`kb_export`/`kb_import`
   (sdk.kb.KB, SQLite trong phiên tại /tmp/kb; `kb_import` mở bản sao
   của file .sqlite tải lên rồi nhập từng profile bằng
@@ -111,9 +117,12 @@ Hai điều chỉnh ở tầng khởi động (không sửa mã PB3): dựng reg
 
 - **Không dùng UnityPy** trên web (không cài được — thiếu wheel `etcpak`).
   Inspect Unity chỉ dùng parser thuần của PB3 + `lz4pure`/binding `lz4`.
-- **Batch chỉ chạy tuần tự** (jobs=1): Pyodide trên GitHub Pages không có
-  threading nên không có chế độ song song như bản iSH (jobs&gt;1). Extract
-  cũng chạy tuần tự. Tiến độ báo thật từng game (xong game nào bước 1 mốc).
+- **Batch pool 2 worker** (không threading): Pyodide trên GitHub Pages
+  không có threading nên song song đi bằng 2 worker độc lập (mỗi worker 1
+  Pyodide + PB3 riêng), không dùng pthreads/SharedArrayBuffer/COI. Trong 1
+  worker mỗi game vẫn tuần tự. Watchdog hợp tác 25 giây (dừng an toàn, không
+  terminate ngang). Checkpoint từng game vào IndexedDB. Tiến độ báo thật
+  từng game (xong game nào bước 1 mốc).
 - **KB chỉ sống trong phiên**: file SQLite nằm trong RAM của Worker
   (/tmp/kb) — tải lại trang là mất hết, trừ khi tải file KB về bằng nút
   “Tải KB về (.sqlite)” rồi nhập lại bằng nút “Nhập KB (.sqlite)” trong
@@ -182,7 +191,7 @@ stand-in; xem `exp/parity_results.md` và `exp/full_port_results.md`).
 | Nén (solid LZMA .tar.xz) | Có (preset 6 mặc định) | Có | Vào >2GB từ chối; ra >500MB xóa + báo không nén được; 5:1 thường không đạt vì IPA đã nén sẵn |
 | Font 142/142 | Có (Be Vietnam Pro đi kèm, đủ 134 chữ + 8 dấu) | Có | Atlas SDF TextMeshPro không tái tạo được (giới hạn gốc); gộp glyph chỉ cho TrueType glyf |
 | Chẩn đoán | Có (inventory + hex + strings) | Có | Chỉ đọc |
-| Batch | Có, **chỉ tuần tự** (jobs=1) | Có, song song được | Web không có threading; **không có timeout từng game**; checkpoint lưu vào trình duyệt, resume bỏ qua game đã xong |
+| Batch | Có, **pool 2 worker song song** | Có, song song được | Web: 2 worker độc lập (không threading/pthreads); watchdog hợp tác 25 giây (dừng an toàn, không terminate); checkpoint từng game vào IndexedDB, resume bỏ qua game đã xong kể cả sau reload; batch ở chế độ pool không ghi vào KB (KB 2 worker không gộp được) |
 | KB | Có (thêm/tra cứu/liệt kê/quên/xuất/**nhập**) | Có (SQLite WAL lâu dài) | Web: **chỉ trong phiên** — tải lại trang là mất, phải nhập lại file .sqlite đã tải về; profile nhập chỉ là gợi ý (hash chưa đối chiếu); game không có bundle id thì không nhập được |
 | Support matrix | Có (sinh từ dữ liệu thật) | Có | Web: cột “ngày test” hiện “chưa có” vì trình duyệt không nạp `tests/corpus/*.json` (file có trong repo, chỉ dùng cho CI); cột “số game đã test” chỉ đếm KB của phiên |
 | Plugin list 20 | Có (20/20 [ok] khi boot) | Có | 12 format + 7 engine/detect + zip |

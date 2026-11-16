@@ -14,9 +14,11 @@ Hai điều chỉnh bắt buộc trên Pyodide (đã thử thật ở giai đo�
      (compress_ipa đã tự kiểm tra E_OUTPUT_EXISTS trước nên tương đương).
 
 Không dùng được trên web (ghi rõ, đừng gọi): UnityPy (micropip fail vì
-thiếu wheel etcpak), mọi tính năng cần threading (batch CHỈ chạy tuần tự,
-jobs=1 — không có chế độ song song trên web), Google Translate qua urllib
-(urllib không gọi mạng được trong Pyodide).
+thiếu wheel etcpak), mọi tính năng cần threading trong MỘT worker
+(batch trong một worker vẫn jobs=1 — song song trên web đi bằng POOL
+2 WORKER độc lập, mỗi worker 1 Pyodide + PB3 riêng, xem batch_split /
+batch_run out_dir_name; KHÔNG dùng pthreads/SharedArrayBuffer/COI),
+Google Translate qua urllib (urllib không gọi mạng được trong Pyodide).
 Dịch Google trên web đi đường khác: `gt.js` dùng fetch() trong Worker,
 Python gọi hàm JS đó qua module `js` từ hàm async `translate_json_google`
 (xem dưới) — Python async await được Promise JS nên event loop vẫn chạy
@@ -864,17 +866,62 @@ def _resolve_batch_path(p):
     return p
 
 
-def batch_run(manifest_text, dry_run=True, checkpoint_json=None, resume=False):
+def _batch_out_dir(out_dir_name):
+    """Thư mục batch cố định cho một lần chạy pool (để nhiều game/worker
+    chia sẻ cùng out_dir): chỉ nhận tên an toàn ([A-Za-z0-9][A-Za-z0-9_.-]*,
+    không '..'), tên khác thì trả None (dùng thư mục theo giờ như cũ)."""
+    if not out_dir_name or not isinstance(out_dir_name, str):
+        return None
+    if ".." in out_dir_name or "/" in out_dir_name or "\\" in out_dir_name:
+        return None
+    if not out_dir_name[0].isalnum():
+        return None
+    if any((not ch.isalnum()) and ch not in "_-." for ch in out_dir_name):
+        return None
+    return os.path.join(_BATCH_ROOT, out_dir_name)
+
+
+def batch_split(manifest_text):
+    """Tách manifest thành từng game + khóa checkpoint của mỗi game (Mục 4:
+    pool chia game cho 2 worker; main thread lọc game đã xong bằng khóa này
+    TRƯỚC khi giao việc, không cần đoán ở phía JS). Trả
+    {ok, total, items: [{index, path, mode, locale, old, new, file, object,
+    key}]}. key = sha256(path, locale, mode, old, new) như sdk/batch.py."""
+    try:
+        from sdk.batch import parse_manifest
+
+        items = parse_manifest(manifest_text)
+        out = []
+        for i, it in enumerate(items):
+            out.append({"index": i + 1, "path": it.path, "mode": it.mode,
+                        "locale": it.locale, "old": it.old, "new": it.new,
+                        "file": it.file, "object": it.object,
+                        "key": it.key()})
+        return json.dumps({"ok": True, "total": len(out), "items": out},
+                          ensure_ascii=False)
+    except Exception as e:  # noqa: BLE001
+        return _err(e)
+
+
+def batch_run(manifest_text, dry_run=True, checkpoint_json=None, resume=False,
+              out_dir_name=None, record_kb=True, make_zip=True, index_base=1):
     """Chạy một lô game theo manifest (JSON list hoặc CSV text, cùng dạng
     bản iSH: path/mode/locale/old/new/file/object/profile_override).
 
-    CHẠY TUẦN TỰ (jobs=1) — Pyodide trên GitHub Pages không có threading,
-    không có chế độ song song trên web. Mỗi game cô lập: lỗi một game
-    không dừng cả lô. dry_run=True mặc định (chạy thử trước, chưa ghi).
-    checkpoint_json: chuỗi checkpoint lần chạy trước (UI lưu ở localStorage
-    hoặc file) + resume=True để bỏ qua game đã xong. Trả summary +
-    checkpoint mới (UI lưu lại) + zip kết quả (/tmp/batch.zip: summary.json,
-    checkpoint.json, index.csv, failures.txt, từng thư mục game).
+    CHẠY TUẦN TỰ (jobs=1) TRONG MỘT WORKER — Pyodide trên GitHub Pages
+    không có threading. Song song trên web đi bằng POOL 2 WORKER (Mục 4):
+    app.js tách manifest bằng batch_split rồi gọi batch_run cho TỪNG GAME
+    (manifest 1 game) trên 2 worker độc lập, mỗi lần gọi dùng chung
+    out_dir_name để checkpoint/output dồn về một thư mục. Mỗi game cô lập:
+    lỗi một game không dừng cả lô. dry_run=True mặc định (chạy thử trước,
+    chưa ghi). checkpoint_json: chuỗi checkpoint lần chạy trước (UI lưu ở
+    IndexedDB hoặc file) + resume=True để bỏ qua game đã xong.
+    out_dir_name: tên thư mục cố định dưới /tmp/batch (chỉ tên an toàn);
+    không cho thì dùng thư mục theo giờ như trước. record_kb=False: batch
+    không ghi vào KB (pool dùng: KB của 2 worker khác nhau, không gộp được
+    file SQLite — xem báo cáo Mục 4). make_zip=False: không zip /tmp/batch.zip
+    sau mỗi game (pool gọi nhiều game, chỉ zip 1 lần cuối bằng batch_finalize).
+    Trả summary + checkpoint mới (UI lưu lại) + zip kết quả (nếu make_zip).
     """
     try:
         from sdk.batch import BatchRunner, parse_manifest
@@ -882,8 +929,10 @@ def batch_run(manifest_text, dry_run=True, checkpoint_json=None, resume=False):
         items = parse_manifest(manifest_text)
         for it in items:
             it.path = _resolve_batch_path(it.path)
-        out_dir = os.path.join(
-            _BATCH_ROOT, time.strftime("%Y%m%d-%H%M%S"))
+        out_dir = _batch_out_dir(out_dir_name)
+        if out_dir is None:
+            out_dir = os.path.join(
+                _BATCH_ROOT, time.strftime("%Y%m%d-%H%M%S"))
         os.makedirs(out_dir, exist_ok=True)
         if resume and checkpoint_json:
             with open(os.path.join(out_dir, "checkpoint.json"),
@@ -892,20 +941,111 @@ def batch_run(manifest_text, dry_run=True, checkpoint_json=None, resume=False):
         runner = BatchRunner(registry=_reg, app=_app,
                              stream=io.StringIO())
         kb = None
-        try:
-            kb = _get_kb()
-        except Exception:
-            kb = None  # KB lỗi thì batch vẫn chạy (như bản iSH: kb=None chạy được)
+        if record_kb:
+            try:
+                kb = _get_kb()
+            except Exception:
+                kb = None  # KB lỗi thì batch vẫn chạy (như bản iSH: kb=None chạy được)
         summary = runner.run(
             items, out_dir=out_dir, jobs=1, resume=bool(resume),
             dry_run=bool(dry_run), kb=kb,
             progress_cb=lambda d, t, name: _emit("batch", d, t))
         ck_path = os.path.join(out_dir, "checkpoint.json")
+        # Mục 4 (pool): mỗi game chạy bằng manifest 1 game nên _batch_index
+        # luôn = 1 -> thư mục game_01_<slug> đụng nhau khi 2 worker gộp
+        # (vd 2 game cùng file game1.zip khác locale). Đổi tên thư mục +
+        # game_dir theo vị trí thật trong manifest gốc (index_base) để gộp
+        # không đè nhau; viết lại checkpoint.json cho khớp game_dir mới.
+        if index_base and int(index_base) != 1:
+            for g in summary.games:
+                if not g.game_dir:
+                    continue
+                src = g.game_dir
+                base = os.path.basename(src)
+                if not base.startswith("game_01_"):
+                    continue
+                dest = os.path.join(
+                    os.path.dirname(src),
+                    "game_%02d_%s" % (int(index_base), base[len("game_01_"):]))
+                try:
+                    if os.path.isdir(src) and not os.path.exists(dest):
+                        os.rename(src, dest)
+                        g.game_dir = dest
+                except OSError:
+                    pass
+            try:
+                with open(ck_path, "r", encoding="utf-8") as fh:
+                    ckdata = json.load(fh)
+                for _k, _v in (ckdata.get("games") or {}).items():
+                    for _g in summary.games:
+                        if _g.key == _k and _g.game_dir:
+                            _v["game_dir"] = _g.game_dir
+                with open(ck_path, "w", encoding="utf-8") as fh:
+                    fh.write(json.dumps(ckdata, ensure_ascii=False, indent=1))
+            except (OSError, ValueError):
+                pass
         checkpoint = None
         if os.path.isfile(ck_path):
             with open(ck_path, "r", encoding="utf-8") as fh:
                 checkpoint = fh.read()
-        zpath = "/tmp/batch.zip"
+        zpath = None
+        zbytes = 0
+        if make_zip:
+            zpath = "/tmp/batch.zip"
+            if os.path.exists(zpath):
+                os.remove(zpath)
+            with zipfile.ZipFile(zpath, "w", zipfile.ZIP_DEFLATED) as zf:
+                for root, dirs, fns in os.walk(out_dir):
+                    dirs[:] = [d for d in dirs if d != ".staging"]
+                    for fn in sorted(fns):
+                        fp = os.path.join(root, fn)
+                        zf.write(fp, os.path.relpath(fp, out_dir))
+            zbytes = os.path.getsize(zpath)
+        return json.dumps({
+            "ok": True, "jobs": 1, "sequential": True,
+            "dry_run": bool(dry_run), "resumed": bool(resume),
+            "summary": summary.to_dict(), "checkpoint": checkpoint,
+            "zip_path": zpath, "zip_bytes": zbytes,
+            "out_dir_name": os.path.basename(out_dir),
+            "out_dir": out_dir,
+            "note": "Batch trong một worker chạy TUẦN TỰ từng game "
+                    "(không có threading trên GitHub Pages, không có chế độ "
+                    "song song trong worker). Song song đi bằng pool 2 worker "
+                    "(Mục 4), mỗi worker gọi batch_run cho từng game riêng.",
+        }, ensure_ascii=False)
+    except Exception as e:  # noqa: BLE001
+        return _err(e)
+
+
+def batch_checkpoint(out_dir_name):
+    """Đọc checkpoint.json hiện tại của một thư mục batch (Mục 4: main
+    thread hỏi lại checkpoint sau mỗi game để lưu vào IndexedDB). Trả
+    {ok, checkpoint: <chuỗi JSON hoặc None>, out_dir_name}."""
+    try:
+        out_dir = _batch_out_dir(out_dir_name)
+        if out_dir is None:
+            raise ValueError("out_dir_name không hợp lệ: %r" % (out_dir_name,))
+        ck_path = os.path.join(out_dir, "checkpoint.json")
+        checkpoint = None
+        if os.path.isfile(ck_path):
+            with open(ck_path, "r", encoding="utf-8") as fh:
+                checkpoint = fh.read()
+        return json.dumps({"ok": True, "checkpoint": checkpoint,
+                           "out_dir_name": os.path.basename(out_dir)},
+                          ensure_ascii=False)
+    except Exception as e:  # noqa: BLE001
+        return _err(e)
+
+
+def batch_zip(out_dir_name):
+    """Zip thư mục batch thành /tmp/batch-<tên>.zip (Mục 4: lấy zip output
+    của worker 1 để gộp sang worker 0; worker.js đính kèm file zip vào
+    reply khi parsed có zip_path). Trả {ok, zip_path, zip_bytes}."""
+    try:
+        out_dir = _batch_out_dir(out_dir_name)
+        if out_dir is None:
+            raise ValueError("out_dir_name không hợp lệ: %r" % (out_dir_name,))
+        zpath = "/tmp/batch-%s.zip" % os.path.basename(out_dir)
         if os.path.exists(zpath):
             os.remove(zpath)
         with zipfile.ZipFile(zpath, "w", zipfile.ZIP_DEFLATED) as zf:
@@ -914,14 +1054,114 @@ def batch_run(manifest_text, dry_run=True, checkpoint_json=None, resume=False):
                 for fn in sorted(fns):
                     fp = os.path.join(root, fn)
                     zf.write(fp, os.path.relpath(fp, out_dir))
-        return json.dumps({
-            "ok": True, "jobs": 1, "sequential": True,
-            "dry_run": bool(dry_run), "resumed": bool(resume),
-            "summary": summary.to_dict(), "checkpoint": checkpoint,
-            "zip_path": zpath, "zip_bytes": os.path.getsize(zpath),
-            "note": "Batch web chạy TUẦN TỰ từng game (không có threading "
-                    "trên GitHub Pages, không có chế độ song song).",
-        }, ensure_ascii=False)
+        return json.dumps({"ok": True, "zip_path": zpath,
+                           "zip_bytes": os.path.getsize(zpath),
+                           "filename": "batch.zip",
+                           "out_dir_name": os.path.basename(out_dir)},
+                          ensure_ascii=False)
+    except Exception as e:  # noqa: BLE001
+        return _err(e)
+
+
+def batch_merge_zip(out_dir_name, zip_path):
+    """Gộp file batch.zip của worker kia vào thư mục batch của worker này
+    (Mục 4: 2 worker có FS riêng, cuối đợt phải gộp output về 1 zip duy
+    nhất). Bỏ qua checkpoint.json / summary.json / index.csv / failures.txt
+    trong zip nguồn (những file này được batch_finalize viết lại từ bản
+    gộp của main thread). Trả {ok, files, out_dir_name}."""
+    try:
+        out_dir = _batch_out_dir(out_dir_name)
+        if out_dir is None:
+            raise ValueError("out_dir_name không hợp lệ: %r" % (out_dir_name,))
+        if not os.path.isfile(zip_path):
+            raise ValueError("không có file zip để gộp: %s" % zip_path)
+        os.makedirs(out_dir, exist_ok=True)
+        skip = {"checkpoint.json", "summary.json", "index.csv",
+                "failures.txt"}
+        n = 0
+        with zipfile.ZipFile(zip_path, "r") as zf:
+            for info in zf.infolist():
+                name = info.filename
+                if name in skip or name.endswith("/"):
+                    continue
+                dest = os.path.join(out_dir, name)
+                if not os.path.realpath(dest).startswith(
+                        os.path.realpath(out_dir) + os.sep):
+                    continue  # chặn entry zip thoát khỏi out_dir
+                os.makedirs(os.path.dirname(dest), exist_ok=True)
+                with zf.open(info, "r") as src, open(dest, "wb") as fh:
+                    shutil.copyfileobj(src, fh)
+                n += 1
+        return json.dumps({"ok": True, "files": n,
+                           "out_dir_name": os.path.basename(out_dir)},
+                          ensure_ascii=False)
+    except Exception as e:  # noqa: BLE001
+        return _err(e)
+
+
+def batch_finalize(out_dir_name, summary_json, checkpoint_json):
+    """Viết summary.json + checkpoint.json + index.csv + failures.txt GỘP
+    (main thread gộp từ kết quả từng game của 2 worker) rồi zip toàn bộ
+    thư mục batch thành /tmp/batch-<tên>.zip. Trả
+    {ok, zip_path, zip_bytes, out_dir_name}. Đây là file batch.zip duy
+    nhất user tải về ở cuối đợt pool."""
+    try:
+        from sdk.batch import (CHECKPOINT_FILENAME, FAILURES_FILENAME,
+                               INDEX_FILENAME, SUMMARY_FILENAME)
+
+        out_dir = _batch_out_dir(out_dir_name)
+        if out_dir is None:
+            raise ValueError("out_dir_name không hợp lệ: %r" % (out_dir_name,))
+        os.makedirs(out_dir, exist_ok=True)
+        summary = json.loads(summary_json) if summary_json else {}
+        with open(os.path.join(out_dir, SUMMARY_FILENAME),
+                  "w", encoding="utf-8") as fh:
+            fh.write(json.dumps(summary, ensure_ascii=False, indent=1))
+        if checkpoint_json:
+            with open(os.path.join(out_dir, CHECKPOINT_FILENAME),
+                      "w", encoding="utf-8") as fh:
+                fh.write(checkpoint_json)
+        import csv as _csv
+
+        games = summary.get("games") or []
+        with open(os.path.join(out_dir, INDEX_FILENAME),
+                  "w", encoding="utf-8", newline="") as fh:
+            w = _csv.writer(fh)
+            w.writerow(["game", "mode", "locale", "kết quả", "mã lỗi",
+                        "thời gian (s)", "thư mục"])
+            for g in games:
+                name = os.path.basename(g.get("game_dir") or "") or \
+                    os.path.basename((g.get("path") or "").rstrip("/"))
+                w.writerow([name, g.get("mode") or "", g.get("locale") or "",
+                            g.get("status") or "", g.get("error_code") or "",
+                            "%.2f" % float(g.get("elapsed_s") or 0.0),
+                            g.get("game_dir") or ""])
+        lines = []
+        for g in games:
+            if g.get("status") != "failed":
+                continue
+            name = os.path.basename(g.get("game_dir") or "") or \
+                os.path.basename((g.get("path") or "").rstrip("/"))
+            lines.append("%s [%s] %s" % (name, g.get("error_code") or "?",
+                                         g.get("error_message") or
+                                         g.get("note") or "lỗi"))
+        with open(os.path.join(out_dir, FAILURES_FILENAME),
+                  "w", encoding="utf-8") as fh:
+            fh.write("\n".join(lines) + ("\n" if lines else ""))
+        zpath = "/tmp/batch-%s.zip" % os.path.basename(out_dir)
+        if os.path.exists(zpath):
+            os.remove(zpath)
+        with zipfile.ZipFile(zpath, "w", zipfile.ZIP_DEFLATED) as zf:
+            for root, dirs, fns in os.walk(out_dir):
+                dirs[:] = [d for d in dirs if d != ".staging"]
+                for fn in sorted(fns):
+                    fp = os.path.join(root, fn)
+                    zf.write(fp, os.path.relpath(fp, out_dir))
+        return json.dumps({"ok": True, "zip_path": zpath,
+                           "zip_bytes": os.path.getsize(zpath),
+                           "filename": "batch.zip",
+                           "out_dir_name": os.path.basename(out_dir)},
+                          ensure_ascii=False)
     except Exception as e:  # noqa: BLE001
         return _err(e)
 

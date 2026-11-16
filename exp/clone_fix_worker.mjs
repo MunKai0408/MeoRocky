@@ -12,6 +12,7 @@
 // vực list/hint đi qua đúng dữ liệu; bằng chứng cho bridge THẬT nằm ở mục
 // pyodide_bridge_mojibake của harness (chạy bridge.py thật trong Pyodide).
 import { parentPort } from "node:worker_threads";
+import { createHash } from "node:crypto";
 
 const stored = new Map(); // name -> ArrayBuffer (file đã nhận)
 let receivedCount = 0;
@@ -82,6 +83,31 @@ function resultFor(fn, args) {
     case "compress_file":
       if (!data) return { ok: false, error: "worker chưa có file " + inputName };
       return { ok: true, original_size: data.byteLength, compressed_size: 10, ratio: 1, saved_pct: 0, entries: 2, target_met: true, ram_warning: "" };
+    case "batch_split": {
+      // Mô phỏng bridge thật (mục 4): tách manifest thành từng game + khóa
+      // checkpoint (sha256 path|locale|mode|old|new như sdk/batch.py).
+      let items = [];
+      try {
+        const man = JSON.parse(args[0] || "[]");
+        items = man.map((it, i) => ({
+          index: i + 1, path: it.path, mode: it.mode || "extract",
+          locale: it.locale || "", old: it.old || "", new: it.new || "",
+          file: it.file || "", object: it.object || "",
+          key: createHash("sha256")
+            .update([it.path, it.locale || "", it.mode || "extract", it.old || "", it.new || ""].join("|"))
+            .digest("hex"),
+        }));
+      } catch (e) { return { ok: false, error: "manifest lỗi: " + e.message }; }
+      return { ok: true, total: items.length, items };
+    }
+    case "batch_zip":
+      // Mô phỏng bridge thật: zip output của worker này (stub không giữ
+      // file thật — chỉ cần ok:true để luồng gộp tiếp tục).
+      return { ok: true };
+    case "batch_merge_zip":
+      return { ok: true };
+    case "batch_finalize":
+      return { ok: true };
     case "batch_run": {
       if (!stored.size) return { ok: false, error: "worker chưa có file batch nào" };
       return { ok: true, dry_run: true, resumed: false, checkpoint: "{\"done\":[]}", note: "batch test", summary: { ok: 1, failed: 0, skipped: 0, total: 1, elapsed_s: 0.1, games: [{ index: 0, path: "b1.zip", mode: "extract", status: "ok", error_code: "", error_message: "", elapsed_s: 0.1, note: "" }] } };

@@ -26,7 +26,7 @@
   },
   "batch_sent_once_second_run_reuses": {
     "ok": true,
-    "detail": "batch1=true batch2=true worker_nhan_sau_lan1=6 sau_lan2=6 (kỳ vọng bằng nhau) log=[\"game.zip\",\"game2.zip\",\"game.zip\",\"game.zip\",\"b1.zip\",\"b2.zip\"] buffer_batch_nguyen=true",
+    "detail": "batch1=true batch2=true worker_nhan_sau_lan1=5 sau_lan2=5 (kỳ vọng bằng nhau) b1.zip=1 lần (kỳ vọng 1) b2.zip=0 lần (kỳ vọng 0 — không trong manifest) log=[\"game.zip\",\"game2.zip\",\"game.zip\",\"game.zip\",\"b1.zip\"] buffer_batch_nguyen=true",
     "seconds": 0.1
   },
   "ipa_hint_negative_cases": {
@@ -42,12 +42,12 @@
   "pyodide_bridge_mojibake": {
     "ok": true,
     "detail": "entries=[\"‎ 9 Kings_v1.0.5-AppAssassin.ipa\",\"__MACOSX/._‎ 9 Kings_v1.0.5-AppAssassin.ipa\"] http_fetch=0 (bridge thật trong Pyodide, file site/pb3 đã sửa)",
-    "seconds": 3.5
+    "seconds": 3.6
   },
   "python_mojibake_regression": {
     "ok": true,
     "detail": "status=0, 4/4 test ok trong output unittest (4 dòng \"... ok\")",
-    "seconds": 0.3
+    "seconds": 0.4
   },
   "_failures": 0
 }

@@ -141,7 +141,7 @@ const sandbox = {
     body: { appendChild() {}, removeChild() {} },
   },
   Worker: FakeWorker,
-  performance, setTimeout, clearTimeout, console,
+  performance, setTimeout, clearTimeout, setInterval, clearInterval, console,
   localStorage: { _m: {}, getItem(k) { return this._m[k] || null; }, setItem(k, v) { this._m[k] = String(v); } },
   confirm: () => true,
   Blob, URL, TextEncoder,
@@ -166,6 +166,44 @@ function probe(op, extra) {
     probeWaiters.set(id, res);
     nodeWorker.postMessage({ __probe: id, op, ...(extra || {}) });
     setTimeout(() => { if (probeWaiters.has(id)) { probeWaiters.delete(id); res({ timeout: true }); } }, 5000);
+  });
+}
+// Probe GỘP mọi worker (mục 4: batch chạy qua pool — file batch đi tới slot
+// worker (fakeWorkers[1..]), không qua worker đơn fakeWorkers[0] mà probe()
+// mặc định hỏi). Gắn listener __probe cho từng nodeWorker khi cần.
+const probedWorkers = new Set();
+function probeAll(op, extra) {
+  const targets = fakeWorkers.map((fw) => fw.nodeWorker);
+  for (const nw of targets) {
+    if (!probedWorkers.has(nw)) {
+      probedWorkers.add(nw);
+      nw.on("message", (m) => {
+        if (m && m.__probe && probeWaiters.has(m.__probe)) {
+          probeWaiters.get(m.__probe)(m);
+          probeWaiters.delete(m.__probe);
+        }
+      });
+    }
+  }
+  return Promise.all(targets.map((nw) => {
+    const id = ++probeSeq;
+    return new Promise((res) => {
+      probeWaiters.set(id, res);
+      nw.postMessage({ __probe: id, op, ...(extra || {}) });
+      setTimeout(() => { if (probeWaiters.has(id)) { probeWaiters.delete(id); res({ timeout: true }); } }, 5000);
+    });
+  })).then((parts) => {
+    let receivedCount = 0;
+    const receivedLog = [];
+    const stored = [];
+    for (const p of parts) {
+      if (p && !p.timeout) {
+        receivedCount += p.receivedCount || 0;
+        receivedLog.push(...(p.receivedLog || []));
+        stored.push(...(p.stored || []));
+      }
+    }
+    return { receivedCount, receivedLog, stored };
   });
 }
 async function fire(id, type, event) {
@@ -290,16 +328,24 @@ const ab = new Uint8Array(IOS_ZIP).buffer; // ArrayBuffer gốc, byteLength = c�
   $("batch-resume").checked = false;
   await fire("btn-batch-run", "click");
   const run1Ok = $("batch-result").innerHTML.includes("Batch");
-  const st1 = await probe("__state");
+  // Mục 4: batch chạy qua pool 2 worker nên file đi tới slot worker, phải
+  // probe GỘP mọi worker (probe() chỉ hỏi worker đơn). Ngữ nghĩa mới:
+  // chỉ file trong manifest mới được gửi (b2.zip không nằm trong manifest
+  // nên KHÔNG gửi — khác luồng cũ gửi cả lô đã chọn), và mỗi file chỉ gửi
+  // 1 lần cho mỗi slot (dedup trong worker-pool.js) nên chạy lại lần 2
+  // không gửi thêm gì.
+  const st1 = await probeAll("__state");
   await fire("btn-batch-run", "click");
   const run2Ok = $("batch-result").innerHTML.includes("Batch");
-  const st2 = await probe("__state");
+  const st2 = await probeAll("__state");
+  const b1n1 = st1.receivedLog.filter((n) => n === "b1.zip").length;
+  const b2n1 = st1.receivedLog.filter((n) => n === "b2.zip").length;
   const ok = run1Ok && run2Ok && st1.receivedCount === st2.receivedCount &&
-    st1.receivedLog.filter((n) => n === "b1.zip").length === 1 &&
-    st1.receivedLog.filter((n) => n === "b2.zip").length === 1 &&
+    b1n1 === 1 && b2n1 === 0 &&
     bb1.byteLength === PLAIN_IPA_ZIP.length && bb2.byteLength === NORMAL_ZIP.length;
   rec("batch_sent_once_second_run_reuses", ok,
     `batch1=${run1Ok} batch2=${run2Ok} worker_nhan_sau_lan1=${st1.receivedCount} sau_lan2=${st2.receivedCount} (kỳ vọng bằng nhau) ` +
+    `b1.zip=${b1n1} lần (kỳ vọng 1) b2.zip=${b2n1} lần (kỳ vọng 0 — không trong manifest) ` +
     `log=${JSON.stringify(st1.receivedLog)} buffer_batch_nguyen=${bb1.byteLength === PLAIN_IPA_ZIP.length && bb2.byteLength === NORMAL_ZIP.length}`,
     performance.now() - t0);
 }

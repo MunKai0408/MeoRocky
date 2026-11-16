@@ -29,6 +29,24 @@ let bridge = null;
 // lại event loop nên worker vẫn nhận được message hủy giữa đợt dịch.
 let googleCancelled = false;
 
+// ---- Watchdog HỢP TÁC cho batch (Mục 4) ----
+// KHÔNG dùng Promise.race + terminate trần: terminate giữa chừng sẽ mất
+// hết tiến độ game đang chạy (FS worker + checkpoint trong RAM worker bay
+// màu). Thay vào đó worker TỰ kiểm tra đồng hồ GIỮA các game: trước mỗi
+// lệnh batch_run (1 game), nếu đã quá hạn hoặc main thread đã yêu cầu dừng
+// an toàn thì từ chối chạy game mới (lỗi E_WATCHDOG_STOP / E_BATCH_STOPPED)
+// — game đang chạy vẫn chạy xong bình thường, checkpoint của nó đã được
+// BatchRunner lưu sau mỗi game nên không mất gì. Main thread nhận lỗi thì
+// dừng giao việc tiếp, lưu checkpoint gộp vào IndexedDB và hiện nút
+// "Tiếp tục" cho user. Ngưỡng mặc định 25 giây — ngắn hơn giới hạn iOS
+// kill tab nền (thường ~30 giây khi tab bị ẩn), để còn kịp lưu checkpoint
+// và dừng có trật tự. Main thread có hằng số gương BATCH_WATCHDOG_SECONDS
+// trong app.js (giữ đồng bộ); batch_begin có thể truyền budgetSeconds khác.
+const WATCHDOG_SECONDS = 25;
+let batchDeadlineMs = 0;      // 0 = chưa batch_begin, không giới hạn
+let batchBudgetSeconds = WATCHDOG_SECONDS;
+let batchStopRequested = false;
+
 function status(text) {
   postMessage({ type: "status", text });
 }
@@ -111,6 +129,27 @@ self.onmessage = async (ev) => {
       postMessage({ type: "cancelled" });
       return;
     }
+    if (msg.op === "batch_begin") {
+      // Bắt đầu một đợt batch: đặt hạn watchdog + bỏ cờ dừng cũ.
+      // budgetSeconds không truyền thì dùng WATCHDOG_SECONDS ở đầu file.
+      batchBudgetSeconds = (typeof msg.budgetSeconds === "number" && msg.budgetSeconds > 0)
+        ? msg.budgetSeconds : WATCHDOG_SECONDS;
+      batchDeadlineMs = Date.now() + batchBudgetSeconds * 1000;
+      batchStopRequested = false;
+      if (msg.id != null) {
+        postMessage({ id: msg.id, ok: true,
+          result: JSON.stringify({ watchdog_seconds: batchBudgetSeconds }) });
+      }
+      return;
+    }
+    if (msg.op === "batch_stop") {
+      // "Dừng an toàn": game đang chạy vẫn xong, game sau không chạy nữa.
+      batchStopRequested = true;
+      if (msg.id != null) {
+        postMessage({ id: msg.id, ok: true, result: JSON.stringify({ stopped: true }) });
+      }
+      return;
+    }
     if (msg.op === "set_translate_proxy") {
       // URL proxy dịch Cloudflare Worker (app.js gửi từ localStorage).
       // Để trống = gọi trực tiếp Google như trước. Chỉ đặt biến JS trong
@@ -126,6 +165,23 @@ self.onmessage = async (ev) => {
     }
     if (msg.op === "run") {
       if (!bridge) throw new Error("PB3 chưa khởi động xong.");
+      // Watchdog hợp tác (Mục 4): chỉ kiểm tra TRƯỚC KHI chạy game mới —
+      // không bao giờ ngắt ngang game đang chạy. Game đã xong thì checkpoint
+      // của nó đã lưu, main thread sẽ lưu tiếp vào IndexedDB rồi hiện nút
+      // "Tiếp tục".
+      if (msg.fn === "batch_run") {
+        if (batchStopRequested) {
+          postMessage({ id: msg.id, ok: false,
+            error: "E_BATCH_STOPPED: đã dừng an toàn theo yêu cầu (game đang chạy đã xong, checkpoint đã lưu)." });
+          return;
+        }
+        if (batchDeadlineMs && Date.now() > batchDeadlineMs) {
+          postMessage({ id: msg.id, ok: false,
+            error: "E_WATCHDOG_STOP: đã chạy quá " + batchBudgetSeconds +
+              " giây (ngưỡng watchdog) nên dừng an toàn trước khi iOS kill tab — checkpoint đã lưu, bấm “Tiếp tục” để chạy tiếp." });
+          return;
+        }
+      }
       // Đợt dịch mới thì reset cờ hủy.
       if (typeof msg.fn === "string" && msg.fn.indexOf("translate") === 0) {
         googleCancelled = false;
@@ -162,7 +218,8 @@ self.onmessage = async (ev) => {
       if (parsed && parsed.ok && typeof parsed.zip_path === "string") {
         try {
           const data = pyodide.FS.readFile(parsed.zip_path);
-          file = { name: "extract.zip", data: data.buffer };
+          file = { name: (typeof parsed.filename === "string" && parsed.filename) ||
+                          "extract.zip", data: data.buffer };
         } catch (e) { /* bỏ qua */ }
       }
       const reply = { id: msg.id, ok: true, result, file };

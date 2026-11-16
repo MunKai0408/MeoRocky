@@ -839,17 +839,21 @@ class BatchRunner:
         for file_hash in choices:
             rel = by_hash.get(str(file_hash))
             if rel:
-                # Chỉ ép chọn file khi locale của file khớp locale của job
+                # Chỉ ép chọn file khi locale của file KHỚP locale của job
                 # (lựa chọn ghi cho locale en không được ép sang job zh —
                 # lỗi tích hợp C09: preset file làm job zh-Hans lỗi
                 # E_LOCALE_NOT_FOUND sau khi job en đã ghi profile).
+                # File chưa rõ locale (file_locale None — vd font, file
+                # không mang locale) KHÔNG được preset khi job ép locale:
+                # ghim file đó sẽ khiến extraction chỉ parse file không
+                # locale rồi fail E_LOCALE_NOT_FOUND dù game CÓ locale đó
+                # ở file khác (lỗi D6 mục 4: cùng file 2 lần, job 2 ép en).
                 file_locale = None
                 for loc in (profile.get("locales") or []):
                     if isinstance(loc, dict) and loc.get("entry_path") == rel:
                         file_locale = loc.get("locale")
                         break
-                if item.locale is None or file_locale is None \
-                        or file_locale == item.locale:
+                if item.locale is None or file_locale == item.locale:
                     preset["file"] = rel
                     break
         locales = profile.get("locales") or []

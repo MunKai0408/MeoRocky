@@ -36,6 +36,9 @@ const state = {
   pending: new Map(),    // id -> {resolve, reject, op, t0, lastPct}
   nextId: 1,
   currentOp: null,
+  executor: null,        // executor batch hiện tại (pool 2 worker hoặc 1 worker)
+  executorNote: "",      // ghi chú executor (hiện ở kết quả batch)
+  batchRun: null,        // đợt batch đang/chạy xong gần nhất (Mục 4)
 };
 
 const WARN_BYTES = 300 * 1024 * 1024;   // >300MB: cảnh báo RAM tab trình duyệt
@@ -1027,7 +1030,272 @@ $("btn-mod-op-text").addEventListener("click", () => {
   }
 });
 
-// ---- Batch ----
+// ---- Batch: pool 2 worker + checkpoint từng game vào IndexedDB + watchdog hợp tác (Mục 4) ----
+// Kiến trúc:
+//  - app.js tách manifest bằng bridge.batch_split (1 lần, worker đơn) rồi
+//    giao TỪNG GAME cho executor: pool 2 worker (mặc định) hoặc 1 worker
+//    (khi pool tắt/lỗi — fallback tự động, không cần user làm gì).
+//  - Mỗi worker là 1 Pyodide + PB3 riêng (KHÔNG pthreads, KHÔNG
+//    SharedArrayBuffer, KHÔNG COI). Thao tác đơn (list/inspect/extract/...)
+//    vẫn đi qua worker đơn cũ như trước — pool chỉ phục vụ batch (chọn
+//    cách đơn giản, ít rủi ro nhất: không xáo trộn đường thao tác đơn đã
+//    kiểm chứng). Giá phải trả: lúc batch chạy có 3 Pyodide cùng sống
+//    (1 worker đơn + 2 worker pool) — ~2x RAM so với batch 1 worker trước
+//    đây; trên iPhone RAM thấp có thể nặng, CHƯA ĐO trên iPhone thật.
+//  - Sau MỖI game xong, main thread ghi checkpoint gộp vào IndexedDB ngay
+//    (ckptStore — tái dùng lớp KBStore của Mục 3, khóa khác
+//    "batch-checkpoint.json", cùng DB "pb3-kb-store"; KHÔNG viết store thứ
+//    hai) + localStorage (tương thích cũ). Tải lại trang / tab bị kill giữa
+//    chừng thì "Nạp checkpoint" / "Tiếp tục từ checkpoint" chạy tiếp phần
+//    chưa xong, không làm lại game đã xong.
+//  - Watchdog HỢP TÁC (không terminate): worker.js tự kiểm tra đồng hồ
+//    trước mỗi game (batch_begin đặt hạn, xem WATCHDOG_SECONDS ở đầu
+//    worker.js); quá hạn hoặc user bấm "Dừng an toàn" thì worker từ chối
+//    game mới (E_WATCHDOG_STOP / E_BATCH_STOPPED), game đang chạy vẫn xong,
+//    checkpoint đã lưu. Nút "Tiếp tục" chạy tiếp phần còn lại.
+//  - KB: batch ở chế độ pool KHÔNG ghi vào KB (record_kb=false — KB của 2
+//    worker khác nhau, file SQLite không gộp được; chỉ worker đơn mới ghi
+//    KB rồi persistKbNow). Game vẫn thêm vào KB được bằng tab Kho KB.
+//  - Output cuối đợt: worker 1 zip thư mục của nó -> gửi sang worker 0
+//    (batch_merge_zip) -> worker 0 viết summary + checkpoint GỘP rồi zip
+//    thành batch.zip duy nhất (batch_finalize). Nếu chỉ 1 worker có game
+//    thì bỏ bước gộp.
+
+const POOL_SIZE = 2;                 // pool batch luôn 2 worker (Mục 4)
+const BATCH_WATCHDOG_SECONDS = 25;   // GIỮ ĐỒNG BỘ với WATCHDOG_SECONDS trong worker.js
+
+// Checkpoint batch: cùng lớp KBStore của Mục 3, khóa riêng trong cùng DB.
+const ckptStore = (typeof KBStore !== "undefined")
+  ? new KBStore("batch-checkpoint.json", { debounceMs: 0 }) : null;
+const CKPT_LS_KEY = "pb3_batch_checkpoint";
+
+function ckptToJson(ckpt) { return JSON.stringify(ckpt); }
+function emptyCkpt() { return { version: 1, games: {} }; }
+function parseCkptText(text) {
+  try {
+    const c = JSON.parse(text);
+    if (c && c.version === 1 && c.games && typeof c.games === "object") return c;
+  } catch (e) { /* checkpoint hỏng: coi như trống, không crash */ }
+  return null;
+}
+// Nạp checkpoint gộp: IndexedDB trước (Mục 4), localStorage sau (tương thích cũ).
+async function loadMergedCkpt() {
+  let text = null, from = "";
+  if (ckptStore) {
+    try {
+      const bytes = await ckptStore.load();
+      if (bytes && bytes.length) { text = new TextDecoder().decode(bytes); from = "IndexedDB"; }
+    } catch (e) { /* IndexedDB lỗi: rơi về localStorage */ }
+  }
+  if (!text) {
+    try { text = localStorage.getItem(CKPT_LS_KEY); if (text) from = "localStorage"; } catch (e) { /* không có */ }
+  }
+  const ckpt = text ? parseCkptText(text) : null;
+  return { ckpt: ckpt || emptyCkpt(), from, found: !!ckpt };
+}
+// Lưu checkpoint gộp vào IndexedDB + localStorage. Các lần lưu nối đuôi
+// nhau bằng chuỗi promise để 2 game xong cùng lúc không ghi đè lẫn nhau.
+let ckptSaveChain = Promise.resolve();
+async function saveMergedCkpt(ckpt) {
+  state.lastCheckpoint = ckptToJson(ckpt);
+  const bytes = new TextEncoder().encode(state.lastCheckpoint);
+  if (ckptStore) {
+    try { await ckptStore.saveNow(bytes); } catch (e) { /* localStorage dưới vẫn lưu */ }
+  }
+  try { localStorage.setItem(CKPT_LS_KEY, state.lastCheckpoint); } catch (e) { /* localStorage đầy/không có */ }
+}
+function saveMergedCkptSoon(ckpt) {
+  ckptSaveChain = ckptSaveChain.then(() => saveMergedCkpt(ckpt)).catch(() => {});
+  return ckptSaveChain;
+}
+
+// Ngưỡng watchdog cho đợt batch. Hook window.__PB3_WATCHDOG_SECONDS CHỈ
+// cho harness kiểm chứng (đặt ngưỡng nhỏ để thử cơ chế dừng); production
+// không đặt thì dùng BATCH_WATCHDOG_SECONDS ở trên.
+function batchWatchdogSeconds() {
+  if (typeof window !== "undefined" && typeof window.__PB3_WATCHDOG_SECONDS === "number" &&
+      window.__PB3_WATCHDOG_SECONDS > 0) {
+    return window.__PB3_WATCHDOG_SECONDS;
+  }
+  return BATCH_WATCHDOG_SECONDS;
+}
+
+// ---- Executor: cùng giao diện tối thiểu cho pool 2 worker và worker đơn ----
+// run(payload, opts) / runOn(slot, payload, opts) -> Promise<{parsed, file, slot}>
+// beginBatch(budgetSeconds) / requestStop() / cancelQueued() / status() / destroy()
+function unwrapPoolReply(r) {
+  const msg = r.msg;
+  if (!msg.ok) throw new Error(msg.error || "Lỗi không rõ");
+  const parsed = JSON.parse(msg.result);
+  if (parsed && parsed.ok === false) throw new Error(parsed.error || parsed.code || "Lỗi không rõ");
+  return { parsed, file: msg.file || null, slot: r.slot };
+}
+function makePoolExecutor() {
+  const pool = new WorkerPool("worker.js", {
+    size: POOL_SIZE,
+    onSlotChange: () => syncPoolUI(),
+    onStatus: (t) => setStatus(t),
+  });
+  return {
+    kind: "pool", pool,
+    status: () => pool.status(),
+    beginBatch: (b) => pool.beginBatch(b),
+    requestStop: () => pool.requestStop(),
+    cancelQueued: () => pool.cancelQueued(),
+    run: (payload, opts) => pool.run(payload, opts).then(unwrapPoolReply),
+    runOn: (i, payload, opts) => pool.runOn(i, payload, opts).then(unwrapPoolReply),
+    destroy: () => pool.destroy(),
+  };
+}
+// Khóa định danh 1 file cho dedup ở executor đơn — cùng quy ước với
+// fileKey() trong worker-pool.js (tên|cỡ|lastModified). Thiếu trường nào
+// thì dùng byteLength của buffer làm cỡ, lastModified = 0.
+function batchFileKey(f) {
+  const size = (typeof f.size === "number") ? f.size
+    : (f.data && typeof f.data.byteLength === "number" ? f.data.byteLength : 0);
+  const lm = (typeof f.lastModified === "number") ? f.lastModified : 0;
+  return (f.name || "") + "|" + size + "|" + lm;
+}
+function makeSingleExecutor() {
+  // Hàng đợi 1 job trên worker đơn cũ (callWorker): cùng giao diện như pool
+  // để vòng batch không cần rẽ nhánh. File gửi qua callWorker (đã có logic
+  // chống clone DataCloneError: gửi bản copy slice(0), 1 lần/file).
+  const ex = {
+    kind: "single",
+    _sentKeys: null,   // file đã gửi tới worker đơn này (FS sống suốt phiên)
+    _queue: [], _busy: false, _currentLabel: "",
+    status() {
+      return [{ index: 0, alive: true, ready: state.booted, busy: this._busy, label: this._currentLabel || "" }];
+    },
+    beginBatch(budgetSeconds) { worker.postMessage({ op: "batch_begin", budgetSeconds }); },
+    requestStop() { worker.postMessage({ op: "batch_stop" }); },
+    cancelQueued() {
+      const q = this._queue.splice(0);
+      for (const j of q) j.reject(new Error("E_BATCH_STOPPED: job chờ đã bị hủy (dừng an toàn)."));
+    },
+    destroy() { this.cancelQueued(); },
+    run(payload, opts) { return this._enqueue(payload, opts || {}); },
+    runOn(_i, payload, opts) { return this._enqueue(payload, opts || {}); },
+    _enqueue(payload, opts) {
+      return new Promise((resolve, reject) => {
+        this._queue.push({ payload, opts, resolve, reject });
+        this._pump();
+      });
+    },
+    async _pump() {
+      if (this._busy) return;
+      const job = this._queue.shift();
+      if (!job) return;
+      this._busy = true;
+      this._currentLabel = job.opts.label || "";
+      syncPoolUI();
+      try {
+        // Dedup như pool (mục 4): worker đơn giữ FS suốt phiên nên mỗi file
+        // chỉ gửi 1 lần; game sau dùng lại file đã có trong /tmp/input.
+        // (Nhánh fallback của callWorker gửi lại mỗi lần cho job từng game
+        // vì data là bản copy mới — lọc ở đây trước khi gọi callWorker.)
+        let payload = job.payload;
+        if (payload.files && payload.files.length) {
+          this._sentKeys = this._sentKeys || {};
+          const keep = [];
+          for (const ff of payload.files) {
+            const k = batchFileKey(ff);
+            if (this._sentKeys[k]) continue;
+            this._sentKeys[k] = true;
+            keep.push(ff);
+          }
+          payload = Object.assign({}, payload, { files: keep });
+        }
+        const msg = await callWorker("run", payload);
+        const parsed = JSON.parse(msg.result);
+        if (parsed && parsed.ok === false) throw new Error(parsed.error || parsed.code || "Lỗi không rõ");
+        job.resolve({ parsed, file: msg.file || null, slot: 0 });
+      } catch (e) { job.reject(e); }
+      finally { this._busy = false; this._currentLabel = ""; this._pump(); syncPoolUI(); }
+    },
+  };
+  return ex;
+}
+// Lấy executor cho đợt batch: pool 2 worker nếu bật + boot được, ngược lại
+// rơi về 1 worker (ghi rõ lý do vào state.executorNote để hiện ở kết quả).
+async function ensureBatchExecutor() {
+  const usePool = $("batch-use-pool") ? $("batch-use-pool").checked : true;
+  if (state.executor) {
+    if (usePool && state.executor.kind === "pool") return state.executor;
+    if (!usePool && state.executor.kind === "single") return state.executor;
+    try { if (state.executor.destroy) state.executor.destroy(); } catch (e) { /* bỏ qua */ }
+    state.executor = null;
+    state.executorNote = "";
+  }
+  if (usePool && typeof WorkerPool !== "undefined") {
+    try {
+      const ex = makePoolExecutor();
+      setStatus("Đang khởi động pool 2 worker (mỗi worker 1 Pyodide + PB3 riêng, lần đầu hơi lâu)…");
+      syncPoolUI();
+      const ok = await ex.pool.ready();
+      if (ok) {
+        state.executor = ex;
+        state.executorNote = "pool 2 worker";
+        return ex;
+      }
+      ex.destroy();
+      state.executorNote = "pool khởi động thất bại (không worker nào sẵn sàng) — đã rơi về 1 worker.";
+    } catch (e) {
+      state.executorNote = "không tạo được pool (" + e.message + ") — đã rơi về 1 worker.";
+    }
+  } else if (usePool) {
+    state.executorNote = "trình duyệt không nạp được worker-pool.js — đã rơi về 1 worker.";
+  }
+  state.executor = makeSingleExecutor();
+  if (!state.executorNote) state.executorNote = "1 worker (pool tắt theo lựa chọn).";
+  return state.executor;
+}
+
+// ---- UI trạng thái pool + checkpoint (tab Batch) ----
+function syncPoolUI() {
+  const el = $("batch-pool-info");
+  if (!el) return;
+  const ex = state.executor;
+  if (!ex) {
+    el.textContent = "Pool chưa khởi động (bấm “Chạy batch” để khởi động pool 2 worker).";
+    return;
+  }
+  const slots = ex.status();
+  let lines = ex.kind === "pool"
+    ? "Pool 2 worker (mỗi worker 1 Pyodide + PB3 riêng, ~2x RAM so với 1 worker):"
+    : "Đang chạy bằng 1 worker (pool tắt/lỗi):";
+  for (const s of slots) {
+    lines += "\nWorker " + s.index + ": " +
+      (!s.alive ? "LỖI/chết" : !s.ready ? "đang khởi động…" :
+       s.busy ? "đang chạy " + (s.label || "?") : "rảnh");
+  }
+  const br = state.batchRun;
+  if (br && !br.finished) {
+    lines += "\nĐã xong " + br.doneCount + "/" + br.totalTodo + " game · đã chạy " +
+      fmtTime((performance.now() - br.startTime) / 1000);
+  }
+  el.textContent = lines;
+}
+function syncBatchCkptInfo() {
+  const el = $("batch-ckpt-info");
+  if (!el) return;
+  const br = state.batchRun;
+  if (!br) {
+    el.textContent = state.lastCheckpoint
+      ? "Có checkpoint đã lưu — tick “Tiếp tục từ checkpoint” rồi bấm Chạy batch để bỏ qua game đã xong."
+      : "";
+    return;
+  }
+  const done = Object.keys(br.merged.games).filter((k) => br.merged.games[k].status === "ok").length;
+  const remain = br.items.length - done;
+  const savedAt = ckptStore && ckptStore.lastSavedAt
+    ? new Date(ckptStore.lastSavedAt).toLocaleTimeString("vi-VN") : "chưa lưu";
+  el.textContent = "Checkpoint từng game → IndexedDB (lần lưu gần nhất: " + savedAt +
+    ") · đã xong " + done + "/" + br.items.length + " game · còn " + remain + " game." +
+    (br.watchdogStopped ? " Watchdog đã dừng an toàn — bấm “Tiếp tục” để chạy tiếp." :
+     br.stopRequested ? " Đã dừng an toàn — bấm “Tiếp tục” để chạy tiếp." : "");
+}
+
 function renderBatchFiles() {
   const el = $("batch-files-info");
   if (!el) return;
@@ -1101,55 +1369,320 @@ $("batch-dropzone").addEventListener("drop", (ev) => {
   const list = ev.dataTransfer && ev.dataTransfer.files ? [...ev.dataTransfer.files] : [];
   handleBatchFiles(list);
 });
-$("btn-batch-load-ckpt").addEventListener("click", () => {
-  try {
-    const saved = localStorage.getItem("pb3_batch_checkpoint");
-    if (!saved) { $("batch-ckpt-info").textContent = "Chưa có checkpoint nào lưu trong trình duyệt này."; return; }
-    state.loadedCheckpoint = saved;
-    $("batch-ckpt-info").textContent = "Đã nạp checkpoint đã lưu (" + saved.length + " ký tự). Tick “Tiếp tục từ checkpoint” rồi bấm Chạy batch.";
-  } catch (e) {
-    $("batch-ckpt-info").textContent = "Không đọc được localStorage: " + e.message;
+$("btn-batch-load-ckpt").addEventListener("click", async () => {
+  // Nạp checkpoint: IndexedDB trước (Mục 4), localStorage sau (tương thích cũ).
+  const loaded = await loadMergedCkpt();
+  if (!loaded.found) {
+    $("batch-ckpt-info").textContent = "Chưa có checkpoint nào lưu trong trình duyệt này (IndexedDB/localStorage đều trống).";
+    return;
   }
+  state.loadedCheckpoint = ckptToJson(loaded.ckpt);
+  state.lastCheckpoint = state.loadedCheckpoint;
+  const done = Object.keys(loaded.ckpt.games).filter((k) => loaded.ckpt.games[k].status === "ok").length;
+  $("batch-ckpt-info").textContent = "Đã nạp checkpoint từ " + loaded.from + " (" + done +
+    " game đã xong). Tick “Tiếp tục từ checkpoint” rồi bấm Chạy batch.";
 });
 $("btn-batch-dl-ckpt").addEventListener("click", () => {
   if (!state.lastCheckpoint) { showError("Chưa có checkpoint (chạy batch 1 lần trước đã)."); return; }
   download("checkpoint.json", new TextEncoder().encode(state.lastCheckpoint).buffer);
 });
+
+// "Dừng an toàn": báo worker dừng sau game hiện tại + hủy job đang chờ.
+// Game đang chạy vẫn chạy xong và checkpoint của nó vẫn được lưu.
+function requestBatchStop() {
+  const br = state.batchRun;
+  if (!br || br.finished) return;
+  br.stopRequested = true;
+  const ex = state.executor;
+  if (ex) {
+    try { ex.requestStop(); } catch (e) { /* bỏ qua */ }
+    try { ex.cancelQueued(); } catch (e) { /* bỏ qua */ }
+  }
+  const b = $("btn-batch-stop-safe");
+  if (b) b.disabled = true;
+  setStatus("Đang dừng an toàn sau game hiện tại…");
+  syncBatchCkptInfo();
+}
+$("btn-batch-stop-safe").addEventListener("click", () => requestBatchStop());
+
+function combinedSummary(br) {
+  const games = br.results.filter(Boolean);
+  return {
+    total: br.items.length,
+    ok: games.filter((g) => g.status === "ok").length,
+    failed: games.filter((g) => g.status === "failed").length,
+    skipped: games.filter((g) => g.status === "skipped").length,
+    incomplete: games.filter((g) => g.status === "incomplete").length,
+    elapsed_s: Math.round(((performance.now() - br.startTime) / 1000) * 10) / 10,
+    out_dir: br.runId,
+    jobs: br.executorKind === "pool" ? 2 : 1,
+    dry_run: br.dryRun,
+    budgets: {},
+    games,
+  };
+}
+function renderBatchResult(summary, meta) {
+  const s = summary;
+  let html = "<p>Batch " + (s.dry_run ? "<b>dry-run</b>" : "<b>chạy thật</b>") +
+    " · " + (meta.executorNote || (s.jobs === 2 ? "pool 2 worker" : "1 worker")) +
+    " · " + s.ok + " ok / " + s.failed + " lỗi / " + s.skipped +
+    " bỏ qua / " + s.total + " game · " + s.elapsed_s + " giây" +
+    (meta.resumed ? " · đã tiếp tục từ checkpoint" : "") +
+    (meta.watchdogStopped ? " · <b>watchdog đã dừng an toàn</b> (quá " + meta.watchdogSeconds +
+      " giây) — bấm “Tiếp tục” để chạy tiếp phần còn lại" : "") +
+    (meta.stopRequested && !meta.watchdogStopped ? " · <b>đã dừng an toàn</b> — bấm “Tiếp tục” để chạy tiếp phần còn lại" : "") +
+    (meta.zipName ? " · file <b>" + esc(meta.zipName) + "</b> đã sẵn sàng — bấm “Lưu / Chia sẻ” ở thanh Lưu file bên dưới để lưu về máy (summary, checkpoint, index, từng game)" : "") +
+    "</p>";
+  html += "<table><tr><th>#</th><th>Game</th><th>Mode</th><th>Kết quả</th><th>Lỗi</th><th>Giây</th><th>Ghi chú</th></tr>";
+  for (const g of s.games || []) {
+    html += "<tr><td>" + g.index + "</td><td>" + esc((g.path || "").split("/").pop()) + "</td><td>" + esc(g.mode) +
+      "</td><td>" + esc(g.status) + "</td><td>" + esc(g.error_code || "") + " " + esc(g.error_message || "") +
+      "</td><td>" + g.elapsed_s + "</td><td>" + esc(g.note || "") + "</td></tr>";
+  }
+  html += "</table>";
+  if (meta.note) html += "<p class=note>" + esc(meta.note) + "</p>";
+  $("batch-result").innerHTML = html;
+}
+
+// Gộp output 2 worker về 1 file batch.zip duy nhất (chạy trên worker 0).
+async function finalizeBatchZip(executor, br) {
+  if (executor.kind === "pool" && (br.gamesPerSlot[1] || 0) > 0) {
+    const z1 = await executor.runOn(1, { fn: "batch_zip", args: [br.runId], files: [] }, { label: "zip-w1" });
+    if (!z1.parsed.ok) throw new Error(z1.parsed.error || z1.parsed.code || "batch_zip worker 1 lỗi");
+    if (!z1.file) throw new Error("worker 1 không trả file zip để gộp");
+    const mg = await executor.runOn(0, {
+      fn: "batch_merge_zip",
+      args: [br.runId, "/tmp/input/merge-" + br.runId + ".zip"],
+      files: [{ name: "merge-" + br.runId + ".zip", data: z1.file.data,
+                size: z1.file.data.byteLength, lastModified: 0 }],
+    }, { label: "merge", transfer: [z1.file.data] });
+    if (!mg.parsed.ok) throw new Error(mg.parsed.error || mg.parsed.code || "batch_merge_zip lỗi");
+  }
+  const summary = combinedSummary(br);
+  const fin = await executor.runOn(0, {
+    fn: "batch_finalize",
+    args: [br.runId, JSON.stringify(summary), ckptToJson(br.merged)],
+    files: [],
+  }, { label: "zip-final" });
+  if (!fin.parsed.ok) throw new Error(fin.parsed.error || fin.parsed.code || "batch_finalize lỗi");
+  return fin.file; // {name, data} — batch.zip
+}
+
+// Vòng chạy batch chính (dùng cho cả "Chạy batch" và "Tiếp tục").
+// opts: {manifest, dryRun, resume}
+async function runBatchFlow(opts) {
+  if (state.batchRun && !state.batchRun.finished) {
+    showError("Batch đang chạy — bấm “Dừng an toàn” trước khi chạy đợt mới.");
+    return;
+  }
+  clearError();
+  // 1. Tách manifest thành từng game + khóa checkpoint (worker đơn đã boot).
+  let items;
+  try {
+    const msg = await callWorker("run", { fn: "batch_split", args: [opts.manifest], files: [] });
+    const p = JSON.parse(msg.result);
+    if (!p.ok) throw new Error(p.error || p.code || "batch_split lỗi");
+    items = p.items || [];
+  } catch (e) { showError("Tách manifest lỗi: " + e.message); return; }
+  if (!items.length) { showError("Manifest không có game nào."); return; }
+  // 2. Checkpoint gộp (IndexedDB trước, localStorage sau).
+  const loaded = await loadMergedCkpt();
+  let merged = loaded.ckpt;
+  if (opts.resume && !loaded.found) {
+    showError("Đã tick “Tiếp tục từ checkpoint” nhưng chưa có checkpoint nào lưu (IndexedDB/localStorage đều trống). Chạy batch mới trước đã.");
+    return;
+  }
+  if (!opts.resume) merged = emptyCkpt();
+  const doneKeys = new Set(Object.keys(merged.games).filter((k) => merged.games[k] && merged.games[k].status === "ok"));
+  const results = items.map((it) => {
+    if (!doneKeys.has(it.key)) return null;
+    const prev = merged.games[it.key];
+    return { index: it.index, path: it.path, mode: it.mode, locale: it.locale, key: it.key,
+             status: "skipped", note: "đã xong (checkpoint)", elapsed_s: prev.elapsed_s || 0,
+             game_dir: prev.game_dir || "", error_code: "", error_message: "" };
+  });
+  const todo = items.filter((it) => !doneKeys.has(it.key));
+  if (!todo.length) {
+    renderBatchResult({
+      total: items.length, ok: doneKeys.size, failed: 0, skipped: items.length,
+      incomplete: 0, elapsed_s: 0, out_dir: "", jobs: 1, dry_run: opts.dryRun,
+      budgets: {}, games: results,
+    }, { resumed: true, executorNote: "không cần chạy (đã xong hết theo checkpoint)" });
+    $("batch-ckpt-info").textContent = "Tất cả " + items.length + " game đã xong theo checkpoint — không còn game nào để chạy.";
+    return;
+  }
+  // 3. Executor: pool 2 worker, fallback 1 worker nếu pool lỗi/tắt.
+  const executor = await ensureBatchExecutor();
+  const runId = (state.batchRun && state.batchRun.runId) ? state.batchRun.runId
+    : ("batch-" + Date.now().toString(36));
+  const budget = batchWatchdogSeconds();
+  const br = state.batchRun = {
+    runId, manifest: opts.manifest, dryRun: opts.dryRun, items, results, merged,
+    todo, doneCount: 0, totalTodo: todo.length, startTime: performance.now(),
+    stopRequested: false, watchdogStopped: false, finished: false,
+    executorKind: executor.kind, gamesPerSlot: {},
+  };
+  executor.beginBatch(budget);
+  $("btn-batch-run").disabled = true;
+  $("btn-batch-continue").hidden = true;
+  $("btn-batch-stop-safe").hidden = false;
+  $("btn-batch-stop-safe").disabled = false;
+  progStart(executor.kind === "pool" ? "Chạy batch (pool 2 worker)" : "Chạy batch (1 worker)");
+  setStatus("Batch đang chạy: " + todo.length + " game còn lại (" + state.executorNote +
+    ", watchdog " + budget + " giây)…");
+  syncPoolUI();
+  syncBatchCkptInfo();
+  const uiTimer = setInterval(syncPoolUI, 500);
+  const fileByBase = new Map(state.batchFiles.map((f) => [f.name.toLowerCase(), f]));
+
+  // Ghi kết quả 1 game NGAY khi game đó xong (kèm lưu checkpoint vào
+  // IndexedDB) — không đợi cả lô xong mới ghi (đó mới là "checkpoint
+  // từng game": tab bị kill giữa chừng vẫn giữ được game đã xong).
+  const recordGameDone = async (it, reply) => {
+    const parsed = reply.parsed;
+    const g = (parsed.summary && parsed.summary.games && parsed.summary.games[0]) || null;
+    const slot = (typeof reply.slot === "number") ? reply.slot : 0;
+    br.gamesPerSlot[slot] = (br.gamesPerSlot[slot] || 0) + 1;
+    br.doneCount++;
+    if (!g) {
+      br.results[it.index - 1] = { index: it.index, path: it.path, mode: it.mode, locale: it.locale,
+        key: it.key, status: "failed", note: "", elapsed_s: 0, game_dir: "",
+        error_code: "E_INTERNAL", error_message: "worker không trả kết quả game" };
+      progSet(100 * br.doneCount / br.totalTodo, br.doneCount, br.totalTodo);
+      syncBatchCkptInfo(); syncPoolUI();
+      return;
+    }
+    // index/path/mode/locale lấy từ it (vị trí thật trong manifest): mỗi lần
+    // chạy 1 game thì g.index của worker luôn = 1, không dùng được.
+    br.results[it.index - 1] = { index: it.index, path: it.path,
+      mode: it.mode, locale: it.locale, key: it.key, status: g.status,
+      note: g.note || "", elapsed_s: g.elapsed_s || 0, game_dir: g.game_dir || "",
+      error_code: g.error_code || "", error_message: g.error_message || "" };
+    if (g.status === "ok" || g.status === "failed") {
+      merged.games[it.key] = { path: it.path, mode: it.mode, locale: it.locale,
+        status: g.status, elapsed_s: Math.round((g.elapsed_s || 0) * 100) / 100,
+        game_dir: g.game_dir || "", error_code: g.error_code || "" };
+      await saveMergedCkptSoon(merged);
+    }
+    progSet(100 * br.doneCount / br.totalTodo, br.doneCount, br.totalTodo);
+    syncBatchCkptInfo(); syncPoolUI();
+    // Lưới an toàn thứ hai (ngoài watchdog trong worker.js): đã quá hạn
+    // mà vẫn còn game chưa xong thì dừng giao việc tiếp ngay sau game này.
+    // (Game cuối cùng vừa xong thì không báo "đã dừng" — đợt đã xong hết.)
+    if (!br.stopRequested && br.doneCount < br.totalTodo &&
+        (performance.now() - br.startTime) > budget * 1000) {
+      br.watchdogStopped = true;
+      requestBatchStop();
+    }
+  };
+  const recordGameError = (it, err) => {
+    const msg = String((err && err.message) || err || "");
+    br.doneCount++;
+    if (msg.indexOf("E_WATCHDOG_STOP") === 0 || msg.indexOf("E_BATCH_STOPPED") === 0) {
+      if (msg.indexOf("E_WATCHDOG_STOP") === 0) br.watchdogStopped = true;
+      br.stopRequested = true;
+      br.results[it.index - 1] = { index: it.index, path: it.path, mode: it.mode,
+        locale: it.locale, key: it.key, status: "skipped",
+        note: "chưa chạy (đã dừng an toàn)", elapsed_s: 0, game_dir: "",
+        error_code: "", error_message: "" };
+      requestBatchStop();
+    } else {
+      // Lỗi thật của 1 game: ghi failed, lô vẫn tiếp tục (game khác đã chạy).
+      br.results[it.index - 1] = { index: it.index, path: it.path, mode: it.mode,
+        locale: it.locale, key: it.key, status: "failed", note: "",
+        elapsed_s: 0, game_dir: "", error_code: "E_INTERNAL", error_message: msg };
+    }
+    progSet(100 * br.doneCount / br.totalTodo, br.doneCount, br.totalTodo);
+    syncBatchCkptInfo(); syncPoolUI();
+  };
+
+  // 4. Giao từng game cho executor (pool chia đều 2 worker, hàng đợi tự
+  // bơm game tiếp theo khi có worker rảnh).
+  const jobs = todo.map((it) => {
+    const base = (it.path || "").split("/").pop().toLowerCase();
+    const f = fileByBase.get(base) || fileByBase.get((it.path || "").toLowerCase());
+    if (!f) {
+      br.results[it.index - 1] = { index: it.index, path: it.path, mode: it.mode,
+        locale: it.locale, key: it.key, status: "failed", note: "", elapsed_s: 0,
+        game_dir: "", error_code: "E_INPUT_NOT_FOUND",
+        error_message: "không có file “" + base + "” trong lô đã chọn" };
+      br.doneCount++;
+      progSet(100 * br.doneCount / br.totalTodo, br.doneCount, br.totalTodo);
+      return Promise.resolve();
+    }
+    const singleManifest = JSON.stringify([{ path: it.path, mode: it.mode, locale: it.locale,
+      old: it.old, new: it.new, file: it.file, object: it.object }]);
+    const dataCopy = f.data.slice(0);   // HOTFIX clone: luôn gửi bản copy
+    const payload = { fn: "batch_run",
+      args: [singleManifest, opts.dryRun, ckptToJson(merged), true, runId,
+             executor.kind === "single", false, it.index],
+      files: [{ name: f.name, data: dataCopy, size: f.size, lastModified: f.lastModified || 0 }] };
+    return executor.run(payload, { label: base, transfer: [dataCopy] })
+      .then((reply) => recordGameDone(it, reply))
+      .catch((err) => recordGameError(it, err));
+  });
+  await Promise.all(jobs);
+  await ckptSaveChain;   // chờ lần lưu checkpoint cuối xong hẳn
+  clearInterval(uiTimer);
+
+  // 5. Gộp zip cuối đợt (chỉ khi có game thật sự chạy trong đợt này).
+  const processedAny = Object.keys(br.gamesPerSlot).length > 0;
+  let finalZip = null;
+  let zipError = "";
+  if (processedAny) {
+    try { finalZip = await finalizeBatchZip(executor, br); }
+    catch (e) { zipError = e.message; }
+  }
+  br.finished = true;
+  progDone("Chạy batch — xong");
+  $("btn-batch-run").disabled = false;
+  $("btn-batch-stop-safe").hidden = true;
+  const remain = br.items.length -
+    Object.keys(br.merged.games).filter((k) => br.merged.games[k].status === "ok").length;
+  const canContinue = remain > 0 && (br.stopRequested || br.watchdogStopped);
+  $("btn-batch-continue").hidden = !canContinue;
+  if (finalZip) download(finalZip.name || "batch.zip", finalZip.data);
+  if (executor.kind === "single") persistKbNow();   // chỉ worker đơn mới ghi KB trong batch
+  renderBatchResult(combinedSummary(br), {
+    resumed: opts.resume, executorNote: state.executorNote,
+    watchdogStopped: br.watchdogStopped, watchdogSeconds: budget,
+    stopRequested: br.stopRequested, zipName: finalZip ? (finalZip.name || "batch.zip") : "",
+    note: (zipError ? "Gộp file batch.zip lỗi: " + zipError +
+             " — kết quả từng game vẫn còn trong checkpoint (đã lưu vào IndexedDB). " : "") +
+      (executor.kind === "pool"
+        ? "Pool 2 worker: mỗi worker 1 Pyodide + PB3 riêng (~2x RAM so với 1 worker); thao tác đơn vẫn dùng worker riêng như trước. "
+        : "Chạy bằng 1 worker (" + state.executorNote + "). ") +
+      (executor.kind === "pool"
+        ? "Lưu ý: batch ở chế độ pool không ghi kết quả chạy vào KB (KB của 2 worker không gộp được file SQLite) — thêm game vào KB bằng tab Kho KB."
+        : "") +
+      (canContinue ? "Còn " + remain + " game chưa xong — bấm “Tiếp tục” để chạy tiếp." : "") +
+      " Phân công: " + Object.keys(br.gamesPerSlot).sort().map((k) => "worker " + k + ": " + br.gamesPerSlot[k] + " game").join(" · ") + ".",
+  });
+  syncBatchCkptInfo();
+  syncPoolUI();
+  setStatus(canContinue
+    ? "Batch đã dừng an toàn — còn " + remain + " game chưa xong, bấm “Tiếp tục” để chạy tiếp."
+    : "Batch xong.");
+}
+
 $("btn-batch-run").addEventListener("click", async () => {
   const manifest = $("batch-manifest").value.trim();
   if (!manifest) { showError("Hãy dán manifest JSON/CSV vào ô."); return; }
   if (!state.batchFiles.length) { showError("Hãy chọn các file game trước (nút chọn file ở trên)."); return; }
   const dryRun = $("batch-dryrun").checked;
   const resume = $("batch-resume").checked;
-  const ckpt = resume ? state.loadedCheckpoint : null;
-  if (resume && !ckpt) { showError("Đã tick “Tiếp tục từ checkpoint” nhưng chưa nạp checkpoint (bấm “Nạp checkpoint đã lưu” trước)."); return; }
-  try {
-    const { parsed } = await runOp("Chạy batch (tuần tự)", "batch_run",
-      [manifest, dryRun, ckpt, resume], state.batchFiles, true);
-    // Batch ghi kết quả chạy vào KB (record_run) nên cũng phải tự lưu KB.
-    persistKbNow();
-    const s = parsed.summary;
-    if (parsed.checkpoint) {
-      state.lastCheckpoint = parsed.checkpoint;
-      try { localStorage.setItem("pb3_batch_checkpoint", parsed.checkpoint); } catch (e) { /* localStorage đầy/không có: vẫn tải file được */ }
-    }
-    let html = "<p>Batch " + (parsed.dry_run ? "<b>dry-run</b>" : "<b>chạy thật</b>") +
-      " · tuần tự (jobs=1) · " + s.ok + " ok / " + s.failed + " lỗi / " + s.skipped +
-      " bỏ qua / " + s.total + " game · " + s.elapsed_s + " giây" +
-      (parsed.resumed ? " · đã tiếp tục từ checkpoint" : "") +
-      " · file <b>batch.zip</b> đã sẵn sàng — bấm “Lưu / Chia sẻ” ở thanh Lưu file bên dưới để lưu về máy (summary, checkpoint, index, từng game)</p>";
-    html += "<table><tr><th>#</th><th>Game</th><th>Mode</th><th>Kết quả</th><th>Lỗi</th><th>Giây</th><th>Ghi chú</th></tr>";
-    for (const g of s.games || []) {
-      html += "<tr><td>" + g.index + "</td><td>" + esc(g.path.split("/").pop()) + "</td><td>" + esc(g.mode) +
-        "</td><td>" + esc(g.status) + "</td><td>" + esc(g.error_code || "") + " " + esc(g.error_message || "") +
-        "</td><td>" + g.elapsed_s + "</td><td>" + esc(g.note || "") + "</td></tr>";
-    }
-    html += "</table><p class=note>" + esc(parsed.note || "") + "</p>";
-    $("batch-result").innerHTML = html;
-    $("batch-ckpt-info").textContent = parsed.checkpoint
-      ? "Checkpoint mới đã lưu vào trình duyệt (" + parsed.checkpoint.length + " ký tự) — chạy lại với “Tiếp tục từ checkpoint” để bỏ qua game đã xong."
-      : "";
-  } catch (e) { /* đã báo lỗi */ }
+  if (resume) {
+    const loaded = await loadMergedCkpt();
+    if (!loaded.found) { showError("Đã tick “Tiếp tục từ checkpoint” nhưng chưa có checkpoint nào lưu (bấm “Nạp checkpoint đã lưu” trước)."); return; }
+  }
+  await runBatchFlow({ manifest, dryRun, resume });
+});
+$("btn-batch-continue").addEventListener("click", async () => {
+  // "Tiếp tục": chạy tiếp phần chưa xong từ checkpoint IndexedDB, cùng
+  // manifest/dry-run và cùng runId (thư mục batch cũ còn trong FS phiên).
+  const br = state.batchRun;
+  if (!br) { showError("Chưa có đợt batch nào để tiếp tục."); return; }
+  await runBatchFlow({ manifest: br.manifest, dryRun: br.dryRun, resume: true });
 });
 
 // ---- KB ----
@@ -1366,6 +1899,17 @@ callWorker("boot", {}).then((msg) => {
       : (kb.reason && kb.reason !== "empty"
         ? "Không khôi phục được KB đã lưu (" + kb.reason + ") — bắt đầu với KB trống; nút “Nhập KB (.sqlite)” vẫn khôi phục được từ file sao lưu."
         : null));
+  });
+  // Mục 4: preload checkpoint batch từ IndexedDB (nếu tab bị kill giữa
+  // chừng lần trước) để user thấy ngay là có thể "Tiếp tục từ checkpoint".
+  loadMergedCkpt().then((loaded) => {
+    if (loaded.found) {
+      state.loadedCheckpoint = ckptToJson(loaded.ckpt);
+      state.lastCheckpoint = state.loadedCheckpoint;
+      const done = Object.keys(loaded.ckpt.games).filter((k) => loaded.ckpt.games[k].status === "ok").length;
+      $("batch-ckpt-info").textContent = "Có checkpoint đã lưu từ lần trước (" + loaded.from + ", " +
+        done + " game đã xong) — tick “Tiếp tục từ checkpoint” rồi bấm Chạy batch để chạy tiếp, không làm lại từ đầu.";
+    }
   });
   if ((r.boot.problems || []).length) {
     $("boot-problems").textContent = "Lưu ý khởi động: " + r.boot.problems.join("; ");
