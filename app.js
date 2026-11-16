@@ -1639,6 +1639,7 @@ $("btn-extract-run").addEventListener("click", async () => {
     const en = parsed.files.find((f) => f.locale === "en" && f.exported);
     if (en && en.exported) state.lastExtractKv = en.exported;
     refreshTranslateSourceSelect();
+    refreshModJsonSourceSelect(); // phần B: dropdown file JSON của tab Mod
     // Nối Dịch với Trích xuất: nạp sẵn file mặc định (en.json nếu có) vào
     // ô dịch — lỗi nạp không làm hỏng kết quả extract.
     const defName = defaultTranslateFile();
@@ -2357,6 +2358,274 @@ $("btn-mod-op-text").addEventListener("click", () => {
     try { if (typeof m.focus === "function") m.focus(); } catch (e) { /* focus chỉ là phụ */ }
   }
 });
+
+// ---- Mod: tìm theo chữ + nhập file .json (phần B) ----
+// Kiến trúc web (không port nguyên si cách làm ngoài): toàn bộ tìm/sửa
+// chạy ở MAIN THREAD trên object JSON đã nằm trong bộ nhớ phiên — KHÔNG
+// qua worker/Pyodide, KHÔNG đọc lại file game. Lý do: file JSON trích
+// xuất/dịch/nhập đã là text phẳng trong RAM (kể cả file lớn nhất thật:
+// resources.monobehaviour.en.json của EK2 ~15k entry vẫn nhẹ); đưa qua
+// worker chỉ thêm chuyển buffer + boot Pyodide mà không thêm gì. Chỉ
+// bước NẠP file trích xuất mới qua worker (read_extracted — file đó nằm
+// trong FS worker sau extract). Sửa xong thì đưa vào ô Bản dịch của plan
+// Mod (mục 8) hoặc tải file .json đã sửa — plan/patch pack (C7) vẫn đi
+// đường cũ đã kiểm chứng, không viết lại.
+// state.modJson = {name, entries, keys, provenance, origin} — entries là
+// object phẳng {key: value} giữ đúng thứ tự key gốc (không sort_keys,
+// giống file en.json mẫu của Joseph, phần A); value giữ nguyên kiểu
+// (string/number/bool/null), chỉ ép sang string khi tìm/hiển thị.
+state.modJson = null;
+state.modSearchResults = []; // [{key, value}] của lần tìm gần nhất
+state.modEdited = new Set(); // key đã sửa trong phiên này
+const MOD_SEARCH_SHOW_MAX = 200; // chỉ hiện 200 kết quả đầu, vẫn đếm đủ
+
+// Parse JSON phẳng {key: value} (không nhận mảng / kiểu khác / JSON hỏng).
+// Trả {entries, keys} — keys giữ đúng thứ tự gốc trong file.
+function modParseJsonObject(text) {
+  let obj;
+  try { obj = JSON.parse(text); } catch (e) { throw new Error("File .json không hợp lệ: " + e.message); }
+  if (!obj || typeof obj !== "object" || Array.isArray(obj)) {
+    throw new Error("File .json phải là object phẳng {key: value}, không phải mảng hay giá trị đơn.");
+  }
+  return { entries: obj, keys: Object.keys(obj) };
+}
+
+// Tìm chuỗi con trong key và/hoặc value của object phẳng.
+// Mặc định KHÔNG phân biệt hoa/thường (query/key/value đều toLowerCase).
+// scope: "all" | "key" | "value". Trả [{key, value}] đủ mọi kết quả
+// (không cắt ở đây — UI chỉ hiện 200 đầu nhưng đếm đủ tổng).
+function modSearchEntries(entries, query, opts) {
+  const o = opts || {};
+  const q = o.caseSensitive ? String(query) : String(query).toLowerCase();
+  if (!q) return [];
+  const scope = o.scope || "all";
+  const out = [];
+  for (const key of Object.keys(entries || {})) {
+    const val = entries[key];
+    const valStr = val == null ? "" : String(val);
+    const k = o.caseSensitive ? key : key.toLowerCase();
+    const v = o.caseSensitive ? valStr : valStr.toLowerCase();
+    const inKey = k.indexOf(q) !== -1;
+    const inVal = v.indexOf(q) !== -1;
+    if ((scope === "key" && inKey) || (scope === "value" && inVal) ||
+        (scope === "all" && (inKey || inVal))) {
+      out.push({ key, value: valStr });
+    }
+  }
+  return out;
+}
+
+// Đọc provenance từ file sidecar beartea-translation-provenance/1 (mục A).
+// Trả object provenance, hoặc null nếu không phải sidecar hợp lệ.
+function modProvenanceFromSidecar(text) {
+  let obj;
+  try { obj = JSON.parse(text); } catch (e) { return null; }
+  if (!obj || obj.format !== "beartea-translation-provenance/1" ||
+      !obj.provenance || typeof obj.provenance !== "object") return null;
+  return obj.provenance;
+}
+
+// Nguồn gốc ngắn để hiện trong bảng kết quả: lấy đoạn cuối của source
+// (vd ".../resources.assets" -> "resources.assets").
+function modShortSource(prov) {
+  const s = (prov && (prov.source || prov.extractName)) || "";
+  if (!s) return "—";
+  const parts = s.split(/::|\//).filter(Boolean);
+  return parts.length ? parts[parts.length - 1] : s;
+}
+function modJsonInfoText() {
+  const m = state.modJson;
+  if (!m) return "Chưa mở file JSON nào — lấy từ file trích xuất, bản dịch, hoặc nhập file .json từ máy.";
+  const prov = m.provenance;
+  const src = prov
+    ? (prov.origin === "extract" ? "trích xuất từ " + (prov.source || prov.extractName || "?")
+      : prov.origin === "upload" ? "file tải lên" + (prov.extractName ? " (" + prov.extractName + ")" : "") + " — không rõ nguồn gốc (không có provenance đi kèm)"
+      : prov.origin === "manual" ? "dán tay / bản dịch trong phiên — không rõ nguồn gốc"
+      : (prov.source || prov.extractName || "có provenance"))
+    : "không rõ nguồn gốc";
+  return "Đã mở " + m.name + " · " + m.keys.length + " entry · Nguồn: " + src +
+    (state.modEdited.size ? " · đã sửa " + state.modEdited.size + " entry" : "") +
+    (m.keys.length > 50000 ? " · file rất lớn, tìm kiếm vẫn quét đủ mọi entry nhưng chỉ hiện 200 kết quả đầu" : "");
+}
+function modSetJson(name, entries, keys, provenance) {
+  state.modJson = { name, entries, keys: keys || Object.keys(entries), provenance: provenance || null };
+  state.modSearchResults = [];
+  state.modEdited = new Set();
+  $("mod-json-info").textContent = modJsonInfoText();
+  $("mod-search-count").textContent = "";
+  $("mod-search-results").innerHTML = "";
+  for (const id of ["btn-mod-to-plan", "btn-mod-download-json"]) {
+    const b = $(id); if (b) b.disabled = false;
+  }
+  clearError();
+}
+function refreshModJsonSourceSelect() {
+  const sel = $("mod-json-source");
+  if (!sel) return;
+  const files = (state.lastExtractFiles || []).filter((f) => f.exported && /\.json$/i.test(f.exported));
+  if (!files.length) {
+    sel.innerHTML = "<option value=\"\">— chưa có file trích xuất —</option>";
+    return;
+  }
+  let html = "";
+  for (const f of files) {
+    html += "<option value=\"" + esc(f.exported) + "\">" + esc(f.exported) +
+      (f.source ? " ← " + f.source : "") + "</option>";
+  }
+  sel.innerHTML = html;
+  const def = defaultTranslateFile();
+  if (def) sel.value = def;
+}
+function modRenderSearchResults() {
+  const box = $("mod-search-results");
+  const res = state.modSearchResults || [];
+  if (!res.length) { box.innerHTML = ""; return; }
+  const prov = state.modJson && state.modJson.provenance;
+  const src = modShortSource(prov);
+  // Thẻ xếp dọc (không phải bảng): vừa 390px, không cuộn ngang, nút
+  // "Lưu" không bị bóp thành chữ xếp dọc. Mỗi thẻ: key + value + nguồn.
+  let html = "";
+  for (const r of res.slice(0, MOD_SEARCH_SHOW_MAX)) {
+    const edited = state.modEdited.has(r.key);
+    html += "<div class=\"mod-result-item\"><div><b>" + esc(r.key) + "</b>" +
+      (edited ? " <b>(đã sửa)</b>" : "") +
+      " <span class=\"sub\">· nguồn: " + esc(src) + "</span></div>" +
+      "<div>Giá trị hiện tại: " + esc(r.value) + "</div>" +
+      "<label>Sửa thành: <input type=\"text\" data-mod-edit=\"" + esc(r.key) +
+      "\" value=\"" + esc(r.value) + "\"></label> " +
+      "<button class=\"secondary\" data-mod-save=\"" + esc(r.key) + "\">Lưu</button></div>";
+  }
+  if (res.length > MOD_SEARCH_SHOW_MAX) {
+    html += "<p class=\"note\">Chỉ hiện " + MOD_SEARCH_SHOW_MAX + " kết quả đầu trong tổng " +
+      res.length + " — gõ chữ cụ thể hơn để thu hẹp.</p>";
+  }
+  box.innerHTML = html;
+}
+function modRunSearch() {
+  if (!state.modJson) { showError("Chưa mở file JSON nào — lấy từ file trích xuất, bản dịch, hoặc nhập file .json từ máy rồi tìm."); return; }
+  const q = ($("mod-search").value || "").trim();
+  if (!q) { showError("Hãy nhập chữ cần tìm (vd: setting)."); return; }
+  const scope = ($("mod-search-scope") && $("mod-search-scope").value) || "all";
+  const caseSensitive = !!($("mod-search-case") && $("mod-search-case").checked);
+  const res = modSearchEntries(state.modJson.entries, q, { scope, caseSensitive });
+  state.modSearchResults = res;
+  $("mod-search-count").textContent = res.length
+    ? "Tìm thấy " + res.length + " kết quả cho “" + q + "” trong " + state.modJson.keys.length +
+      " entry" + (caseSensitive ? " (phân biệt hoa/thường)" : " (không phân biệt hoa/thường)") +
+      " — sửa trực tiếp trong cột “Sửa thành” rồi bấm Lưu từng dòng."
+    : "Không tìm thấy “" + q + "” trong " + state.modJson.keys.length + " entry" +
+      (scope === "key" ? " (chỉ tìm trong key)" : scope === "value" ? " (chỉ tìm trong value)" : "") + ".";
+  modRenderSearchResults();
+  clearError();
+}
+$("btn-mod-search").addEventListener("click", modRunSearch);
+$("mod-search").addEventListener("keydown", (ev) => {
+  if (ev.key === "Enter") { ev.preventDefault(); modRunSearch(); }
+});
+// Lưu 1 entry đã sửa ngay trong danh sách kết quả (không cần nhớ id).
+$("mod-search-results").addEventListener("click", (ev) => {
+  const b = ev.target && ev.target.closest ? ev.target.closest("[data-mod-save]") : null;
+  if (!b || typeof b.getAttribute !== "function" || !state.modJson) return;
+  const key = b.getAttribute("data-mod-save");
+  const input = $("mod-search-results").querySelector("[data-mod-edit=\"" + CSS.escape(key) + "\"]");
+  if (!input) return;
+  const newVal = input.value;
+  state.modJson.entries[key] = newVal;
+  state.modEdited.add(key);
+  const r = (state.modSearchResults || []).find((x) => x.key === key);
+  if (r) r.value = newVal;
+  $("mod-json-info").textContent = modJsonInfoText();
+  modRenderSearchResults();
+  clearError();
+});
+// Lấy file JSON từ đợt trích xuất vừa rồi (qua worker read_extracted —
+// nội dung file nằm trong FS worker sau extract; provenance giữ nguyên
+// từ lúc trích xuất, giống tab Dịch).
+$("btn-mod-load-extract").addEventListener("click", async () => {
+  refreshModJsonSourceSelect();
+  const sel = $("mod-json-source");
+  const name = sel && sel.value;
+  if (!name) { showError("Chưa có file trích xuất — chạy Trích xuất ở tab Trích xuất trước, hoặc nhập file .json từ máy."); return; }
+  try {
+    const msg = await callWorker("run", { fn: "read_extracted", args: [name], files: [] });
+    const parsed = JSON.parse(msg.result);
+    if (!parsed || parsed.ok !== true) {
+      showError("Không nạp được " + name + ": " + ((parsed && (parsed.error || parsed.code)) || "lỗi không rõ") + " — hãy nhập file .json từ máy.");
+      return;
+    }
+    const { entries, keys } = modParseJsonObject(parsed.text || "");
+    const entry = (state.lastExtractFiles || []).find((f) => f.exported === name);
+    const prov = translateProvenanceFor(name, (entry && entry.locale) || null, null, keys.length);
+    modSetJson(name, entries, keys, prov);
+  } catch (e) { showError("Không nạp được " + name + " (" + e.message + ") — hãy nhập file .json từ máy."); }
+});
+// Lấy bản dịch xong đang giữ trong phiên (tab Dịch, mục A) kèm provenance.
+$("btn-mod-load-translate").addEventListener("click", () => {
+  const lt = state.lastTranslated;
+  if (!lt || !lt.translated || typeof lt.translated !== "object") {
+    showError("Chưa có bản dịch xong trong phiên — dịch xong ở tab Dịch rồi bấm lại, hoặc nhập file .json từ máy.");
+    return;
+  }
+  modSetJson(lt.name || "translated.vi.json", lt.translated, lt.keys || Object.keys(lt.translated), lt.provenance || null);
+});
+// Nhập file .json từ máy (chọn được NHIỀU file cùng lúc): file .json
+// chính + file sidecar .provenance.json (nếu chọn kèm) thì giữ provenance;
+// không có sidecar thì ghi rõ "không rõ nguồn gốc", không bịa nguồn.
+$("btn-mod-import").addEventListener("click", () => { $("mod-json-file").click(); });
+$("mod-json-file").addEventListener("change", async (ev) => {
+  const files = [...(ev.target.files || [])];
+  ev.target.value = "";
+  if (!files.length) return;
+  const sidecars = files.filter((f) => /\.provenance\.json$/i.test(f.name));
+  const mains = files.filter((f) => !/\.provenance\.json$/i.test(f.name));
+  if (!mains.length) { showError("Chưa chọn file .json nào — file .provenance.json chỉ là sidecar, cần chọn kèm 1 file .json chính."); return; }
+  if (mains.length > 1) {
+    // Chỉ mở file đầu tiên; báo rõ để user không tưởng đã mở hết.
+    showError("Đã chọn " + mains.length + " file .json — chỉ mở file đầu tiên (" + mains[0].name + "); mở từng file một nếu cần sửa nhiều file.");
+  }
+  const main = mains[0];
+  try {
+    const text = await main.text();
+    if (text.length > 20 * 1024 * 1024) {
+      if (!confirm("File " + main.name + " lớn (" + fmtBytes(text.length) + "). Mở file này giữ toàn bộ JSON trong RAM của tab — trên iPhone có thể nặng. Bấm OK để tiếp tục, hoặc Huỷ để chia nhỏ file trước.")) return;
+    }
+    const { entries, keys } = modParseJsonObject(text);
+    let prov = null;
+    // Sidecar đi kèm: khớp theo tên (vd translated.vi.provenance.json
+    // đi với translated.vi.json) hoặc lấy sidecar duy nhất đã chọn.
+    const base = main.name.replace(/\.json$/i, "");
+    const match = sidecars.find((f) => f.name.replace(/\.provenance\.json$/i, "") === base) || sidecars[0];
+    if (match) prov = modProvenanceFromSidecar(await match.text());
+    else {
+      // Không có sidecar: chỉ biết tên file — origin "upload", giống
+      // tab Dịch khi tải file JSON lên (mục A). Không bịa source.
+      prov = {
+        origin: "upload", gameFile: state.file ? state.file.name : null,
+        extractName: main.name, source: null, locale: null,
+        from: null, to: null, keys: keys.length, at: new Date().toISOString(),
+      };
+    }
+    modSetJson(main.name, entries, keys, prov);
+  } catch (e) { showError("Nhập file .json lỗi: " + e.message); }
+});
+// Đưa toàn bộ JSON đang mở (kèm các entry đã sửa) vào ô Bản dịch của
+// plan Mod (mục 8) để lập kế hoạch — giữ đúng thứ tự key gốc, indent 1
+// như file en.json mẫu.
+$("btn-mod-to-plan").addEventListener("click", () => {
+  if (!state.modJson) { showError("Chưa mở file JSON nào."); return; }
+  $("plan-translations").value = JSON.stringify(state.modJson.entries, null, 1);
+  $("mod-search-count").textContent = "Đã đưa " + state.modJson.keys.length + " entry" +
+    (state.modEdited.size ? " (gồm " + state.modEdited.size + " entry đã sửa)" : "") +
+    " vào ô Bản dịch bên dưới — bấm “Lập kế hoạch” để lập plan Mod.";
+  clearError();
+});
+// Tải file .json đã sửa về (tên gốc + hậu tố .mod, giữ thứ tự key gốc).
+$("btn-mod-download-json").addEventListener("click", () => {
+  if (!state.modJson) { showError("Chưa mở file JSON nào."); return; }
+  const name = state.modJson.name.replace(/\.json$/i, "") + ".mod.json";
+  download(name, [new TextEncoder().encode(JSON.stringify(state.modJson.entries, null, 1))]);
+});
+refreshModJsonSourceSelect();
 
 // ---- Kế hoạch Mod (plan JSON — mục 8) ----
 // Planner (bridge.plan_build) quét bundle và lập plan; executor

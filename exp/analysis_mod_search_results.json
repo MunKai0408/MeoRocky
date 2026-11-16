@@ -1,0 +1,175 @@
+{
+  "generated_at": "2026-11-16T16:09:45.166Z",
+  "total": 24,
+  "passed": 24,
+  "failed": 0,
+  "results": {
+    "pure_parse_json_object": {
+      "ok": true,
+      "detail": "thu tu key giu nguyen: b,a · mang bi tu choi: true · JSON hong bi tu choi: true",
+      "ms": 7
+    },
+    "pure_search_case_insensitive_key_value": {
+      "ok": true,
+      "detail": "setting (mac dinh): [\"MAINMENU_SETTINGS\",\"setting_volume\"] · SETTING phan biet hoa/thuong: [\"MAINMENU_SETTINGS\"] · setting phan biet hoa/thuong: [\"setting_volume\"] · chi key: [\"MAINMENU_SETTINGS\",\"setting_volume\"] · chi value: [\"MAINMENU_SETTINGS\"] · so 42 tim duoc: [\"num\"]",
+      "ms": 7
+    },
+    "pure_provenance_sidecar": {
+      "ok": true,
+      "detail": "sidecar dung -> origin=extract · sai format/JSON hong -> null · rut gon source: resources.assets",
+      "ms": 7
+    },
+    "game_9kings_import_search": {
+      "ok": true,
+      "detail": "file resources.monobehaviour.en.json · 11356 entry · “setting” = 74 (ky vong 74) · mau 'Default Localization Settings.s1' trong ket qua: true · info: Đã mở resources.monobehaviour.en.json · 11356 entry · Nguồn: file tải lên (resources.monobehaviour.en.json) — không rõ n",
+      "ms": 208
+    },
+    "game_data_import_search": {
+      "ok": true,
+      "detail": "file resources.monobehaviour.en.json · 3834 entry · “setting” = 79 (ky vong 79) · mau 'NPSettings.s2' trong ket qua: true · info: Đã mở resources.monobehaviour.en.json · 3834 entry · Nguồn: file tải lên (resources.monobehaviour.en.json) — không rõ ng",
+      "ms": 192
+    },
+    "game_ek2_import_search": {
+      "ok": true,
+      "detail": "file resources.monobehaviour.en.json · 14939 entry · “setting” = 113 (ky vong 113) · mau 'PhotonServerSettings.s2' trong ket qua: true · info: Đã mở resources.monobehaviour.en.json · 14939 entry · Nguồn: file tải lên (resources.monobehaviour.en.json) — không rõ n",
+      "ms": 204
+    },
+    "game_pb3_import_search": {
+      "ok": true,
+      "detail": "file resources.monobehaviour.en.json · 6261 entry · “setting” = 204 (ky vong 204) · mau 'MAINMENU_SETTINGS' trong ket qua: true · info: Đã mở resources.monobehaviour.en.json · 6261 entry · Nguồn: file tải lên (resources.monobehaviour.en.json) — không rõ ng",
+      "ms": 198
+    },
+    "game_passpartout_import_search": {
+      "ok": true,
+      "detail": "file resources.monobehaviour.en.json · 2707 entry · “setting” = 0 (ky vong 0) · mau '—' trong ket qua: true · info: Đã mở resources.monobehaviour.en.json · 2707 entry · Nguồn: file tải lên (resources.monobehaviour.en.json) — không rõ ng",
+      "ms": 129
+    },
+    "game_passpartout_second_keyword": {
+      "ok": true,
+      "detail": "“play” = 68 (ky vong 68) — “setting” = 0 o game nay nen can tu khoa thu 2 that",
+      "ms": 87
+    },
+    "ui_edit_entry_in_results": {
+      "ok": true,
+      "detail": "key 'Default Localization Settings.s1': 'English' -> 'CÀI ĐẶT KIỂM CHỨNG B' · info: Đã mở resources.monobehaviour.en.json · 11356 entry · Nguồn: file tải lên (resources.monobehaviour.en.json) — không rõ nguồn gốc (không có provenance đi kèm) · đã sửa 1 entry",
+      "ms": 289
+    },
+    "ui_edit_reaches_plan_textarea": {
+      "ok": true,
+      "detail": "plan-translations co 11356 key · gia tri moi co trong plan: true",
+      "ms": 312
+    },
+    "ui_download_edited_json": {
+      "ok": true,
+      "detail": "file: resources.monobehaviour.en.mod.json · 11356 key · gia tri moi: true · giu thu tu key goc: true",
+      "ms": 80
+    },
+    "ui_no_page_errors_so_far": {
+      "ok": true,
+      "detail": "",
+      "ms": 224
+    },
+    "e2e_extract_then_mod_load": {
+      "ok": true,
+      "detail": "extract: Kết quả: done · 3 entry · 1 file · file extract.zip đã sẵn sàng — bấm “Lưu / Chia sẻ” ở thanh Lưu file bên dưới để lưu v · dropdown Mod: game.json · info: Đã mở game.json · 3 entry · Nguồn: trích xuất từ game.json · “setting” = 1",
+      "ms": 5886
+    },
+    "e2e_load_from_translation": {
+      "ok": true,
+      "detail": "info: Đã mở translated.vi.json · 3 entry · Nguồn: dán tay / bản dịch trong phiên — không rõ nguồn gốc · “cài” = 1",
+      "ms": 100
+    },
+    "import_with_sidecar_keeps_provenance": {
+      "ok": true,
+      "detail": "info: Đã mở translated.vi.json · 2 entry · Nguồn: trích xuất từ 9kings.ipa::Payload/9Kings.app/Data/resources.assets · prov: {\"origin\":\"extract\",\"gameFile\":\"9kings.ipa\",\"extractName\":\"resources.monobehaviour.en.json\",\"source\":\"9kings.ipa::Payload/9Kings.app/Data/resources.assets\",\"locale\":\"en\",\"from\":\"en\",\"to\":\"vi\",\"keys\":2,\"at\":\"2026-11-16T00:00:00.000Z\"}",
+      "ms": 16
+    },
+    "import_without_sidecar_says_unknown_origin": {
+      "ok": true,
+      "detail": "info: Đã mở solo.json · 1 entry · Nguồn: file tải lên (solo.json) — không rõ nguồn gốc (không có provenance đi kèm) · prov.origin=upload",
+      "ms": 23
+    },
+    "import_invalid_json_reports_error": {
+      "ok": true,
+      "detail": "JSON hong: Nhập file .json lỗi: File .json không hợp lệ: Expected property name or '}' in JSON at position 1 (l · mang: Nhập file .json lỗi: File .json phải là object phẳng {key: value}, không phải mảng hay giá trị đơn.",
+      "ms": 38
+    },
+    "search_empty_and_case_toggle": {
+      "ok": true,
+      "detail": "o trong: Hãy nhập chữ cần tìm (vd: setting). · “xin” khong phan biet: 1 · phan biet: 0",
+      "ms": 184
+    },
+    "regress_module_worker": {
+      "ok": true,
+      "detail": "=== XONG: 17 mục, 0 FAIL — xem module_worker_results.md ===",
+      "ms": 5191
+    },
+    "regress_c2": {
+      "ok": true,
+      "detail": "==== TỔNG: 13 mục, 0 FAIL ====",
+      "ms": 22867
+    },
+    "regress_c9": {
+      "ok": true,
+      "detail": "===== KẾT QUẢ C9: 16/16 PASS (0 FAIL) =====",
+      "ms": 62102
+    },
+    "regress_item8_static": {
+      "ok": true,
+      "detail": "{\"fails\": []}",
+      "ms": 118
+    },
+    "regress_full_suite_python": {
+      "ok": true,
+      "detail": "1696 test, OK",
+      "ms": 56926
+    }
+  },
+  "five_games": {
+    "9kings": {
+      "file": "resources.monobehaviour.en.json",
+      "entries": 11356,
+      "kw": "setting",
+      "count": 74,
+      "expected": 74,
+      "info": "Đã mở resources.monobehaviour.en.json · 11356 entry · Nguồn: file tải lên (resources.monobehaviour.en.json) — không rõ nguồn gốc (không có provenance đi kèm)"
+    },
+    "data": {
+      "file": "resources.monobehaviour.en.json",
+      "entries": 3834,
+      "kw": "setting",
+      "count": 79,
+      "expected": 79,
+      "info": "Đã mở resources.monobehaviour.en.json · 3834 entry · Nguồn: file tải lên (resources.monobehaviour.en.json) — không rõ nguồn gốc (không có provenance đi kèm)"
+    },
+    "ek2": {
+      "file": "resources.monobehaviour.en.json",
+      "entries": 14939,
+      "kw": "setting",
+      "count": 113,
+      "expected": 113,
+      "info": "Đã mở resources.monobehaviour.en.json · 14939 entry · Nguồn: file tải lên (resources.monobehaviour.en.json) — không rõ nguồn gốc (không có provenance đi kèm)"
+    },
+    "pb3": {
+      "file": "resources.monobehaviour.en.json",
+      "entries": 6261,
+      "kw": "setting",
+      "count": 204,
+      "expected": 204,
+      "info": "Đã mở resources.monobehaviour.en.json · 6261 entry · Nguồn: file tải lên (resources.monobehaviour.en.json) — không rõ nguồn gốc (không có provenance đi kèm)"
+    },
+    "passpartout": {
+      "file": "resources.monobehaviour.en.json",
+      "entries": 2707,
+      "kw": "setting",
+      "count": 0,
+      "expected": 0,
+      "info": "Đã mở resources.monobehaviour.en.json · 2707 entry · Nguồn: file tải lên (resources.monobehaviour.en.json) — không rõ nguồn gốc (không có provenance đi kèm)",
+      "kw2": "play",
+      "kw2Count": 68,
+      "kw2Expected": 68
+    }
+  },
+  "page_errors": [],
+  "notes": "Chromium sandbox khong co HTTPS ngoai: UI chay tren HTTP local 127.0.0.1 (dung code se day). KHONG phai Safari that."
+}

@@ -1,38 +1,38 @@
 {
-  "generated_at": "2026-11-16T15:46:43.452Z",
+  "generated_at": "2026-11-16T16:04:46.073Z",
   "total": 33,
   "passed": 33,
   "failed": 0,
   "results": {
     "py_unit_langdetect_translate_source": {
       "ok": true,
-      "detail": "39 test, OK | Ran 39 tests in 0.024s /  / OK",
-      "ms": 253
+      "detail": "39 test, OK | Ran 39 tests in 0.027s /  / OK",
+      "ms": 290
     },
     "py_langdetect_accuracy_real_games": {
       "ok": true,
       "detail": "Passpartout 81.0% (9747/12026) · 9Kings 62.4% (28244/45269)",
-      "ms": 2938
+      "ms": 3150
     },
     "bridge_boot": {
       "ok": true,
       "detail": "plugins=20",
-      "ms": 4435
+      "ms": 4171
     },
     "bridge_src_en_only_english_sent": {
       "ok": true,
       "detail": "sl=[\"en\"] sent=1",
-      "ms": 439
+      "ms": 399
     },
     "bridge_src_en_other_lang_byte_identical": {
       "ok": true,
       "detail": "skipped=7 self_check={\"input_keys\":10,\"output_keys\":10,\"missing_keys\":[],\"wrong_lang_changed\":[],\"ok\":true}",
-      "ms": 439
+      "ms": 399
     },
     "bridge_src_zh_only_chinese_sent": {
       "ok": true,
       "detail": "sent=[\"丹青妙手，神來之筆啊！\",\"丹青妙手，神来之笔啊！\"]",
-      "ms": 3
+      "ms": 2
     },
     "bridge_src_zh_self_check": {
       "ok": true,
@@ -47,127 +47,127 @@
     "bridge_src_equals_to_errors": {
       "ok": true,
       "detail": "{\"ok\":false,\"error\":\"ngôn ngữ nguồn và đích trùng nhau: en\",\"code\":null}",
-      "ms": 3
+      "ms": 2
     },
     "recheck_fixture_en_all_keys_kept": {
       "ok": true,
       "detail": "input 15868 key -> output 15868 key, thu tu khop: true",
-      "ms": 51801
+      "ms": 51819
     },
     "recheck_fixture_en_all_english_translated": {
       "ok": true,
       "detail": "dong Anh dem duoc: 1091 · da dich: 1079 · chua dich: 12 (dung ly do: lech khe/du lieu/dau khong-Anh 12 · SAI: 0) · nhom doi thoai #2/#8: 1690/1716 · khe script manh bi doi: 14",
-      "ms": 51801
+      "ms": 51819
     },
     "recheck_fixture_en_other_lang_unchanged": {
       "ok": true,
       "detail": "nhom doi thoai 858 nhom: khe khac doi 1986 key / 1986 dong (theo khe: {\"3\":235,\"4\":259,\"6\":4,\"7\":364,\"9\":204,\"10\":270,\"11\":208,\"13\":187,\"14\":5,\"15\":5,\"bare\":245}) — phan lon la chuoi Latin ngan khong tu chuc nang/dau (vd 'Extraordinaire!', 'Fiasko.') ma bo loc yeu khong bat duoc, gioi han da biet · dong phat hien MANH ngon ngu khac ma van bi dich: 0 · khe script manh (ja/ko/ru/zh) bi doi: 14 (chu yeu dong chi co ten rieng '- Marie' o cuoi thu rich-text) · skipped=10262 · self_check ok=true",
-      "ms": 51801
+      "ms": 51819
     },
     "recheck_fixture_zh_all_chinese_translated": {
       "ok": true,
       "detail": "dong Trung dem duoc: 1764 · da dich: 1744 · chua dich: 20 (dung ly do: khong CJK/du lieu 20 · SAI: 0) · nhom doi thoai #14/#15: 1714/1716",
-      "ms": 1363
+      "ms": 1286
     },
     "recheck_fixture_zh_other_lang_unchanged": {
       "ok": true,
       "detail": "nhom doi thoai: khe khac doi 18 key / 18 dong · dong phat hien MANH ngon ngu khac ma van bi dich: 0 · khe script manh (ja/ko/ru) bi doi: 18 (toan chuoi Nhat thuan kanji khong kana, khong phan biet duoc voi tieng Trung — gioi han da biet) · skipped=14458 · self_check ok=true",
-      "ms": 1363
+      "ms": 1286
     },
     "recheck_fixture_old_bad_output_documented": {
       "ok": true,
       "detail": "file dich cu: 7408/15868 key, thieu 8460 key (hien tuong cu, da sua o 4a/4b)",
-      "ms": 1367
+      "ms": 1290
     },
     "extract_5games_ok": {
       "ok": true,
-      "detail": "9kings=41110 entry/9.4s · data=5308 entry/9.1s · ek2=39645 entry/11.7s · pb3=37270 entry/14.8s · passpartout=15066 entry/4.9s",
-      "ms": 59101
+      "detail": "9kings=41110 entry/9.2s · data=5308 entry/8.9s · ek2=39645 entry/7.9s · pb3=37270 entry/13.3s · passpartout=15066 entry/3.4s",
+      "ms": 51452
     },
     "extract_split_no_hash_suffix": {
       "ok": true,
       "detail": "9kings/globalgamemanagers.monobehaviour.en.json=147 entry, #N=0 · 9kings/resources.monobehaviour.en.json=11356 entry, #N=0 · 9kings/resources.monobehaviour.zh.json=1888 entry, #N=0 · 9kings/sharedassets2.monobehaviour.en.json=15 entry, #N=0 · 9kings/sharedassets3.monobehaviour.en.json=171 entry, #N=0 · 9kings/sharedassets4.monobehaviour.en.json=1700 entry, #N=0 · 9kings/sharedassets7.monobehaviour.en.json=7 entry, #N=0 · 9kings/sharedassets9.monobehaviour.en.json=5 entry, #N=0 · data/level0.monobehaviour.en.json=99 entry, #N=0 · data/level1.monobehaviour.en.json=16 entry, #N=0 · data/level10.monobehaviour.en.json=15 entry, #N=0 · data/level100.monobehaviour.en.json=1 entry, #N=0 · data/level101.monobehaviour.en.json=1 entry, #N=0 · data/level103.monobehaviour.en.json=1 entry, #N=0 · data/level104.monobehaviour.en.json=1 entry, #N=0 · data/level105.monobehaviour.en.json=5 entry, #N=0 · data/level106.monobehaviour.en.json=3 entry, #N=0 · data/level107.monobehaviour.en.json=1 entry, #N=0 · data/level108.monobehaviour.en.json=15 entry, #N=0 · data/level109.monobehaviour.en.json=1 entry, #N=0 · data/level11.monobehaviour.en.json=17 entry, #N=0 · data/level110.monobehaviour.en.json=6 entry, #N=0 · data/level111.monobehaviour.en.json=4 entry, #N=0 · data/level115.monobehaviour.en.json=2 entry, #N=0 · data/level12.monobehaviour.en.json=7 entry, #N=0 · data/level13.monobehaviour.en.json=29 entry, #N=0 · data/level14.monobehaviour.en.json=8 entry, #N=0 · data/level16.monobehaviour.en.json=5 entry, #N=0 · data/level19.monobehaviour.en.json=1 entry, #N=0 · data/level2.monobehaviour.en.json=21 entry, #N=0 · data/level20.monobehaviour.zh.json=1 entry, #N=0 · data/level25.monobehaviour.en.json=3 entry, #N=0 · data/level26.monobehaviour.en.json=1 entry, #N=0 · data/level3.monobehaviour.en.json=330 entry, #N=0 · data/level30.monobehaviour.en.json=1 entry, #N=0 · data/level31.monobehaviour.en.json=1 entry, #N=0 · data/level32.monobehaviour.en.json=4 entry, #N=0 · data/level33.monobehaviour.en.json=1 entry, #N=0 · data/level34.monobehaviour.en.json=4 entry, #N=0 · data/level38.monobehaviour.en.json=3 entry, #N=0 · data/level39.monobehaviour.en.json=3 entry, #N=0 · data/level4.monobehaviour.en.json=11 entry, #N=0 · data/level40.monobehaviour.en.json=6 entry, #N=0 · data/level41.monobehaviour.en.json=2 entry, #N=0 · data/level42.monobehaviour.en.json=2 entry, #N=0 · data/level43.monobehaviour.en.json=4 entry, #N=0 · data/level44.monobehaviour.en.json=2 entry, #N=0 · data/level5.monobehaviour.en.json=15 entry, #N=0 · data/level50.monobehaviour.en.json=1 entry, #N=0 · data/level51.monobehaviour.en.json=3 entry, #N=0 · data/level53.monobehaviour.en.json=4 entry, #N=0 · data/level54.monobehaviour.en.json=3 entry, #N=0 · data/level56.monobehaviour.en.json=8 entry, #N=0 · data/level58.monobehaviour.en.json=2 entry, #N=0 · data/level59.monobehaviour.en.json=1 entry, #N=0 · data/level6.monobehaviour.en.json=15 entry, #N=0 · data/level60.monobehaviour.en.json=3 entry, #N=0 · data/level61.monobehaviour.en.json=2 entry, #N=0 · data/level62.monobehaviour.en.json=2 entry, #N=0 · data/level63.monobehaviour.en.json=2 entry, #N=0 · data/level64.monobehaviour.en.json=3 entry, #N=0 · data/level65.monobehaviour.en.json=1 entry, #N=0 · data/level66.monobehaviour.en.json=4 entry, #N=0 · data/level67.monobehaviour.en.json=1 entry, #N=0 · data/level68.monobehaviour.en.json=2 entry, #N=0 · data/level7.monobehaviour.en.json=14 entry, #N=0 · data/level72.monobehaviour.en.json=1 entry, #N=0 · data/level78.monobehaviour.en.json=2 entry, #N=0 · data/level8.monobehaviour.en.json=15 entry, #N=0 · data/level80.monobehaviour.en.json=2 entry, #N=0 · data/level81.monobehaviour.en.json=7 entry, #N=0 · data/level84.monobehaviour.en.json=4 entry, #N=0 · data/level85.monobehaviour.en.json=1 entry, #N=0 · data/level86.monobehaviour.en.json=7 entry, #N=0 · data/level9.monobehaviour.en.json=15 entry, #N=0 · data/level93.monobehaviour.en.json=2 entry, #N=0 · data/level95.monobehaviour.en.json=1 entry, #N=0 · data/level98.monobehaviour.en.json=2 entry, #N=0 · data/level99.monobehaviour.en.json=1 entry, #N=0 · data/resources.monobehaviour.en.json=3834 entry, #N=0 · data/sharedassets0.monobehaviour.en.json=667 entry, #N=0 · data/sharedassets12.monobehaviour.en.json=8 entry, #N=0 · data/sharedassets14.monobehaviour.en.json=5 entry, #N=0 · data/sharedassets16.monobehaviour.en.json=1 entry, #N=0 · data/sharedassets3.monobehaviour.en.json=1 entry, #N=0 · data/sharedassets32.monobehaviour.en.json=7 entry, #N=0 · data/sharedassets61.monobehaviour.en.json=1 entry, #N=0 · ek2/globalgamemanagers.monobehaviour.en.json=16 entry, #N=0 · ek2/resources.monobehaviour.en.json=14939 entry, #N=0 · ek2/resources.monobehaviour.zh.json=7 entry, #N=0 · ek2/sharedassets0.monobehaviour.en.json=2290 entry, #N=0 · pb3/CAB-0f6195f2c3766622e04592dcd607b3d0.monobehaviour.en.json=15 entry, #N=0 · pb3/CAB-109216dff3fc45ecdd5dda7ca6334aa1.monobehaviour.en.json=15 entry, #N=0 · pb3/CAB-12579034dcd893175cc17b454d365dbf.monobehaviour.en.json=3 entry, #N=0 · pb3/CAB-175afe9cb4059e6c3d5b8da2693c7775.monobehaviour.en.json=7 entry, #N=0 · pb3/CAB-17ee7a28af442c0025b43da21a007628.monobehaviour.en.json=3 entry, #N=0 · pb3/CAB-2ac2e656cd8d7a69fcee6505fc8f4288.monobehaviour.en.json=15 entry, #N=0 · pb3/CAB-2cef4315c333122940f1c509bde9caed.monobehaviour.en.json=14 entry, #N=0 · pb3/CAB-31193810f8f976a20a8ff66051dcd606.monobehaviour.en.json=3 entry, #N=0 · pb3/CAB-36c06156a9e9af54091f5a8dbf081ce0.monobehaviour.en.json=15 entry, #N=0 · pb3/CAB-4295461986227a405e7d2cb113701290.monobehaviour.en.json=15 entry, #N=0 · pb3/CAB-47a35a6707439d3abc538a087add5056.monobehaviour.en.json=15 entry, #N=0 · pb3/CAB-47f8ec7b4c21cfb144ba28fc28680c62.monobehaviour.en.json=15 entry, #N=0 · pb3/CAB-535068e6ba4cc6723e33bd0f583ea594.monobehaviour.en.json=4 entry, #N=0 · pb3/CAB-5ac0cc79831b793f965b225b3233b6bf.monobehaviour.en.json=15 entry, #N=0 · pb3/CAB-5e22b216fe1915698a160b9ab962f2c6.monobehaviour.en.json=4 entry, #N=0 · pb3/CAB-61b06a092049503ba3b30f817f1d6750.monobehaviour.en.json=15 entry, #N=0 · pb3/CAB-67d69db024106aec24a156b4bea0cdd8.monobehaviour.en.json=15 entry, #N=0 · pb3/CAB-68c0ca3f7a9ccd2369954419a05cda99.monobehaviour.en.json=3 entry, #N=0 · pb3/CAB-69d97fc4ef6ed8ad259bc4696e8904e9.monobehaviour.en.json=5 entry, #N=0 · pb3/CAB-6ab87137e17ea4b7f53242ff92d3b58e.monobehaviour.en.json=15 entry, #N=0 · pb3/CAB-70be4337dd8ebecc0a495ee086096e7a.monobehaviour.en.json=15 entry, #N=0 · pb3/CAB-79371b35d13aa5e903603e677c2cbf2c.monobehaviour.en.json=15 entry, #N=0 · pb3/CAB-79641bc584d72a46a4d16d655951194e.monobehaviour.en.json=16 entry, #N=0 · pb3/CAB-85bb0d2413317232a143756df5ff48f6.monobehaviour.en.json=4 entry, #N=0 · pb3/CAB-86ca90684452de1cd8afc16c900734af.monobehaviour.en.json=15 entry, #N=0 · pb3/CAB-888c326d32095a5187f4c41bfda5bc98.monobehaviour.en.json=3 entry, #N=0 · pb3/CAB-89a4953f9fa09c8d9a592b3f37ca7a5f.monobehaviour.en.json=5 entry, #N=0 · pb3/CAB-8aec9e037d0f6474c2e028528ddfa151.monobehaviour.en.json=3 entry, #N=0 · pb3/CAB-9019d8722dea8227bc1c517a5f725266.monobehaviour.en.json=3 entry, #N=0 · pb3/CAB-91ce833db731743e19545a6771226f1f.monobehaviour.en.json=3 entry, #N=0 · pb3/CAB-a0d2f732a20b507d442f4cce0680c673.monobehaviour.en.json=15 entry, #N=0 · pb3/CAB-a80a5fdabd8776cd7d0cfeb5314db829.monobehaviour.en.json=15 entry, #N=0 · pb3/CAB-ac829ee14aa29e755b6c34e968ab4d83.monobehaviour.en.json=3 entry, #N=0 · pb3/CAB-b0213914f438e8b101a619b7597011f8.monobehaviour.en.json=15 entry, #N=0 · pb3/CAB-b166f848f34e38e0f281ea8566721aae.monobehaviour.en.json=15 entry, #N=0 · pb3/CAB-bdbbc788e0e0c3195778fc0ef239c978.monobehaviour.en.json=15 entry, #N=0 · pb3/CAB-be5c2b54fcc1f95d17e1db8ae9a884be.monobehaviour.en.json=15 entry, #N=0 · pb3/CAB-beb0c6804dea0a47bb4836be4017e6b5.monobehaviour.en.json=15 entry, #N=0 · pb3/CAB-d16591c72b64c50fbb231b4e4b1a6ab5.monobehaviour.en.json=15 entry, #N=0 · pb3/CAB-d50c3c619c3e06c73ebb5878fe64db01.monobehaviour.en.json=5 entry, #N=0 · pb3/CAB-db09a9e5c5c68b0d1d14c8f18eeb376c.monobehaviour.en.json=15 entry, #N=0 · pb3/CAB-def3c78deb6231dc3ee5a2e49c6ad2d6.monobehaviour.en.json=3 entry, #N=0 · pb3/CAB-def8ce57a5035ffe9a5b4c9e584dd9e8.monobehaviour.en.json=15 entry, #N=0 · pb3/CAB-df68f15e28015fca07bbd8a16b90aebf.monobehaviour.en.json=15 entry, #N=0 · pb3/CAB-e19e3302383062e7e3046907c58410bd.monobehaviour.en.json=15 entry, #N=0 · pb3/CAB-e428d174f82aa2ce90cd5f0d6eb7ab85.monobehaviour.en.json=3 entry, #N=0 · pb3/CAB-e6d9ac2af8a90fdbd5592565eef5cae3.monobehaviour.en.json=16 entry, #N=0 · pb3/CAB-e968a037f35609a9d9c79601f43dc9be.monobehaviour.en.json=3 entry, #N=0 · pb3/CAB-f2754d2261fbb1424344544f52ab89bc.monobehaviour.en.json=15 entry, #N=0 · pb3/CAB-f7828083d1d7ca133aa5ea4ddf66229a.monobehaviour.en.json=15 entry, #N=0 · pb3/CAB-feb41bd9348c998a2b59859c65396fa7.monobehaviour.en.json=15 entry, #N=0 · pb3/CAB-ffbb13c5aad70652c0026660e900d3b4.monobehaviour.en.json=15 entry, #N=0 · pb3/globalgamemanagers.monobehaviour.en.json=1 entry, #N=0 · pb3/resources.monobehaviour.en.json=6261 entry, #N=0 · pb3/resources.monobehaviour.zh.json=2039 entry, #N=0 · pb3/sharedassets0.monobehaviour.en.json=2 entry, #N=0 · pb3/sharedassets1.monobehaviour.en.json=7830 entry, #N=0 · passpartout/resources.monobehaviour.en.json=2707 entry, #N=0 · passpartout/resources.monobehaviour.zh.json=1715 entry, #N=0 · passpartout/sharedassets6.monobehaviour.en.json=3 entry, #N=0",
-      "ms": 139
+      "ms": 153
     },
     "extract_impurity_measured": {
       "ok": true,
       "detail": "PP en sai 16/2693 · PP zh sai 18 · 9K en sai 20/11352 · 9K zh sai 125 · thu tu term 9K: dau 'Achievement_HisWinningness' (Joseph: 'Achievement_HisWinningness')",
-      "ms": 139
+      "ms": 153
     },
     "ui_translate_from_select": {
       "ok": true,
       "detail": "options=[\"en\",\"zh\"] mac dinh=en",
-      "ms": 367
+      "ms": 387
     },
     "ui_offline_translate_honest_info": {
       "ok": true,
       "detail": "Dịch bằng từ điển offline (tiếng Anh → tiếng Việt): 5 key. Chưa dịch được 1 chuỗi (từ điển không biết — giữ nguyên, không tính là xong). Bỏ qua 2 chuỗi không thuộc tiếng Anh. Mất: 0 key · Ngôn ngữ khác bị đổi: 0 key. Bản",
-      "ms": 5940
+      "ms": 10374
     },
     "ui_offline_translate_output_keeps_all_keys": {
       "ok": true,
       "detail": "keys=5 · De giu nguyen: true",
-      "ms": 5941
+      "ms": 10374
     },
     "ui_translation_kept_in_session": {
       "ok": true,
-      "detail": "{\"has\":true,\"from\":\"en\",\"to\":\"vi\",\"keys\":5,\"checkComplete\":true,\"prov\":{\"origin\":\"manual\",\"extractName\":null,\"source\":null,\"locale\":\"en\",\"gameFile\":null,\"from\":\"en\",\"to\":\"vi\",\"keys\":5,\"at\":\"2026-11-16T15:44:15.955Z\"}}",
-      "ms": 5943
+      "detail": "{\"has\":true,\"from\":\"en\",\"to\":\"vi\",\"keys\":5,\"checkComplete\":true,\"prov\":{\"origin\":\"manual\",\"extractName\":null,\"source\":null,\"locale\":\"en\",\"gameFile\":null,\"from\":\"en\",\"to\":\"vi\",\"keys\":5,\"at\":\"2026-11-16T16:00:52.241Z\"}}",
+      "ms": 10378
     },
     "ui_download_gate_blocks_incomplete": {
       "ok": true,
       "detail": "Chưa cho tải: bản dịch chưa đầy đủ — thiếu 2 key (vd k1, k2); mới dịch 1/5 key. Bấm “Tiếp tục dịch” để dịch tiếp, hoặc kiểm tra lại file nguồn.",
-      "ms": 112
+      "ms": 173
     },
     "ui_download_allowed_when_complete": {
       "ok": true,
       "detail": "file: translated.vi.json",
-      "ms": 28
+      "ms": 48
     },
     "ui_no_page_errors": {
       "ok": true,
       "detail": "",
-      "ms": 199
+      "ms": 421
     },
     "regress_module_worker": {
       "ok": true,
       "detail": "=== XONG: 17 mục, 0 FAIL — xem module_worker_results.md ===",
-      "ms": 5695
+      "ms": 8244
     },
     "regress_c2": {
       "ok": true,
       "detail": "==== TỔNG: 13 mục, 0 FAIL ====",
-      "ms": 21742
+      "ms": 28818
     },
     "regress_c9": {
       "ok": true,
       "detail": "===== KẾT QUẢ C9: 16/16 PASS (0 FAIL) =====",
-      "ms": 62706
+      "ms": 115646
     },
     "regress_item8_static": {
       "ok": true,
       "detail": "{\"fails\": []}",
-      "ms": 101
+      "ms": 275
     },
     "regress_full_suite_python": {
       "ok": true,
       "detail": "1696 test, OK",
-      "ms": 56806
+      "ms": 79807
     },
     "ui_translation_provenance_in_session": {
       "ok": true,
-      "detail": "prov={\"origin\":\"manual\",\"extractName\":null,\"source\":null,\"locale\":\"en\",\"gameFile\":null,\"from\":\"en\",\"to\":\"vi\",\"keys\":5,\"at\":\"2026-11-16T15:44:15.955Z\"}",
-      "ms": 5943
+      "detail": "prov={\"origin\":\"manual\",\"extractName\":null,\"source\":null,\"locale\":\"en\",\"gameFile\":null,\"from\":\"en\",\"to\":\"vi\",\"keys\":5,\"at\":\"2026-11-16T16:00:52.241Z\"}",
+      "ms": 10378
     },
     "ui_provenance_from_extract_entry": {
       "ok": true,
-      "detail": "{\"origin\":\"extract\",\"extractName\":\"resources.monobehaviour.en.json\",\"source\":\"9kings.ipa::Payload/9Kings.app/Data/resources.assets\",\"locale\":\"en\",\"gameFile\":\"9kings.ipa\",\"from\":\"en\",\"to\":\"vi\",\"keys\":2707,\"at\":\"2026-11-16T15:44:15.980Z\"}",
-      "ms": 5945
+      "detail": "{\"origin\":\"extract\",\"extractName\":\"resources.monobehaviour.en.json\",\"source\":\"9kings.ipa::Payload/9Kings.app/Data/resources.assets\",\"locale\":\"en\",\"gameFile\":\"9kings.ipa\",\"from\":\"en\",\"to\":\"vi\",\"keys\":2707,\"at\":\"2026-11-16T16:00:52.340Z\"}",
+      "ms": 10381
     },
     "ui_provenance_sidecar_download": {
       "ok": true,
-      "detail": "file: translated.vi.provenance.json · prov={\"origin\":\"manual\",\"extractName\":null,\"source\":null,\"locale\":\"en\",\"gameFile\":null,\"from\":\"en\",\"to\":\"vi\",\"keys\":5,\"at\":\"2026-11-16T15:44:15.955Z\"}",
-      "ms": 63
+      "detail": "file: translated.vi.provenance.json · prov={\"origin\":\"manual\",\"extractName\":null,\"source\":null,\"locale\":\"en\",\"gameFile\":null,\"from\":\"en\",\"to\":\"vi\",\"keys\":5,\"at\":\"2026-11-16T16:00:52.241Z\"}",
+      "ms": 119
     }
   },
   "fixture_counts": {

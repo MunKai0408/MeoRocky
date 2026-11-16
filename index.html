@@ -76,6 +76,11 @@
   label { font-size: 14px; }
   .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
   .visually-hidden { position: absolute; width: 1px; height: 1px; opacity: 0; overflow: hidden; }
+  /* Phần B (Mod tìm theo chữ): kết quả tìm kiếm vẽ dạng thẻ xếp dọc
+     (không dùng bảng — bảng 5 cột bóp nút "Lưu" thành chữ xếp dọc ở
+     390px); key dài được ngắt từ, không vỡ chữ cái. */
+  #mod-search-results .mod-result-item { border-bottom: 1px solid var(--border); padding: 8px 0; overflow-wrap: anywhere; }
+  #mod-search-results .mod-result-item input[type=text] { width: 100%; min-width: 0; }
 
   /* ---- Header ---- */
   .topbar { position: sticky; top: 0; z-index: 60; display: flex; align-items: center;
@@ -547,6 +552,39 @@
     gốc (script mặc định dry-run, chỉ ghi thật với --allow-write, không bao
     giờ ghi đè file gốc). Asset nhị phân chỉ đọc trên web — pack chỉ chứa
     thay đổi text.</p>
+
+    <h3>Tìm theo chữ + nhập file .json (phần B)</h3>
+    <p class="note">Tìm theo CHỮ trong file JSON đang mở — không chỉ tìm theo id (file JSON trích xuất đôi khi không có id): gõ chữ, tool tìm cả trong key lẫn value, mặc định không phân biệt hoa/thường. Sửa trực tiếp entry tìm được ngay trong danh sách, rồi đưa vào ô “Bản dịch” bên dưới để lập plan Mod, hoặc tải file .json đã sửa về. File JSON lấy từ file vừa trích xuất, từ bản dịch xong ở tab Dịch, hoặc nhập từ máy.</p>
+    <div class="row">
+      <label style="flex:1;min-width:180px">File JSON trích xuất vừa rồi:
+        <select id="mod-json-source"></select>
+      </label>
+      <button id="btn-mod-load-extract" class="secondary">Lấy file trích xuất đã chọn</button>
+      <button id="btn-mod-load-translate" class="secondary">Lấy từ bản dịch</button>
+      <button id="btn-mod-import" class="secondary">Nhập file .json…</button>
+      <input type="file" id="mod-json-file" accept=".json,application/json" multiple class="visually-hidden">
+    </div>
+    <p id="mod-json-info" class="sub">Chưa mở file JSON nào — lấy từ file trích xuất, bản dịch, hoặc nhập file .json từ máy.</p>
+    <div class="row">
+      <label style="flex:1;min-width:180px">Tìm chữ:
+        <input type="text" id="mod-search" placeholder="vd: setting">
+      </label>
+      <label>Tìm trong:
+        <select id="mod-search-scope" style="width:auto">
+          <option value="all" selected>Cả key + value</option>
+          <option value="key">Chỉ key</option>
+          <option value="value">Chỉ value</option>
+        </select>
+      </label>
+      <label><input type="checkbox" id="mod-search-case"> Phân biệt hoa/thường</label>
+      <button id="btn-mod-search">Tìm</button>
+    </div>
+    <p id="mod-search-count" class="sub"></p>
+    <div id="mod-search-results"></div>
+    <div class="row">
+      <button id="btn-mod-to-plan" class="secondary" disabled>Đưa vào ô Bản dịch (để lập plan)</button>
+      <button id="btn-mod-download-json" class="secondary" disabled>Tải file .json đã sửa</button>
+    </div>
 
     <h3>Kế hoạch Mod (plan JSON — mục 8)</h3>
     <p class="note">Tách planner/executor: lập plan từ bản dịch (JSON key → giá
