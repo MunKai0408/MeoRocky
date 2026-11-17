@@ -82,7 +82,7 @@ ENGINE_SUPPORT = {
         "supported": [
             {"op": "Liệt kê entry trong IPA/ZIP", "plugin": None},
             {"op": ("Inspect bundle .unity3d / file .assets (UnityFS tới v8, "
-                    "SerializedFile v15–v23)"), "plugin": None},
+                    "SerializedFile v15–v26)"), "plugin": None},
             {"op": ("Trích xuất text (TextAsset + MonoBehaviour trong "
                     "resources.assets)"), "plugin": None},
             {"op": "Dịch sang tiếng Việt (Google/MyMemory/offline)",
