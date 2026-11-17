@@ -826,6 +826,45 @@ def _string_table_collection(name, loc):
     return name
 
 
+def _st_key_sort_id(key, key_to_id):
+    """m_Id để sắp key StringTable (khớp thứ tự file mẫu P0-3).
+
+    File mẫu xếp key trong mỗi collection theo m_Id tăng dần của
+    SharedTableData (đo thật trên 9 Kings v1.0.6: đúng cả 6 collection;
+    2 collection phân biệt là Buildings và Spells — thứ tự asset của
+    StringTable lẫn SharedTableData đều khác mẫu, chỉ sort theo m_Id
+    mới khớp). Key không có trong SharedTableData (dạng "id_<m_Id>")
+    sắp theo số m_Id trong tên; key không rõ m_Id xếp cuối, giữ thứ
+    tự cũ (sort ổn định). Quy tắc chung theo dữ liệu asset, không
+    hardcode game/build nào."""
+    mid = key_to_id.get(key)
+    if isinstance(mid, int):
+        return (0, mid, "")
+    if isinstance(key, str) and key.startswith("id_"):
+        try:
+            return (0, int(key[3:]), "")
+        except ValueError:
+            pass
+    return (1, 0, key)
+
+
+def _sort_st_bucket(bucket, key_to_id):
+    """Trả dict mới với key trong bucket xếp theo m_Id tăng dần."""
+    return dict(sorted(bucket.items(),
+                       key=lambda kv: _st_key_sort_id(kv[0], key_to_id)))
+
+
+def _invert_shared_keys(shared_keys):
+    """{collection: {key: m_Id}} từ {collection: {m_Id: key}} (giữ m_Id đầu)."""
+    out = {}
+    for coll, keys in (shared_keys or {}).items():
+        inv = {}
+        for i, k in keys.items():
+            inv.setdefault(k, i)
+        out[coll] = inv
+    return out
+
+
 def join_string_tables_grouped(tables, shared):
     """Join StringTable + SharedTableData theo m_Id, giữ riêng từng collection.
 
@@ -903,6 +942,13 @@ def join_string_tables_grouped(tables, shared):
             notes.append("bảng %r (locale %s): %d/%d entry không có key trong "
                          "SharedTableData, dùng id làm key"
                          % (name, loc, n_id, len(item.get("entries") or {})))
+    # Thứ tự key trong mỗi bucket: theo m_Id tăng dần của SharedTableData
+    # (khớp file mẫu P0-3) — KHÔNG giữ thứ tự asset của bảng StringTable
+    # từng locale (thứ tự đó khác mẫu ở Buildings/Spells trên 9K v1.0.6,
+    # đo thật 2026-11-17). Xem _st_key_sort_id.
+    key_to_id = _invert_shared_keys(shared_map)
+    grouped = {gkey: _sort_st_bucket(bucket, key_to_id.get(gkey[2]) or {})
+               for gkey, bucket in grouped.items()}
     return grouped, notes, conflicts, shared_map
 
 
@@ -1099,7 +1145,26 @@ def _fill_string_table_universe(grouped, shared_keys):
                 if key not in bucket:
                     bucket[key] = ""
                     filled += 1
-    return out, filled
+    # Sắp lại thứ tự sau khi điền (đo thật 2026-11-17, 9K v1.0.6):
+    # (a) key trong mỗi bucket theo m_Id tăng dần — key điền "" phải
+    #     nằm đúng vị trí m_Id của nó, không dồn cuối bucket (mẫu để
+    #     Spells/Cemetery_Desc giữa khối, không phải cuối);
+    # (b) thứ tự collection theo lần gặp đầu trong SharedTableData
+    #     (Policies, Buildings, ... — khớp file mẫu), không xếp theo
+    #     chữ cái và không theo thứ tự gặp bảng StringTable.
+    key_to_id = _invert_shared_keys(shared_keys)
+    coll_order = {coll: idx for idx, coll in enumerate(shared_keys)}
+    groups: Dict[Tuple[str, str], List[Tuple[str, str, str]]] = {}
+    for t in out:
+        groups.setdefault((t[0], t[1]), []).append(t)
+    reordered: Dict[Tuple[str, str, str], Dict[str, str]] = {}
+    for (bundle, loc), keys in groups.items():
+        # Sort ổn định: collection ngoài SharedTableData giữ thứ tự gặp
+        # đầu, xếp sau các collection đã biết.
+        keys.sort(key=lambda t: coll_order.get(t[2], len(coll_order)))
+        for t in keys:
+            reordered[t] = _sort_st_bucket(out[t], key_to_id.get(t[2]) or {})
+    return reordered, filled
 
 
 def _build_layers(root_vfs, inv: List[disc.InventoryEntry], limits, backend, log,
@@ -1270,15 +1335,20 @@ def _build_layers(root_vfs, inv: List[disc.InventoryEntry], limits, backend, log
     #   file LOẠI khỏi file locale (rác vứt hết theo quyết định người dùng).
     # Thứ tự key GIỮ NGUYÊN thứ tự gốc trong game (ý 7): dict Python giữ
     # thứ tự chèn, KHÔNG sort_keys ở đây (cũng không sorted() key ở các
-    # bước sau — xem _mb_generic_kv, export_key_value_json). Chỉ sorted()
-    # ở vòng duyệt FILE/bundle dưới đây là thứ tự duyệt file, không ảnh
-    # hưởng thứ tự key trong file.
+    # bước sau — xem _mb_generic_kv, export_key_value_json). Riêng khối
+    # StringTable: thứ tự key trong mỗi collection theo m_Id tăng dần và
+    # thứ tự collection theo lần gặp đầu trong SharedTableData (khớp file
+    # mẫu P0-3 — đo thật 2026-11-17, xem _fill_string_table_universe và
+    # _st_key_sort_id); vì vậy vòng duyệt grouped dưới đây KHÔNG sorted()
+    # lại theo chữ cái (sorted() cũ xếp collection Buildings trước
+    # Policies, lệch mẫu). Chỉ sorted() ở vòng duyệt FILE/bundle là thứ
+    # tự duyệt file, không ảnh hưởng thứ tự key trong file.
     if mb_tables:
         grouped, join_notes, join_conflicts, shared_keys = \
             join_string_tables_grouped(mb_tables, mb_shared)
         grouped, n_filled = _fill_string_table_universe(grouped, shared_keys)
         per_file: Dict[Tuple[str, str], Dict[str, str]] = {}
-        for (bundle_path, loc, coll), kv in sorted(grouped.items()):
+        for (bundle_path, loc, coll), kv in grouped.items():
             bucket = per_file.setdefault((bundle_path, loc), {})
             for k, v in kv.items():
                 bucket["%s/%s" % (coll, k)] = v

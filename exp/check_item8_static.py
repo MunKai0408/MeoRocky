@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Kiem tra tinh muc 8: sdk/plan.py chi stdlib + Python 3.9; manifest
 (files.json 95, tests.json 167); sw.js precache co sdk/plan.py va
-CACHE_VERSION v24-20261117 (C3 them fixtures/selftest.zip); bridge co 3 op plan_*. In JSON {"fails": [...]}.
+CACHE_VERSION v25-20261117 (C3 them fixtures/selftest.zip); bridge co 3 op plan_*. In JSON {"fails": [...]}.
 """
 import ast
 import json
@@ -50,8 +50,8 @@ if "pb3/tests/test_plan.py" not in tests:
 sw = (SITE / "sw.js").read_text(encoding="utf-8")
 if '"pb3/sdk/plan.py"' not in sw:
     fails.append("sw.js precache thieu pb3/sdk/plan.py")
-if 'CACHE_VERSION = "v24-20261117"' not in sw:
-    fails.append("sw.js CACHE_VERSION khong phai v24-20261117")
+if 'CACHE_VERSION = "v25-20261117"' not in sw:
+    fails.append("sw.js CACHE_VERSION khong phai v25-20261117")
 
 # 4. bridge co 3 op + khong goi mang trong plan.py.
 bridge = (SITE / "pb3" / "bridge.py").read_text(encoding="utf-8")

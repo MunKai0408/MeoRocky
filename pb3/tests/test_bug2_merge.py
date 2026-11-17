@@ -34,6 +34,7 @@ from sdk.extraction import (
     _fill_string_table_universe,
     _language_source_all_columns,
     _language_source_virtual_files,
+    join_string_tables_grouped,
     merge_language_outcomes,
 )
 from sdk.rebuild import _collect_mb_keys
@@ -297,6 +298,63 @@ class StringTableUniverseCase(unittest.TestCase):
         out, filled = _fill_string_table_universe(grouped, shared)
         self.assertEqual(out[("b", "en", "Policies")], {"A": "real"})
         self.assertEqual(filled, 0)
+
+
+class StringTableOrderCase(unittest.TestCase):
+    """Thứ tự StringTable khớp file mẫu P0-3 (2026-11-17, fix sau BUG#2).
+
+    Đo thật trên 9 Kings v1.0.6: file mẫu xếp key trong mỗi collection
+    theo m_Id tăng dần của SharedTableData (đúng cả 6 collection; 2
+    collection phân biệt Buildings/Spells — thứ tự asset của StringTable
+    lẫn SharedTableData đều khác mẫu), và xếp collection theo lần gặp
+    đầu trong SharedTableData (Policies, Buildings, ...), không theo
+    chữ cái. Test dưới đây khóa đúng 3 quy tắc đó bằng dữ liệu tổng hợp
+    (m_Id cố tình lệch thứ tự asset để phân biệt)."""
+
+    def _st(self, name, locale, entries):
+        return {"name": name, "locale": locale, "entries": dict(entries)}
+
+    def _shared(self, name, coll, entries):
+        return {"name": name, "collection": coll, "entries": dict(entries)}
+
+    def test_join_orders_keys_by_shared_m_id(self):
+        # Asset order: Farm(30), Castle(10), Concabulator(20) — m_Id
+        # order phải là Castle, Concabulator, Farm (dù ST đọc ngược).
+        shared = [self._shared("B Shared", "Buildings",
+                               {30: "Farm", 10: "Castle", 20: "Concabulator"})]
+        tables = [("bun", self._st("Buildings_en", "en",
+                                   {20: "Concabulator", 30: "Farm", 10: "Castle"}))]
+        grouped, _n, _c, _u = join_string_tables_grouped(tables, shared)
+        self.assertEqual(list(grouped[("bun", "en", "Buildings")]),
+                         ["Castle", "Concabulator", "Farm"])
+
+    def test_join_id_fallback_keys_sort_by_numeric_id(self):
+        shared = [self._shared("B Shared", "Buildings", {1: "A", 20: "B"})]
+        tables = [("bun", self._st("Buildings_en", "en",
+                                   {20: "B", 9: "Orphan", 1: "A"}))]
+        grouped, _n, _c, _u = join_string_tables_grouped(tables, shared)
+        self.assertEqual(list(grouped[("bun", "en", "Buildings")]),
+                         ["A", "id_9", "B"])
+
+    def test_fill_places_filled_keys_by_m_id_not_appended(self):
+        # Key điền "" (A, m_Id 5) phải nằm GIỮA theo m_Id, không dồn cuối.
+        grouped = {("b", "en", "Buildings"): {"B": "x", "C": "y"}}
+        shared = {"Buildings": {5: "A", 10: "B", 15: "C"}}
+        out, filled = _fill_string_table_universe(grouped, shared)
+        self.assertEqual(list(out[("b", "en", "Buildings")]), ["A", "B", "C"])
+        self.assertEqual(out[("b", "en", "Buildings")]["A"], "")
+        self.assertEqual(filled, 1)
+
+    def test_fill_orders_collections_by_shared_first_seen(self):
+        # grouped gặp Buildings trước, nhưng shared gặp Policies trước
+        # -> Policies phải đứng trước Buildings (khớp file mẫu).
+        grouped = {("b", "en", "Buildings"): {"Farm": "x"},
+                   ("b", "en", "Policies"): {"Arcane": "y"}}
+        shared = {"Policies": {1: "Arcane"},
+                  "Buildings": {1: "Farm"}}
+        out, _filled = _fill_string_table_universe(grouped, shared)
+        self.assertEqual([t[2] for t in out],
+                         ["Policies", "Buildings"])
 
 
 class RebuildGroupedKeysCase(unittest.TestCase):

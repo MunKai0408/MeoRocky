@@ -26,6 +26,7 @@ Nhãn: mọi số trong báo cáo là [ĐÃ ĐO THẬT] trên file game thật.
 """
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -46,6 +47,11 @@ DEFAULTS = {
     "sample_en": "/home/hatch/workspace/user/files/en.json",
     "sample_zhtw": "/home/hatch/workspace/user/files/zh-TW.json",
 }
+
+
+def _md5_file(path):
+    with open(path, "rb") as fh:
+        return hashlib.md5(fh.read()).hexdigest()
 
 
 def _load_json(path):
@@ -93,6 +99,17 @@ def _case_build68(bridge, args):
     checks.append(("en.json == en-build68.json (từng key/giá trị)",
                    en == expected_en,
                    "en=%d key, expected=%d key" % (len(en), len(expected_en))))
+    # Thứ tự key cũng là hợp đồng (fix StringTable 2026-11-17): dict ==
+    # không kiểm thứ tự, nên so riêng danh sách key + md5 file thô.
+    checks.append(("en.json thứ tự key giống en-build68.json",
+                   list(en) == list(expected_en),
+                   "%d/%d vị trí key giống nhau"
+                   % (sum(1 for a, b in zip(en, expected_en) if a == b),
+                      len(expected_en))))
+    checks.append(("en.json md5 file thô giống en-build68.json",
+                   os.path.exists(en_path)
+                   and _md5_file(en_path) == _md5_file(args.build68_expected),
+                   _md5_file(en_path) if os.path.exists(en_path) else "thiếu file"))
     checks.append(("en.json 2086 key", len(en) == 2086, len(en)))
     for loc in ("zh-CN", "zh-TW"):
         p = os.path.join(out_dir, loc + ".json")
@@ -140,6 +157,16 @@ def _case_ipa(bridge, args, name, source, sample_en, sample_zhtw,
         checks.append(("en.json == file mẫu en.json",
                        kvs["en.json"] == sample,
                        "khác %d key" % len(set(kvs["en.json"].items()) ^ set(sample.items()))))
+        # Thứ tự key cũng là hợp đồng (fix StringTable 2026-11-17):
+        # dict == không kiểm thứ tự, nên so riêng danh sách key + md5 thô.
+        checks.append(("en.json thứ tự key giống file mẫu",
+                       list(kvs["en.json"]) == list(sample),
+                       "%d/%d vị trí key giống nhau"
+                       % (sum(1 for a, b in zip(kvs["en.json"], sample) if a == b),
+                          len(sample))))
+        checks.append(("en.json md5 file thô giống file mẫu",
+                       _md5_file(os.path.join(out_dir, "en.json")) == _md5_file(sample_en),
+                       _md5_file(os.path.join(out_dir, "en.json"))))
     if sample_zhtw and os.path.exists(sample_zhtw) and "zh-TW.json" in kvs:
         sample = _load_json(sample_zhtw)
         diff = ({k for k in sample if kvs["zh-TW.json"].get(k) != sample[k]}
@@ -162,6 +189,13 @@ def _case_ipa(bridge, args, name, source, sample_en, sample_zhtw,
                        diff <= allowed,
                        "khác %d key, trong đó %d key fallback cho phép"
                        % (len(diff), len(diff & allowed))))
+        # Thứ tự key cũng là hợp đồng (fix StringTable 2026-11-17);
+        # zh-TW không so md5 thô vì 26 key Policies có giá trị thật.
+        checks.append(("zh-TW.json thứ tự key giống file mẫu",
+                       list(kvs["zh-TW.json"]) == list(sample),
+                       "%d/%d vị trí key giống nhau"
+                       % (sum(1 for a, b in zip(kvs["zh-TW.json"], sample) if a == b),
+                          len(sample))))
     checks.append(("bridge ok", bool(res.get("ok")), res.get("error", "")))
     failed = [c for c in checks if not c[1]]
     return {"case": name, "status": "FAIL" if failed else "PASS",
