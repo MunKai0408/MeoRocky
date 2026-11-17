@@ -91,8 +91,6 @@ ENGINE_SUPPORT = {
              "plugin": None},
         ],
         "unsupported": [
-            {"op": "UnityFS v9: chỉ đọc, chưa sửa được",
-             "reason": "chưa có backend ghi v9"},
             {"op": "Bundle Unity mã hoá",
              "reason": "báo lỗi E_ENCRYPTED, không giải mã"},
         ],

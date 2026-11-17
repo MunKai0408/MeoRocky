@@ -1444,15 +1444,27 @@ def decompress_file(path):
         return _err(e)
 
 
-def font_scan(path):
-    """Quét 1 font TTF: đọc cmap, báo độ phủ ký tự tiếng Việt."""
+def font_scan(path, face_index=None):
+    """Quét 1 font TTF/OTF: đọc cmap, báo độ phủ ký tự tiếng Việt.
+
+    TTC mà không cho face_index thì trả danh sách face để người gọi chọn
+    (ok=True, kind="ttc", faces=[...]) thay vì lỗi.
+    """
     try:
         from sdk import font as f
 
         _check_size(path)
         data = open(path, "rb").read()
-        rep = f.coverage(data, where=os.path.basename(path))
-        info = f.parse_font(data, where=os.path.basename(path))
+        name = os.path.basename(path)
+        if f.detect_font_kind(data) == "ttc" and face_index is None:
+            faces = f.list_ttc_faces(data, where=name)
+            return json.dumps({
+                "ok": True, "kind": "ttc", "faces": faces,
+                "summary": ("font collection (.ttc) có %d face — chọn 1 face "
+                            "để quét/gộp" % len(faces)),
+            }, ensure_ascii=False)
+        rep = f.coverage(data, where=name, face_index=face_index)
+        info = f.parse_font(data, where=name, face_index=face_index)
         return json.dumps({
             "ok": True, "family": rep.family, "kind": rep.kind,
             "num_glyphs": int(rep.num_glyphs), "total": int(rep.total),
@@ -1462,6 +1474,8 @@ def font_scan(path):
             "missing_chars": [chr(c) for c in rep.missing[:50]],
             "summary": rep.summary_vi(),
             "warnings": list(info.warnings or []),
+            "face_index": int(info.face_index),
+            "face_count": int(info.face_count),
         }, ensure_ascii=False)
     except Exception as e:  # noqa: BLE001
         return _err(e)
@@ -1484,11 +1498,13 @@ def font_donor_info(donor_path):
         return _err(e)
 
 
-def font_merge(path, donor_path):
+def font_merge(path, donor_path, target_face=0, donor_face=0):
     """Gộp glyph tiếng Việt còn thiếu từ font nguồn vào font đích.
 
-    Trả font mới ra /tmp/merged.ttf để JS tải về. Chỉ font TrueType glyf;
-    atlas SDF của TextMeshPro không tái tạo được (giới hạn thật của PB3).
+    Trả font mới ra /tmp/merged.ttf (hoặc /tmp/merged.ttc khi đích là
+    .ttc) để JS tải về. Chỉ font TrueType glyf; atlas SDF của
+    TextMeshPro không tái tạo được (giới hạn thật của PB3). TTC: chọn
+    face bằng target_face/donor_face (mặc định face 0).
     """
     try:
         from sdk import font as f
@@ -1498,8 +1514,10 @@ def font_merge(path, donor_path):
         donor = open(donor_path, "rb").read()
         res = f.merge_vietnamese(
             target, donor,
-            progress_fn=lambda d, t: _emit("font", d, t))
-        out = "/tmp/merged.ttf"
+            progress_fn=lambda d, t: _emit("font", d, t),
+            target_face=target_face, donor_face=donor_face)
+        out = ("/tmp/merged.ttc"
+               if f.detect_font_kind(target) == "ttc" else "/tmp/merged.ttf")
         open(out, "wb").write(res.data)
         return json.dumps({
             "ok": True, "dest": out,
@@ -1507,6 +1525,7 @@ def font_merge(path, donor_path):
             "donor_missing": len(res.donor_missing),
             "glyphs_copied": int(res.glyphs_copied),
             "glyphs_total": int(res.glyphs_total),
+            "face_index": res.face_index,
             "warnings": list(res.warnings or [])[:20],
         }, ensure_ascii=False)
     except Exception as e:  # noqa: BLE001

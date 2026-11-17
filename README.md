@@ -24,7 +24,7 @@ GitHub API không bật được Pages nên bước này cần bấm tay:
 3. Chọn tab tính năng:
    - **Danh sách**: liệt kê entry của ZIP/IPA.
    - **Unity**: inspect bundle .unity3d hoặc file .assets độc lập
-     (parser thuần của PB3, UnityFS v6–v9 — v9 chỉ đọc, SerializedFile v23).
+     (parser thuần của PB3, UnityFS v6–v9, SerializedFile v23).
    - **Trích xuất**: pipeline trích xuất đầy đủ của PB3, tải về `extract.zip`.
    - **Dịch**: dịch JSON key-value bằng Google Translate thật qua
      `fetch()` (cần mạng; 1 chuỗi/request, cách 0,4 giây) — Google lỗi
@@ -169,8 +169,7 @@ Hai điều chỉnh ở tầng khởi động (không sửa mã PB3): dựng reg
   dict; key MonoBehaviour/StringTable vào danh sách “không ép được” kèm
   lý do, không im lặng bỏ (chưa có đường ghi MonoBehaviour an toàn).
   Bundle độc lập ≥64MB dùng đường rebuild streaming (entry đơn >128MB
-  thì từ chối, hướng iSH); bundle UnityFS v9 chỉ đọc; bundle mã hóa bị
-  từ chối (không giải mã). File >400MB có confirm riêng về RAM/streaming;
+  thì từ chối, hướng iSH); bundle mã hóa bị từ chối (không giải mã). File >400MB có confirm riêng về RAM/streaming;
   flow trình duyệt (E) chưa kiểm chứng trên Safari thật (xem
   `exp/analysis_rebuild_results.md`).
 - **Cổng kiểm tra (bước 6, P0-2):** chỉ áp cho flow (E); đường plan/mod
@@ -262,7 +261,7 @@ stand-in; xem `exp/parity_results.md` và `exp/full_port_results.md`).
 | Support matrix | Có (sinh từ dữ liệu thật) | Có | Web: cột “ngày test” hiện “chưa có” vì trình duyệt không nạp `tests/corpus/*.json` (file có trong repo, chỉ dùng cho CI); cột “số game đã test” chỉ đếm KB đã lưu trên máy này |
 | Plugin list 20 | Có (20/20 [ok] khi boot) | Có | 12 format + 7 engine/detect + zip |
 | Test suite | **Chỉ ở CI** (`.github/workflows/test.yml`) | Chạy tay trên iSH | Suite không chạy được trong trình duyệt (cần threading/subprocess/CLI thật). Xem mục CI dưới |
-| UnityPy | **Không có** (thiếu wheel `etcpak`) | Có (1.25.4) | Web inspect Unity bằng parser thuần (UnityFS v6–v9 — v9 chỉ đọc, SerializedFile v23) |
+| UnityPy | **Không có** (thiếu wheel `etcpak`) | Có (1.25.4) | Web inspect Unity bằng parser thuần (UnityFS v6–v9, SerializedFile v23) |
 | Giới hạn file | Tối đa **2GB** (bằng iSH) | Tối đa 2GB | Web: file gần 2GB vẫn có thể làm Safari trên iPhone văng tab vì RAM (tab chỉ dùng được khoảng 1–1,5GB); file lớn nên dùng bản iSH |
 | Lần mở trang đầu | Cần mạng (tải trang + Pyodide ~13MB cùng origin, không CDN) | Không cần (đã cài sẵn) | Sau lần đầu, xử lý hoàn toàn trên máy; riêng dịch Google mới cần mạng |
 

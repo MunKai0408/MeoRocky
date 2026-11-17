@@ -10,10 +10,19 @@ achievements.' đều nằm trong run dài nên quét thô KHÔNG thấy chúng)
 Đọc đúng bảng literal thì mỗi chuỗi tách chính xác từng cái.
 
 Bố cục bảng literal theo version metadata [ĐÃ ĐO THẬT]:
-- v31 (Unity 6000.0, Tom / PB3 / EK2): entry 8 byte (length, dataIndex);
-  header: [tableOffset, tableByteSize, dataOffset, dataSize]; số entry =
-  tableByteSize // 8. Kiểm chứng: Tom 12.090 entry, 11.819 literal sạch
-  (97,8%), 3.191 chuỗi có khoảng trắng.
+- v24/v27/v29/v31 (pairs): entry 8 byte (length, dataIndex); header:
+  [tableOffset, tableByteSize, dataOffset, dataSize]; số entry =
+  tableByteSize // 8. v31 kiểm chứng trên file thật: Tom 12.090 entry,
+  11.819 literal sạch (97,8%), 3.191 chuỗi có khoảng trắng. v24/27/29
+  cùng layout theo Il2CppDumper (bảng literal đọc bằng
+  ReadArray(stringLiteralOffset, stringLiteralCount / sizeof(
+  Il2CppStringLiteral)) với entry 8 byte, không phân biệt version)
+  và rea/docs/il2cpp-metadata.md ("Versions 24 to 31 record no
+  counts" — header 4 field, không có số entry; v24 header 264 byte,
+  Unity 2019.4.41f1; v27 Unity 2020.3.49f1; v29 Unity 2022.3.30f1).
+  Chỉ kiểm chứng [FIXTURE] (fixture tổng hợp) cho v24/27/29 — bộ mẫu
+  thật chỉ có v31/v39. v32–v38 chưa từng phát hành công khai
+  (Il2CppDumper PR #925), v40+ chưa tồn tại — vẫn từ chối.
 - v39 (9K v1.0.6): entry 4 byte dataIndex (bảng delta — độ dài suy ra từ
   entry kế tiếp); header: [tableOffset, tableByteSize, entryCount,
   dataOffset, dataSize]; literal i = data[idx[i]:idx[i+1]]; idx cuối =
@@ -40,8 +49,9 @@ LABEL = "il2cpp-literals"
 IL2CPP_MAGIC = 0xFAB11BAF
 IL2CPP_MAGIC_BYTES = b"\xaf\x1b\xb1\xfa"  # struct.pack("<I", IL2CPP_MAGIC)
 # version -> (entry_size, field_count_after_version)
-# v31: (length, dataIndex) 8 byte; v39: delta dataIndex 4 byte.
-SUPPORTED_VERSIONS = {31: "pairs", 39: "delta"}
+# v24/v27/v29/v31: (length, dataIndex) 8 byte; v39: delta dataIndex 4 byte.
+SUPPORTED_VERSIONS = {24: "pairs", 27: "pairs", 29: "pairs", 31: "pairs",
+                      39: "delta"}
 
 MAX_LITERAL_BYTES = 1024 * 1024   # literal dài hơn: bỏ (không phải text)
 MAX_MEMBER_BYTES = 256 * 1024 * 1024
@@ -84,15 +94,16 @@ def read_header(fh):
         raise PB3Error(
             "E_UNSUPPORTED_FORMAT",
             "metadata version %d chưa xác minh bố cục bảng literal "
-            "(đã xác minh: v31, v39) — dùng quét thô (raw scan) thay thế"
+            "(đã xác minh: v24, v27, v29, v31, v39) — dùng quét thô "
+            "(raw scan) thay thế"
             % version, where="il2cpp")
     if layout == "pairs":
         table_off, table_size, data_off, data_size = struct.unpack_from(
             "<iiii", head, 8)
         if table_size < 0 or table_size % 8 != 0:
             raise PB3Error("E_CORRUPT",
-                           "metadata v31: kích thước bảng literal %d "
-                           "không chia hết cho 8" % table_size,
+                           "metadata v%d: kích thước bảng literal %d "
+                           "không chia hết cho 8" % (version, table_size),
                            where="il2cpp")
         entry_count = table_size // 8
     else:  # delta
@@ -215,7 +226,8 @@ def _iter_literals_raw(fh, header, limit=None):
             chunk = fh.read(take * entry_size)
             if len(chunk) < take * entry_size:
                 raise PB3Error("E_CORRUPT",
-                               "metadata v31: đọc bảng literal thiếu byte",
+                               "metadata v%d: đọc bảng literal thiếu byte"
+                               % header.version,
                                where="il2cpp")
             for j in range(take):
                 ln, off = struct.unpack_from("<II", chunk, j * 8)

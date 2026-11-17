@@ -309,16 +309,19 @@ def check_placeholders(source: Optional[Dict[str, str]],
 
 # ------------------------------------------------------------- (d) font
 def font_entry_from_bytes(data: bytes, name: str,
-                          source: str = "font do người dùng chỉ định"
+                          source: str = "font do người dùng chỉ định",
+                          face_index: Optional[int] = None
                           ) -> Dict[str, Any]:
     """1 font TTF/OTF (bytes) -> muc bao cao dang font_list (co
     missing_codepoints day du de cong tinh missing_used). Font hong
     thi raise PB3Error (bridge bat roi chuyen thanh loi cua kiem tra
-    font, khong crash cong)."""
-    rep = _font.coverage(data, where=name)
+    font, khong crash cong). TTC: `face_index` chọn face (None thì
+    từ chối — người gọi phải chọn face, xem font.list_ttc_faces)."""
+    rep = _font.coverage(data, where=name, face_index=face_index)
     return {
         "kind": rep.kind, "name": name, "family": rep.family,
         "source": source, "size": len(data), "path_id": None,
+        "face_index": face_index,
         "num_glyphs": int(rep.num_glyphs), "covered": int(rep.covered),
         "total": int(rep.total),
         "missing_codepoints": [int(c) for c in rep.missing],
@@ -1008,7 +1011,7 @@ def run_gate(source_bytes: bytes, *, source_name: str,
 
     Khong ghi file nao. Loi dau vao (translations/source/allowlist sai
     kieu, provenance khong nhan ra) thi raise ValueError nhu (E). Loi
-    noi dung file (ma hoa, v9, khong doc duoc don vi) thi tra verdict
+    noi dung file (ma hoa, khong doc duoc don vi) thi tra verdict
     FAIL kem ly do, khong raise — cong luon tra verdict khi dau vao
     hop le."""
     _validate_kv(translations, "translations")

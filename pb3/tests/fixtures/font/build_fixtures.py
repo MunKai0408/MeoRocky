@@ -235,3 +235,48 @@ def build_otf_stub():
 def build_ttc_stub():
     """Font collection giả (chỉ magic, đủ để test từ chối)."""
     return b"ttcf\x00\x01\x00\x00" + bytes(32)
+
+
+def build_ttc(faces):
+    """Dựng .ttc v1.0 thật từ list font rời (độc lập với sdk.font).
+
+    Header ttcf + bảng offset từng face + bảng của từng face với offset
+    TUYỆT ĐỐI từ đầu file (theo đặc tả TTC — face có thể chia sẻ bảng,
+    ở đây mỗi face dùng bảng riêng). Checksum từng bảng copy nguyên từ
+    font gốc (bytes bảng không đổi nên checksum vẫn đúng).
+    """
+    n = len(faces)
+    out = bytearray(b"ttcf" + struct.pack(">II", 0x00010000, n)
+                    + b"\x00" * (4 * n))
+    face_offsets = []
+    for face in faces:
+        while len(out) % 4:
+            out += b"\x00"
+        face_off = len(out)
+        face_offsets.append(face_off)
+        num = struct.unpack_from(">H", face, 4)[0]
+        dir_len = 12 + 16 * num
+        out += b"\x00" * dir_len
+        records = []
+        for i in range(num):
+            rec = 12 + 16 * i
+            tag = face[rec:rec + 4]
+            cs, _off, ln = struct.unpack_from(">III", face, rec + 4)
+            raw = face[_off:_off + ln]
+            while len(out) % 4:
+                out += b"\x00"
+            abs_off = len(out)
+            out += raw
+            records.append((tag, cs, abs_off, ln))
+        sfnt = struct.unpack_from(">I", face, 0)[0]
+        search_range, entry_selector, range_shift = struct.unpack_from(
+            ">HHH", face, 6)
+        struct.pack_into(">IHHHH", out, face_off, sfnt, num,
+                         search_range, entry_selector, range_shift)
+        for i, (tag, cs, abs_off, ln) in enumerate(records):
+            rec = face_off + 12 + 16 * i
+            out[rec:rec + 4] = tag
+            struct.pack_into(">III", out, rec + 4, cs, abs_off, ln)
+    for i, fo in enumerate(face_offsets):
+        struct.pack_into(">I", out, 12 + 4 * i, fo)
+    return bytes(out)
