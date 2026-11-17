@@ -68,18 +68,27 @@ DEFAULT_CHUNK = 10
 
 _LANG_RE = re.compile(r"^[a-z]{2,3}(-[A-Za-z]{2,4})?$")
 
-# Placeholder giữ nguyên khi dịch (cùng bộ với sdk.exporters).
+# Placeholder giữ nguyên khi dịch. GIỮ ĐỒNG BỘ với cổng kiểm tra
+# sdk/gate.py::_PLACEHOLDER_RE (chuẩn quyết định có cho ghi ngược) và
+# sdk/exporters.py::_PLACEHOLDER_RES: cổng đếm cả $VAR và {nội dung bất
+# kỳ} ({foo-bar}, {a.b}, {}) — trước đây mask không che hai dạng này nên
+# máy dịch nhìn thấy chúng như chữ thường và làm mất (Build 68: {VAR1},
+# {KINGCOLOR}). Thẻ đóng (</b>) vẫn che thêm (siêu tập của cổng, vô hại).
 _PLACEHOLDER_RE = re.compile(
-    r"\{\d+\}|\{[A-Za-z_][A-Za-z0-9_]*\}|%(\d+\$)?[sdif]|</?[A-Za-z][^>]*>|\\[nrt\\'\"]")
+    r"\{[^}]*\}|%(\d+\$)?[sdif]|\$[A-Za-z_][A-Za-z0-9_]*|</?[A-Za-z][^>]*>|\\[nrt\\'\"]")
 # Thẻ đóng (</b>, </size>) cũng phải che: trước đây chỉ che thẻ mở nên
 # dòng chỉ còn thẻ đóng vẫn có chữ Latin ('size', 'b') và bị coi là
 # tiếng Anh yếu rồi gửi đi dịch (fixture Passpartout: dòng rich-text
 # CJK/Korean bị đổi). Che cả hai thì dòng chỉ còn thẻ -> không còn chữ
 # thật -> bỏ qua.
 _TOKEN_FMT = "__PB3PH%d__"
-# Google Translate đôi khi chèn khoảng trắng/chữ thường vào token:
-# khớp khoan dung (kể cả "__ PB3PH0 __" hay "__pb3ph0__").
-_TOKEN_RE = re.compile(r"__\s*PB3PH\s*(\d+)\s*__", re.IGNORECASE)
+# Máy dịch đôi khi chèn khoảng trắng/chữ thường vào token, hoặc LỘT
+# dấu gạch dưới ("PB3PH0", "__PB3PH0", "PB3PH1__"): khớp khoan dung cả
+# ba dạng — mỗi bên 0–2 gạch dưới. Khoảng trắng chỉ được nuốt KHI CÓ
+# gạch dưới kề bên ("__ PB3PH0 __"), không nuốt khoảng trắng quanh
+# token trần (không thì "Unlock PB3PH0 and" mất luôn dấu cách).
+_TOKEN_RE = re.compile(r"(?:_{1,2}\s*)?PB3PH\s*(\d+)(?:\s*_{1,2})?",
+                       re.IGNORECASE)
 
 
 def check_lang(code: str, *, allow_auto: bool = False) -> None:
@@ -107,7 +116,7 @@ def mask_line(line: str) -> Tuple[str, List[str]]:
 
 
 def unmask_line(masked: str, tokens: List[str]) -> str:
-    """Khôi phục placeholder từ token (khoan dung khoảng trắng/chữ hoa)."""
+    """Khôi phục placeholder từ token (khoan dung khoảng trắng/chữ hoa/gạch dưới bị lột)."""
 
     def _rep(m: "re.Match[str]") -> str:
         try:
@@ -134,6 +143,24 @@ def placeholders_ok(source: str, translated: str) -> bool:
     if source.count("\n") != translated.count("\n"):
         return False
     return exp.placeholders(source) == exp.placeholders(translated)
+
+
+def placeholders_in_order(text: str) -> List[str]:
+    """Placeholder theo thứ tự xuất hiện (không gộp trùng) — cùng quy tắc
+    cổng kiểm tra sdk/gate.py dùng để quyết định có cho ghi ngược không
+    (thứ tự + số lần), khác exp.placeholders vốn gộp trùng theo nhóm."""
+    return [m.group(0) for m in _PLACEHOLDER_RE.finditer(text or "")]
+
+
+def placeholders_match_strict(source: str, translated: str) -> bool:
+    """Placeholder khớp y như cổng (b): cùng thứ tự + số lần, và cùng số
+    lần xuống dòng. Dùng để quyết định một dòng đã dịch có cần dịch lại
+    hay không — placeholders_ok chỉ so tập hợp nên không đủ chặt.
+    (Mask còn che cả thẻ đóng nên kiểm tra này chặt hơn cổng một chút ở
+    thẻ đóng; an toàn vì thẻ đóng đã được che thành token.)"""
+    if (source or "").count("\n") != (translated or "").count("\n"):
+        return False
+    return placeholders_in_order(source) == placeholders_in_order(translated)
 
 
 # ------------------------------------------------------------------ credit
@@ -481,6 +508,61 @@ class TranslationResult:
     credit_requested: bool = False     # người dùng có bật credit không
 
 
+def _repair_placeholder_lines(pending, seg_out, provider, fallback,
+                              source_lang, target_lang, chunk):
+    """Dịch lại 1 lần các dòng đã dịch nhưng lệch placeholder.
+
+    Chỉ chạm các dòng đã có bản dịch (val is not None) và lệch theo
+    placeholders_match_strict (thứ tự + số lần, như cổng kiểm tra).
+    Gom theo masked text để khỏi dịch trùng; chấp nhận bản dịch lại chỉ
+    khi strict pass sau khi bỏ che. Lỗi ở bước này không crash: giữ
+    nguyên bản cũ, cảnh báo sẽ phát ra ở bước ráp như trước.
+    """
+    by_masked = {}
+    for key, (value, lines, segs) in pending.items():
+        for seg in segs:
+            val, _origin = seg_out.get((key, seg.line_no), (None, ""))
+            if val is None:
+                continue
+            if placeholders_match_strict(lines[seg.line_no],
+                                         unmask_line(val, seg.tokens)):
+                continue
+            by_masked.setdefault(seg.masked, []).append((key, seg))
+    if not by_masked:
+        return
+    masked_list = list(by_masked)
+    got = []
+    try:
+        for start in range(0, len(masked_list), chunk):
+            part = masked_list[start:start + chunk]
+            try:
+                batch = provider.translate_batch(part, source_lang,
+                                                 target_lang)
+            except PB3Error as exc:
+                if exc.code != "E_NETWORK":
+                    raise
+                batch = [None] * len(part)
+                if fallback is not None:
+                    try:
+                        fb = fallback.translate_batch(part, source_lang,
+                                                      target_lang)
+                    except Exception:
+                        fb = [None] * len(part)
+                    batch = [b if a is None else a
+                             for a, b in zip(batch, fb)]
+            got.extend(batch)
+    except Exception:
+        return
+    for masked, val in zip(masked_list, got):
+        if val is None:
+            continue
+        for key, seg in by_masked[masked]:
+            if placeholders_match_strict(
+                    pending[key][1][seg.line_no],
+                    unmask_line(val, seg.tokens)):
+                seg_out[(key, seg.line_no)] = (val, "provider")
+
+
 def translate_table(kv: Dict[str, str], *, source_lang: str = "auto",
                     target_lang: str = "vi", provider: TranslationProvider,
                     fallback: Optional[TranslationProvider] = None,
@@ -492,8 +574,8 @@ def translate_table(kv: Dict[str, str], *, source_lang: str = "auto",
 
     - Lỗi mạng ở một lô: ghi vào network_error, dùng fallback (từ điển
       offline) cho lô đó rồi dịch tiếp, không crash.
-    - Câu dịch xong mà placeholder/xuống dòng lệch thì giữ bản dịch kèm
-      cảnh báo, không đưa vào cache.
+    - Câu dịch xong mà placeholder/xuống dòng lệch thì dịch lại 1 lần;
+      vẫn lệch thì giữ bản dịch kèm cảnh báo, không đưa vào cache.
     - progress_fn(done, total) gọi sau mỗi đoạn text đã dịch xong (đơn vị:
       đoạn text cần dịch) — % tính theo số đoạn thật, dãy done không lùi.
     - credit=True (mặc định): sau khi dịch xong, gắn 'Việt Hoá Bởi Bear'
@@ -581,6 +663,13 @@ def translate_table(kv: Dict[str, str], *, source_lang: str = "auto",
         done += len(part)
         if reported[0] < len(part) and progress_fn is not None:
             progress_fn(done, total)
+
+    # Sửa placeholder (lâu dài): dòng nào sau khi bỏ che vẫn lệch
+    # placeholder (thứ tự/số lần/xuống dòng, như cổng kiểm tra) thì dịch
+    # lại 1 lần — dịch lại thường giữ token tốt hơn batch gộp. Vẫn lệch
+    # thì giữ kết quả cũ + cảnh báo như trước (không giấu lỗi).
+    _repair_placeholder_lines(pending, seg_out, provider, fallback,
+                              source_lang, target_lang, chunk)
 
     for key, (value, lines, segs) in pending.items():
         out_lines = list(lines)

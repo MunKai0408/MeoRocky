@@ -715,7 +715,7 @@ async def translate_json_google(json_text, to="vi", credit=True, src="en"):
     try:
         from sdk.translate import (OfflineGlossaryProvider, apply_credit,
                                    check_lang, mask_line, placeholders_ok,
-                                   unmask_line)
+                                   placeholders_match_strict, unmask_line)
 
         kv = json.loads(json_text)
         if not isinstance(kv, dict):
@@ -1024,6 +1024,43 @@ async def translate_json_google(json_text, to="vi", credit=True, src="en"):
         for uid, u in enumerate(uniques):
             for (key, line_no) in u["keys"]:
                 seg_out[(key, line_no)] = (uniq_val[uid], uniq_origin[uid])
+
+        # Sửa placeholder (lâu dài): dòng nào batch gộp làm lệch
+        # placeholder (thứ tự + số lần, như cổng kiểm tra) thì dịch đơn
+        # lại 1 lần bằng _gt — dịch đơn thường giữ token tốt hơn batch
+        # gộp. Vẫn lệch thì giữ kết quả cũ + cảnh báo như trước (không
+        # giấu lỗi). Bỏ qua khi đã hết hạn mức hoặc người dùng đã hủy.
+        if _gt is not None and not quota_hit:
+            _seg_tokens = {}
+            for _key, _line_no, _masked, _tokens in segments:
+                _seg_tokens[(_key, _line_no)] = (_masked, _tokens)
+            _by_masked = {}
+            for (_key, _line_no), (_val, _origin) in list(seg_out.items()):
+                if _val is None:
+                    continue
+                _masked, _tokens = _seg_tokens.get((_key, _line_no),
+                                                   (None, None))
+                if _masked is None:
+                    continue
+                _src_line = pending[_key][1][_line_no]
+                if placeholders_match_strict(
+                        _src_line, unmask_line(_val, _tokens)):
+                    continue
+                _by_masked.setdefault(_masked, []).append(
+                    (_key, _line_no, _tokens))
+            for _masked in list(_by_masked):
+                if _is_cancelled():
+                    break
+                try:
+                    _retry = str(await _gt(_masked, src, to))
+                    single_requests += 1
+                except Exception:
+                    continue
+                for _key, _line_no, _tokens in _by_masked[_masked]:
+                    _src_line = pending[_key][1][_line_no]
+                    if placeholders_match_strict(
+                            _src_line, unmask_line(_retry, _tokens)):
+                        seg_out[(_key, _line_no)] = (_retry, "google")
 
         incomplete_keys = []
         for key, (value, lines, segs) in pending.items():

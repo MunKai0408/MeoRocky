@@ -8,7 +8,7 @@
 - index.html + app.js: nut btn-font-list + btn-font-unify, handler goi
   dung op, hien tmp_candidates + font_unified.zip.
 - Manifest: files.json 95 (co pb3/sdk/font_list.py), tests.json 168
-  (co pb3/tests/test_font_unify.py); sw.js CACHE_VERSION v27-20261117
+  (co pb3/tests/test_font_unify.py); sw.js CACHE_VERSION v28-20261117
   + precache co pb3/sdk/font_list.py.
 - Tieng Viet moi du dau.
 In JSON {"fails": [...]}.
@@ -84,8 +84,8 @@ if len(tests) != 168:
     fails.append("tests.json co %d file, ky vong 168" % len(tests))
 if "pb3/tests/test_font_unify.py" not in tests:
     fails.append("tests.json thieu pb3/tests/test_font_unify.py")
-if 'CACHE_VERSION = "v27-20261117"' not in sw:
-    fails.append("sw.js CACHE_VERSION khong phai v27-20261117")
+if 'CACHE_VERSION = "v28-20261117"' not in sw:
+    fails.append("sw.js CACHE_VERSION khong phai v28-20261117")
 if '"pb3/sdk/font_list.py"' not in sw:
     fails.append("sw.js precache thieu pb3/sdk/font_list.py")
 
