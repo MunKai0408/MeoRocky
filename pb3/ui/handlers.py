@@ -37,7 +37,7 @@ class Feature:
 MENU: Tuple[Tuple[str, Feature], ...] = (
     ("1", Feature("mod", "Mod và ghi ngược (đa engine, Unity hạng nhất)", "services.unity_tool",
                   "Claude 05 (Unity, ghi ngược)", maturity="M2",
-                  note_vi="UnityFS v6/v7/v8 + SerializedFile v15-23, patch TextAsset (M2).")),
+                  note_vi="UnityFS v6/v7/v8 + SerializedFile v15-26, patch TextAsset (M2).")),
     ("2", Feature("extract", "Trích xuất ngôn ngữ (đa engine)", "services.language_tool",
                   "Claude 07 (pipeline trích xuất)", maturity="M2",
                   note_vi="Discovery + engine detect + arbitration + export JSON + ghi ngược (M2).")),

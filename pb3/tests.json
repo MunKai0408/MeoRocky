@@ -158,6 +158,7 @@
   "pb3/tests/test_safe_io.py",
   "pb3/tests/test_scan.py",
   "pb3/tests/test_sdk.py",
+  "pb3/tests/test_sf_v24.py",
   "pb3/tests/test_support_matrix.py",
   "pb3/tests/test_tiering.py",
   "pb3/tests/test_tmp_fallback.py",

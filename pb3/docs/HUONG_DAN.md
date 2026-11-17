@@ -24,7 +24,7 @@ Tuỳ chọn chung (đặt trước tên lệnh): `--debug` (giữ thư mục t�
 
 | Mục | Chức năng |
 |---|---|
-| [1] Mod và ghi ngược (đa engine, Unity hạng nhất) | UnityFS v6/v7/v8 + SerializedFile v15–23, patch TextAsset. Mặc định chỉ dry-run; ghi thật cần xác nhận. |
+| [1] Mod và ghi ngược (đa engine, Unity hạng nhất) | UnityFS v6/v7/v8 + SerializedFile v15–26, patch TextAsset. Mặc định chỉ dry-run; ghi thật cần xác nhận. |
 | [2] Trích xuất ngôn ngữ (đa engine) | Discovery + nhận diện engine/locale + export JSON key-value + ghi ngược; có dịch tự động. |
 | [3] Quản lý plugin và ma trận hỗ trợ | Gõ số để bật/tắt plugin; `[m]` xem ma trận hỗ trợ; `[k]` quên tri thức game. Tạo mới / kiểm tra plugin bằng lệnh CLI `plugin new/test`. |
 | [4] Xử lý hàng loạt | Chạy cùng một việc trên nhiều game theo manifest CSV/JSON (xem §4). |

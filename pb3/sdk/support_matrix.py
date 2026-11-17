@@ -45,7 +45,7 @@ UNSUPPORTED = [
     {"muc": "Godot PCK v0/v3", "ly_do": "chỉ v1/v2 có fixture"},
     {"muc": "Unreal PAK entry nén/mã hóa/Oodle",
      "ly_do": "chỉ đọc entry không nén, không mã hóa"},
-    {"muc": "SerializedFile v<15 / v>23", "ly_do": "chỉ v15–23 có fixture"},
+    {"muc": "SerializedFile v<15 / v>26", "ly_do": "chỉ v15–26 có fixture"},
     {"muc": "Bundle Unity mã hóa",
      "ly_do": "báo E_ENCRYPTED, không giải mã"},
     {"muc": "Cocos/Defold/GameMaker",
@@ -179,7 +179,7 @@ def generate(root, rows=None, manifests=None, kb_stats=None) -> Tuple[str, dict]
     unity_rows = _unity.support_matrix()
     fixture_only = [p["id"] for p in plugins]
     # Unity/Godot/Unreal đọc-ghi cũng mới test fixture (patch Unity chưa có game thật).
-    fixture_only += ["UnityFS v6/v7/v8/v9 + SerializedFile v15–23 (Zstd chỉ đọc trên web, fixture)",
+    fixture_only += ["UnityFS v6/v7/v8/v9 + SerializedFile v15–26 (Zstd chỉ đọc trên web, fixture)",
                      "Godot PCK v1/v2 (đọc, fixture)",
                      "Unreal PAK UE4/UE5 (đọc, fixture)"]
 
