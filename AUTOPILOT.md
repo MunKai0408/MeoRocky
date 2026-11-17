@@ -21,13 +21,13 @@
 
 ## Mục đang làm
 
-- **P0-4** — tiếp theo, theo brief mục 7 (xem "Chờ Joseph" #5: cần ảnh Q1/Q2/Q3
-  bản v4 + xác nhận bản đang cài; nếu chưa có thì ghi "Chờ Joseph" và bỏ qua
-  sang P1-1).
+- **P1-1** (mở file theo nội dung, bỏ cổng đuôi) — tiếp theo. P0-4 đã BỎ QUA (chờ
+  Joseph, xem "Chờ Joseph" #5): chưa có ảnh Q1/Q2/Q3 bản v4 + xác nhận bản đang
+  cài; không đứng chờ, quay lại P0-4 khi có đủ.
 
 ## Đã xong
 
-### P0-3 (trích xuất cấu trúc bảng ngôn ngữ + StringTable, lọc rác, conflicts) — XONG 2026-11-17 [ĐÃ ĐO THẬT] (chưa đẩy; coordinator đẩy nhánh `auto/p0-3`)
+### P0-3 (trích xuất cấu trúc bảng ngôn ngữ + StringTable, lọc rác, conflicts) — XONG 2026-11-17 [ĐÃ ĐO THẬT] (commit `f88934c5`, PR #3, gộp vào main `fead921f`)
 
 - Parser cấu trúc bảng ngôn ngữ của game (`pb3/sdk/unity.py`, kind mới
   `"language_source"`): đọc `mLanguages`/`mTerms`, ánh xạ theo chỉ số, giữ
@@ -157,8 +157,11 @@
    P0-1 trên file lớn; đã thay bằng bundle lớn nhất có thật + ghi rõ.
 4. Cloudflare translate-proxy (cần tài khoản + Google API key, trần 500.000 ký tự/tháng),
    PAT mới — khi tới các mục cần chúng.
-5. P0-4 (Space Marshals 2 mất chữ): cần ảnh chụp màn hình Q1/Q2/Q3 bản v4 + xác nhận bản
-   đang cài trên máy; tới lượt P0-4 sẽ ghi "Chờ Joseph" và bỏ qua sang P1-1 nếu chưa có.
+5. P0-4 (Space Marshals 2 mất chữ) — BỎ QUA 2026-11-17, chờ Joseph: cần ảnh chụp
+   màn hình Q1/Q2/Q3 bản v4 + xác nhận bản đang cài trên máy. Khi có đủ: đối
+   chiếu chẩn đoán v1–v4 (ghi trong bộ nhớ của tài khoản này: registry glyph cố
+   định, donor-quad squish, 6 slot cursed đã sửa ở v3, probe v4) vào tài liệu
+   BearTea + sửa tiếp theo ảnh. Không làm P0-4 khi chưa có ảnh.
 6. File 9 Kings v1.0.5 để chạy lại đúng bản user nhắc tới — hiện chỉ có v1.0.6
    (173.472.485 B, md5 4f53043c…); mọi số P0-3 của 9 Kings là v1.0.6, không
    tuyên bố số v1.0.5.
@@ -237,8 +240,12 @@ diff -rq -x __pycache__ -x logs -x reports -x workspace -x .pytest_cache <pristi
   (39 file text, từ head `37a1133f`, sync-base đã kiểm khớp), PR #2, ĐÃ GỘP vào main
   (`d93b79a3272d98b1580d88a7d5ff7dc83c45f17a`) 2026-11-17. Nhánh `auto/p0-2` giữ nguyên,
   không xóa. Không có gói nhị phân cho P0-2.
+- P0-3: nhánh `auto/p0-3`, commit snapshot `f88934c542fecb050b21172e93b0ca66caee2912`
+  (11 file text, từ head `9c66fc53`, sync-base đã kiểm khớp), PR #3, ĐÃ GỘP vào main
+  (`fead921f06a63d07ece4ad1f567906e9c9337dbb`) 2026-11-17. Nhánh `auto/p0-3` giữ nguyên,
+  không xóa. Dữ liệu trích từ game (deliver_p03_locales/) KHÔNG commit vào repo.
 
 ## Backlog còn lại (thứ tự)
 
-P0-4 (xem "Chờ Joseph" #5) → P1-1 → P1-2 → P1-3 (I1) → P1-4 (I2) →
+P0-4 (BỎ QUA, chờ Joseph — xem "Chờ Joseph" #5; quay lại khi có đủ ảnh) → P1-1 → P1-2 → P1-3 (I1) → P1-4 (I2) →
 P1-5 (I3) → P2-1 → P2-2 → P2-3 → P2-4 → P3. Tiêu chí XONG từng mục theo brief mục 7.
