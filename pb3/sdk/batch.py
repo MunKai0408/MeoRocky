@@ -315,12 +315,23 @@ def _sdk_read_vpath_segment(data, seg, backend, limits):
             close()
 
 
+def _is_localization_csv(data, name):
+    """True khi data la bang CSV localization (M3) — xem sdk.csvutil."""
+    try:
+        from sdk.csvutil import is_localization_csv
+        return bool(is_localization_csv(data, name))
+    except Exception:
+        return False
+
+
 def _sdk_resolve_vpath(file_bytes, entry, backend, limits):
     """Đi theo vpath 'a::b::c' từ bytes gốc.
 
     Trả (kind, data, req_entry, label):
     - kind "bundle": data = bytes bundle, req_entry = entry trong bundle.
     - kind "assets": data = bytes SerializedFile (độc lập hoặc trong container).
+    - kind "csv" (M3): data = bytes file CSV/TSV localization (độc lập
+      hoặc entry trong container), req_entry = None.
     """
     from sdk import unity as unity_sdk
     from sdk.vfs import vpath_split
@@ -328,6 +339,9 @@ def _sdk_resolve_vpath(file_bytes, entry, backend, limits):
         det = unity_sdk.detect_bundle(file_bytes)
         if det is not None:
             return "bundle", file_bytes, None, "bundle"
+        # M3: file CSV/TSV doc lap dua thang vao (E) — khong can SF.
+        if _is_localization_csv(file_bytes, ""):
+            return "csv", file_bytes, None, "csv"
         try:
             unity_sdk.parse_serialized(file_bytes, limits, where="assets")
             return "assets", file_bytes, None, "assets"
@@ -362,6 +376,9 @@ def _sdk_resolve_vpath(file_bytes, entry, backend, limits):
         unity_sdk.parse_serialized(data, limits, where=last)
         return "assets", data, None, last
     except PB3Error:
+        # M3: entry CSV/TSV localization trong container — don vi kind "csv".
+        if _is_localization_csv(data, last):
+            return "csv", data, None, last
         raise _sdk_unity_usage("entry %r không phải SerializedFile" % last,
                                "unity patch <file> --entry <vpath> --object <id> ...")
 
@@ -376,7 +393,9 @@ def _sdk_default_output_rel(input_path, kind, label):
     stem = Path(str(input_path)).stem
     game = "".join(c if c.isalnum() or c in ("-", "_") else "_" for c in stem) or "game"
     name = None
-    if label and label not in ("bundle", "assets"):
+    # Label "csv" la placeholder cua resolver cho file CSV doc lap (khong
+    # phai ten file) — nhu "bundle"/"assets", fallback ve ten file goc.
+    if label and label not in ("bundle", "assets", "csv"):
         name = label.rsplit("/", 1)[-1]
     if not name:
         name = Path(str(input_path)).name

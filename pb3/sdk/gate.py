@@ -583,7 +583,10 @@ def _build_plans(source_bytes: bytes, source_name: str,
         all_sfs, mb_terms = [], set()
     leftover = [k for k in translations if k not in planned_keys]
     unmatched, unchanged = _rb._classify_unmatched(
-        leftover, translations, all_sfs, mb_terms)
+        leftover, translations, all_sfs, mb_terms,
+        csv_values=_rb._collect_csv_values(source_bytes, be, lim,
+                                           source_locale),
+        source_locale=source_locale)
     for item in unmatched:
         item["unit"] = None
     for grp_unit, grp in groups.items():
@@ -600,7 +603,12 @@ def _build_plans(source_bytes: bytes, source_name: str,
 
 def _parse_unit(kind: str, unit_bytes: bytes, req_entry: Optional[str],
                 be: Any, lim: Limits) -> Tuple[Any, Any]:
-    """(bundle|None, SerializedFile) cua 1 don vi — doc lai TU BYTES."""
+    """(bundle|None, SerializedFile) cua 1 don vi — doc lai TU BYTES.
+
+    Don vi CSV (M3) khong co SF: tra (None, None); caller phai guard
+    cac khoi chi dung cho SF (danh muc object, doc TextAsset)."""
+    if kind == "csv":
+        return None, None
     if kind == "bundle":
         bundle = _u.parse_bundle(unit_bytes, be, lim, where="bundle")
         sf_bytes = bundle.get_entry(req_entry)
@@ -693,6 +701,10 @@ def _find_pressed_unit(pressed_bytes: bytes, plan: Dict[str, Any],
     try:
         kind, unit_bytes, req2, _label = _plan._resolve_unit(
             pressed_bytes, vpath, be, lim)
+        if kind == "csv":
+            # M3: don vi da ep CHINH LA file CSV (vd entry CSV trong IPA
+            # da dong goi lai) — tra thang bytes, khong probe SF.
+            return bytes(unit_bytes)
         if kind == "bundle":
             bundle = _u.parse_bundle(unit_bytes, be, lim, where="bundle")
             sf = _u.parse_serialized(bundle.get_entry(req2), lim,
@@ -705,6 +717,12 @@ def _find_pressed_unit(pressed_bytes: bytes, plan: Dict[str, Any],
         pass
     if _candidate_matches(pressed_bytes, req_entry, probes, be, lim):
         return bytes(pressed_bytes)
+    if any(e.get("format") == "csv" and e.get("kind") == "csv"
+           for e in entries):
+        # M3: file da ep chinh la file CSV doc lap (khong con trong ZIP).
+        from sdk.csvutil import is_localization_csv
+        if is_localization_csv(pressed_bytes, ""):
+            return bytes(pressed_bytes)
     try:
         if zipfile.is_zipfile(io.BytesIO(pressed_bytes)):
             zf = zipfile.ZipFile(io.BytesIO(pressed_bytes))
@@ -721,6 +739,20 @@ def _find_pressed_unit(pressed_bytes: bytes, plan: Dict[str, Any],
                         if _candidate_matches(data, req_entry, probes,
                                               be, lim):
                             return data
+                        if any(e.get("format") == "csv"
+                               and e.get("kind") == "csv"
+                               for e in entries):
+                            # M3: entry CSV trong zip ket qua (ten file
+                            # theo basename nhu _write_rebuild_outputs).
+                            from sdk.csvutil import is_localization_csv
+                            want = {str(e.get("asset_path") or "")
+                                    .rsplit("/", 1)[-1]
+                                    for e in entries
+                                    if e.get("format") == "csv"}
+                            if info.filename.rsplit("/", 1)[-1] in want \
+                                    and is_localization_csv(
+                                        data, info.filename):
+                                return data
     except zipfile.BadZipFile:
         pass
     return None
@@ -773,7 +805,9 @@ def _verify_pressed_units(source_bytes: bytes, plan_items: List[Dict[str, Any]],
                                   "changes": sum(len(e["changes"]) for e in plan["entries"]),
                                   "verified": False, "mismatches": unit_mismatch})
                 continue
-            pressed_kind = "bundle" if _u.detect_bundle(pressed_unit) is not None else "assets"
+            pressed_kind = plan.get("unit_kind") or kind
+            if pressed_kind != "csv":
+                pressed_kind = "bundle" if _u.detect_bundle(pressed_unit) is not None else "assets"
             pressed_req = req_entry
             if pressed_kind == "bundle" and req_entry is not None:
                 try:
@@ -822,25 +856,57 @@ def _verify_pressed_units(source_bytes: bytes, plan_items: List[Dict[str, Any]],
                     structural.append({"unit": display, "kind": "bundle_entry_missing",
                                        "message_vi": "Đơn vị %s: không đọc được entry %r trong file đã ép: %s" % (display, e.name, _err_text(exc))})
         # Danh muc object: path_id/class_id/thu tu giu nguyen; object khong doi giu nguyen bytes.
-        expected_pids = {int(e["object"]) for e in plan["entries"]}
-        orig_inv = [(o.path_id, o.class_id) for o in orig_sf.objects]
-        new_inv = [(o.path_id, o.class_id) for o in pressed_sf.objects]
-        if orig_inv != new_inv:
-            structural.append({"unit": display, "kind": "object_inventory",
-                               "message_vi": "Đơn vị %s: danh mục object (path_id/class/thứ tự) đổi so với gốc." % display})
-        for o in orig_sf.objects:
-            if o.path_id in expected_pids:
-                continue
-            try:
-                if _sha(orig_sf.object_bytes(o.path_id)) != _sha(pressed_sf.object_bytes(o.path_id)):
-                    structural.append({"unit": display, "kind": "object_changed",
-                                       "message_vi": "Đơn vị %s: object path_id=%d đổi nhưng không nằm trong kế hoạch ép." % (display, o.path_id)})
-            except PB3Error:
-                structural.append({"unit": display, "kind": "object_missing",
-                                   "message_vi": "Đơn vị %s: thiếu object path_id=%d trong file đã ép." % (display, o.path_id)})
+        # (Don vi CSV khong co SF — bo qua khoi nay.)
+        if orig_sf is not None and pressed_sf is not None:
+            expected_pids = {int(e["object"]) for e in plan["entries"]}
+            orig_inv = [(o.path_id, o.class_id) for o in orig_sf.objects]
+            new_inv = [(o.path_id, o.class_id) for o in pressed_sf.objects]
+            if orig_inv != new_inv:
+                structural.append({"unit": display, "kind": "object_inventory",
+                                   "message_vi": "Đơn vị %s: danh mục object (path_id/class/thứ tự) đổi so với gốc." % display})
+            for o in orig_sf.objects:
+                if o.path_id in expected_pids:
+                    continue
+                try:
+                    if _sha(orig_sf.object_bytes(o.path_id)) != _sha(pressed_sf.object_bytes(o.path_id)):
+                        structural.append({"unit": display, "kind": "object_changed",
+                                           "message_vi": "Đơn vị %s: object path_id=%d đổi nhưng không nằm trong kế hoạch ép." % (display, o.path_id)})
+                except PB3Error:
+                    structural.append({"unit": display, "kind": "object_missing",
+                                       "message_vi": "Đơn vị %s: thiếu object path_id=%d trong file đã ép." % (display, o.path_id)})
         # Noi dung tung entry: key doi == after, key khac giu nguyen, sha == after_sha.
         for entry in plan["entries"]:
             pid = int(entry["object"])
+            if entry.get("format") == "csv":
+                # M3: TextAsset CSV — o doi == after, o khac giu nguyen,
+                # sha == after_sha (sha bao toan bo CSV/script).
+                from sdk.csvutil import verify_csv_values
+                src_loc = entry.get("source_locale") or "en"
+                csv_name = _plan._csv_name(entry, req_entry)
+                if kind == "csv":
+                    orig_data, new_data = orig_bytes, pressed_unit
+                else:
+                    try:
+                        _p, _n, orig_script = orig_sf.find_text_asset(path_id=pid)
+                        _p2, _n2, new_script = pressed_sf.find_text_asset(path_id=pid)
+                    except PB3Error as exc:
+                        unit_mismatch.append({"unit": display, "kind": "asset_missing",
+                                              "message_vi": "Đơn vị %s: không tìm thấy TextAsset path_id=%d trong file đã ép: %s" % (display, pid, _err_text(exc))})
+                        continue
+                    orig_data = orig_script.encode("utf-8")
+                    new_data = new_script.encode("utf-8")
+                ok, details = verify_csv_values(
+                    orig_data, new_data, csv_name, entry["changes"], src_loc)
+                for d in details:
+                    unit_mismatch.append({"unit": display, "kind": "value_mismatch",
+                                          "message_vi": "Đơn vị %s: %s" % (display, d)})
+                if ok:
+                    for change in entry["changes"]:
+                        verified_keys.add(change["key"])
+                if _sha(new_data) != entry["after_sha"]:
+                    unit_mismatch.append({"unit": display, "kind": "after_sha",
+                                          "message_vi": "CSV %s trong file đã ép có sha khác after_sha của kế hoạch (đơn vị %s)." % (csv_name, display)})
+                continue
             if entry.get("asset_type") == "MonoBehaviour":
                 # M1: doc lai object MB, doi chieu tung change theo
                 # field_path + object sha == after_sha (sha bao ca key

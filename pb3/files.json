@@ -58,6 +58,7 @@
   "pb3/sdk/batch.py",
   "pb3/sdk/compress.py",
   "pb3/sdk/containers.py",
+  "pb3/sdk/csvutil.py",
   "pb3/sdk/discovery.py",
   "pb3/sdk/exporters.py",
   "pb3/sdk/extraction.py",

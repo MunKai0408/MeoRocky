@@ -290,6 +290,10 @@ def _expand_group_units(source_bytes, prefix, backend, lim,
                 return [(None, "assets")]
             except PB3Error:
                 pass
+            # M3: file dau vao chinh la CSV doc lap.
+            from sdk.csvutil import is_localization_csv
+            if is_localization_csv(bytes(source_bytes), source_name or ""):
+                return [(None, "csv")]
     try:
         return _expand_prefix_units(source_bytes, prefix, backend, lim)
     except PB3Error as first_exc:
@@ -345,6 +349,10 @@ def _enumerate_units(source_bytes, backend, lim, refused=None):
         return [(None, "assets")]
     except PB3Error:
         pass
+    # M3: file CSV/TSV doc lap — don vi kind "csv".
+    from sdk.csvutil import is_localization_csv
+    if is_localization_csv(data, ""):
+        return [(None, "csv")]
     try:
         zf = zipfile.ZipFile(io.BytesIO(data))
     except zipfile.BadZipFile:
@@ -375,6 +383,9 @@ def _enumerate_units(source_bytes, backend, lim, refused=None):
                 try:
                     _u.parse_serialized(entry_data, lim, where=info.filename)
                 except PB3Error:
+                    # M3: entry CSV/TSV localization — don vi kind "csv".
+                    if is_localization_csv(entry_data, info.filename):
+                        units.append((info.filename, "csv"))
                     continue
                 units.append((info.filename, "assets"))
     if not units:
@@ -488,16 +499,72 @@ def _collect_mb_keys(sfs):
     return terms
 
 
-def _classify_unmatched(keys, translations, sfs, mb_terms):
+def _collect_csv_values(source_bytes, backend, lim, source_locale):
+    """{key: value} cot nguon cua moi file CSV doc lap trong input (M3).
+
+    Quet _enumerate_units; don vi kind "csv" thi doc bytes truc tiep tu
+    ZIP (hoac chinh file dau vao khi vpath None) roi lay source_map.
+    Loi doc/parse thi bo qua don vi do (khong fail ca dot). Key trung
+    giua nhieu file CSV: file xuat hien truoc thang."""
+    out: Dict[str, str] = {}
+    try:
+        units = _enumerate_units(source_bytes, backend, lim)
+    except PB3Error:
+        return out
+    from sdk.csvutil import csv_values as _csv_values
+    data = bytes(source_bytes)
+    zf = None
+    try:
+        if zipfile.is_zipfile(io.BytesIO(data)):
+            zf = zipfile.ZipFile(io.BytesIO(data))
+        for (vpath, kind) in units:
+            if kind != "csv":
+                continue
+            try:
+                if vpath is None:
+                    csv_data, name = data, "csv"
+                else:
+                    csv_data = zf.read(vpath) if zf is not None else data
+                    name = vpath.rsplit("/", 1)[-1]
+                for k, v in _csv_values(csv_data, name,
+                                        source_locale).items():
+                    out.setdefault(k, v)
+            except Exception:
+                continue
+    finally:
+        if zf is not None:
+            zf.close()
+    return out
+
+
+def _classify_unmatched(keys, translations, sfs, mb_terms, csv_values=None,
+                        source_locale="en"):
     """Phan loai key khong vao plan: unchanged / non_string_value /
-    not_json_dict / monobehaviour / not_found. Tra (unmatched, unchanged)."""
+    not_json_dict / monobehaviour / not_found. Tra (unmatched, unchanged).
+
+    csv_values (M3): {key: value} cot nguon cua file CSV doc lap — uu
+    tien cao nhat (nhu extraction: CSV la nguon dau). TextAsset CSV
+    trong SF cung duoc doc o day (cot source_locale)."""
     dict_values = {}  # key -> (value, is_str)
     nondict_scripts = []
+    for k, v in (csv_values or {}).items():
+        dict_values[k] = v
     for sf in sfs:
         for _pid, _name, script in sf.text_assets():
             try:
                 obj = json.loads(script)
             except (ValueError, UnicodeDecodeError):
+                # M3: TextAsset CSV trong SF — lay gia tri cot nguon.
+                try:
+                    from sdk.csvutil import csv_values as _csv_values
+                    from sdk.csvutil import is_csv_text_asset
+                    if is_csv_text_asset(script, _name):
+                        for k, v in _csv_values(
+                                script.encode("utf-8"), _name,
+                                source_locale).items():
+                            dict_values.setdefault(k, v)
+                except Exception:
+                    pass
                 continue
             if isinstance(obj, dict):
                 for k, v in obj.items():
@@ -797,7 +864,9 @@ def apply_rebuild(source_bytes, *, source_name, translations,
         mb_terms = set()
     leftover = [k for k in translations if k not in planned_keys]
     unmatched, unchanged = _classify_unmatched(
-        leftover, translations, all_sfs, mb_terms)
+        leftover, translations, all_sfs, mb_terms,
+        csv_values=_collect_csv_values(source_bytes, be, lim, source_locale),
+        source_locale=source_locale)
     for u in unmatched:
         u["unit"] = None
     # Gan unit cho unmatched theo nhom provenance (de UI hien dung cho).
