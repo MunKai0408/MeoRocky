@@ -77,9 +77,14 @@ def text_asset_data(name, script):
 # ------------------------------------------------------- SerializedFile
 def build_serialized_file(version=17, unity_version=UNITY_VERSION,
                           objects=(), types=(), enable_type_tree=False,
-                          typetree_blobs=(), target_platform=9):
+                          typetree_blobs=(), target_platform=9,
+                          shared_subtrees=(), user_information=b""):
     """objects: [(path_id, type_id, data)]; types: [(class_id, script_id_or_None)].
-    typetree_blobs: {type_index: bytes} khi enable_type_tree."""
+    typetree_blobs: {type_index: bytes} khi enable_type_tree.
+    shared_subtrees: [handler bytes] chi cho version >= 26 (muc sau ref types,
+    theo UnityPy master: i32 count + count x (hash 16B + u32 size + info)).
+    user_information: bytes (ghi sau muc shared subtrees, truoc khi ket thuc
+    metadata) — mac dinh b"" (1 byte NUL)."""
     header_size = 48 if version >= 22 else 20
     meta = io.BytesIO()
     meta.write(unity_version.encode("utf-8") + b"\x00")
@@ -105,6 +110,10 @@ def build_serialized_file(version=17, unity_version=UNITY_VERSION,
                     meta.write(b"\x00" * 16)
                     meta.write(struct.pack("<i", len(blob)))
                 meta.write(blob)
+            elif version >= 23:
+                # type khong co type tree: hash + size 0 (info None).
+                meta.write(b"\x00" * 16)
+                meta.write(struct.pack("<i", 0))
             if version >= 21:
                 # type_dependencies (rỗng) cho type thường; reader chỉ đọc
                 # mục này khi enable_type_tree (theo UnityPy).
@@ -134,7 +143,13 @@ def build_serialized_file(version=17, unity_version=UNITY_VERSION,
     meta.write(struct.pack("<i", 0))  # externals
     if version >= 20:
         meta.write(struct.pack("<i", 0))  # ref_types
-    meta.write(b"\x00")  # userInformation
+    if version >= 26:
+        # muc shared subtrees (UnityPy master, chi v26+): i32 count +
+        # count x handler (hash 16B + u32 size + info bytes).
+        meta.write(struct.pack("<i", len(shared_subtrees)))
+        for handler in shared_subtrees:
+            meta.write(handler)
+    meta.write(user_information + b"\x00")  # userInformation
     meta_bytes = meta.getvalue()
     data_offset = _align_up(header_size + len(meta_bytes), 16)
     file_size = data_offset + len(data_bytes)
@@ -162,12 +177,21 @@ def build_serialized_file(version=17, unity_version=UNITY_VERSION,
     return out.getvalue()
 
 
-def typetree_blob(root_type, children, version=17):
+def typetree_blob(root_type, children, version=17, ref_hashes=(),
+                  node_flags=None, byte_sizes=None):
     """Blob type tree: nút gốc root_type/Base; con là (type, name).
 
     Node '<hBBIIiii' (24 byte) tới v18, thêm Q ref hash (32 byte) từ v19
     (theo UnityPy helpers/TypeTreeNode._get_blob_node_struct); v23+ mở đầu
-    bằng magic "mhtt" + format version (TypeTreeNode.parse_blob)."""
+    bằng magic "mhtt" + format version (TypeTreeNode.parse_blob) và KẾT
+    THÚC bằng u32 ref_hash_count + ref_hashes 16 byte (UnityPy
+    TypeTreeNodeInfo — kể cả khi count = 0; fixture v23 cũ của repo thiếu
+    phần đuôi này, parser mới chấp nhận cả 2 dạng nhưng builder này luôn
+    ghi dạng chuẩn UnityPy).
+    ref_hashes: [bytes 16] — hash các subtree mà node flag-32 tham chiếu.
+    node_flags: {node_index: (type_flags, ref_type_hash_index)} — node_index
+    0 = gốc, 1.. = con theo thứ tự `children`; mặc định (0, 0).
+    byte_sizes: {node_index: byte_size} — mặc định -1 (struct/chưa rõ)."""
     names = [root_type, "Base"]
     for t, n in children:
         names += [t, n]
@@ -178,16 +202,38 @@ def typetree_blob(root_type, children, version=17):
         return strings.index(name.encode("utf-8"))
 
     fmt = "<hBBIIiii" + ("Q" if version >= 19 else "")
-    nodes = [(1, 0, 0, off(root_type), off("Base"), -1, 0, 0)
-             + ((0,) if version >= 19 else ())]
+    node_flags = node_flags or {}
+    byte_sizes = byte_sizes or {}
+
+    def node_tuple(idx, level, t, n, index=0):
+        flags, ref_idx = node_flags.get(idx, (0, 0))
+        base = (1, level, flags, off(t), off(n), byte_sizes.get(idx, -1),
+                index, 0)
+        if version >= 19:
+            base = base + (ref_idx,)
+        return base
+
+    nodes = [node_tuple(0, 0, root_type, "Base")]
     for i, (t, n) in enumerate(children):
-        nodes.append((1, 1, 0, off(t), off(n), -1, i, 0)
-                     + ((0,) if version >= 19 else ()))
+        nodes.append(node_tuple(i + 1, 1, t, n, index=i))
     body = b"".join(struct.pack(fmt, *n) for n in nodes)
     blob = struct.pack("<ii", len(nodes), len(strings)) + body + strings
     if version >= 23:
         blob = b"mhtt" + struct.pack("<i", version) + blob
+        blob += struct.pack("<I", len(ref_hashes))
+        for h in ref_hashes:
+            assert len(h) == 16, "ref hash phai dai 16 byte"
+            blob += h
     return blob
+
+
+def typetree_handler(hash_bytes, info_bytes):
+    """Handler v23+/v26 (UnityPy TypeTreeNodeInfoHandler): hash 16B + u32
+    size + info bytes (None -> size 0, type khong co type tree)."""
+    assert len(hash_bytes) == 16, "handler hash phai dai 16 byte"
+    if info_bytes is None:
+        return hash_bytes + struct.pack("<I", 0)
+    return hash_bytes + struct.pack("<I", len(info_bytes)) + info_bytes
 
 
 def typetree_blob_text_asset():
@@ -395,6 +441,56 @@ def main():
         objects=[
             (4004, 0, text_asset_data("config", JSON_TEXT)),
         ], types=[text_asset], typetree_blobs={0: blob_v23_text})
+    # v24/v25: layout giống hệt v23 (UnityPy master không có nhánh 24/25).
+    resources_v24 = build_serialized_file(
+        version=24, unity_version=UNITY6_REVISION, enable_type_tree=True,
+        objects=[
+            (4001, 0, text_asset_data("greeting", "Xin chao Unity 6!")),
+            (4002, 0, text_asset_data("longtext", LONG_TEXT)),
+        ], types=[text_asset],
+        typetree_blobs={0: typetree_blob(
+            "TextAsset", [("string", "m_Name"), ("string", "m_Script")],
+            version=24)})
+    resources_v25 = build_serialized_file(
+        version=25, unity_version=UNITY6_REVISION, enable_type_tree=True,
+        objects=[
+            (4001, 0, text_asset_data("greeting", "Xin chao Unity 6!")),
+        ], types=[text_asset],
+        typetree_blobs={0: typetree_blob(
+            "TextAsset", [("string", "m_Name"), ("string", "m_Script")],
+            version=25)})
+    # v23 với ref_hashes (dạng chuẩn UnityPy: type tham chiếu 1 subtree;
+    # node flag-32 vẫn giữ con inline ở v23 — bảng shared chỉ có từ v26).
+    blob_v23_sharedref = typetree_blob(
+        "MonoBehaviour", [("string", "m_Name")], version=23,
+        ref_hashes=[b"shared-subtree#1"], node_flags={1: (32, 0)})
+    resources_v23_sharedref = build_serialized_file(
+        version=23, unity_version=UNITY6_REVISION, enable_type_tree=True,
+        objects=[
+            (4001, 0, text_asset_data("greeting", "Xin chao Unity 6!")),
+            (4005, 1, aligned_string("SharedRefBehaviour")),
+        ], types=[text_asset, mono],
+        typetree_blobs={0: blob_v23_text, 1: blob_v23_sharedref})
+    # v26: shared subtree "SharedData" (m_Score/m_Level int) + type
+    # MonoBehaviour có node flag-32 tham chiếu nó (không con inline).
+    shared_data_info = typetree_blob(
+        "SharedData", [("int", "m_Score"), ("int", "m_Level")], version=26,
+        byte_sizes={1: 4, 2: 4})
+    shared_handler = typetree_handler(b"shared-subtree#1", shared_data_info)
+    blob_v26_mono = typetree_blob(
+        "MonoBehaviour", [("SharedData", "m_Shared")], version=26,
+        ref_hashes=[b"shared-subtree#1"], node_flags={1: (32, 0)})
+    resources_v26 = build_serialized_file(
+        version=26, unity_version=UNITY6_REVISION, enable_type_tree=True,
+        objects=[
+            (4001, 0, text_asset_data("greeting", "Xin chao Unity 6!")),
+            (4006, 1, struct.pack("<ii", 100, 5)),
+        ], types=[text_asset, mono],
+        typetree_blobs={0: typetree_blob(
+            "TextAsset", [("string", "m_Name"), ("string", "m_Script")],
+            version=26), 1: blob_v26_mono},
+        shared_subtrees=[shared_handler],
+        user_information=b"v26-fixture")
     entries = [
         ("CAB-0123456789abcdef0123456789abcdef", 4, resources),
         ("CAB-0123456789abcdef0123456789abcde0", 4, shared),
@@ -430,6 +526,10 @@ def main():
         "sample_typetree.assets": resources_tt,
         "sample_v21.assets": v21,
         "sample_v23.assets": resources_v23,
+        "sample_v24.assets": resources_v24,
+        "sample_v25.assets": resources_v25,
+        "sample_v23_sharedref.assets": resources_v23_sharedref,
+        "sample_v26.assets": resources_v26,
         "sample.unity3d": bundle,
         "sample_lz4.unity3d": bundle_lz4,
         "sample_lzma.unity3d": bundle_lzma,
