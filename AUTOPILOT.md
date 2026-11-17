@@ -25,6 +25,59 @@
   Joseph, xem "Chờ Joseph" #5): chưa có ảnh Q1/Q2/Q3 bản v4 + xác nhận bản đang
   cài; không đứng chờ, quay lại P0-4 khi có đủ.
 
+## Sửa khẩn cache (2026-11-17) — KHÔNG phải mục backlog, không tính vào thứ tự backlog [ĐÃ ĐO THẬT]
+
+- Nguyên nhân: P0-3 đổi nội dung 3 file precache (`pb3/sdk/unity.py`,
+  `extraction.py`, `rebuild.py`) nhưng KHÔNG tăng `CACHE_VERSION` (vẫn
+  `v21-20261117`). Theo luật trong `sw.js`, SW mới chỉ kích hoạt khi đổi
+  version; trình duyệt đã thăm trước đó tiếp tục phục vụ code cũ cache-first.
+  User xác nhận lần chạy lỗi là tool web trên điện thoại; `extract.zip` lúc
+  13:18 đúng hành vi trước P0-3 (key `.p12664`, zh trộn, lẫn tiếng Nhật,
+  thiếu term, 37 file rác, không có `en.json`).
+- Sửa: `CACHE_VERSION` v21-20261117→**v22-20261117** (`sw.js`, precache vẫn
+  120 mục, 0 mục chết); đồng bộ kỳ vọng version ở 20 file harness/check
+  (8 `exp/check_*_static.py` + 12 `exp/verify_*.mjs`) + 1 dòng mô tả hiện tại
+  trong `HANDOVER.md` — chỉ sửa số version, không đổi hành vi kiểm chứng; báo
+  cáo lịch sử `exp/*_results.*` và dòng lịch sử P0-2/P0-3 trong file này ĐỂ
+  NGUYÊN. Cây đã dọn về đúng trạng thái sau P0-3 trước khi sửa: 32 file P1-1
+  sửa dở khôi phục từ snapshot, 4 file P1-1 mới xóa; ghi chú khảo sát P1-1
+  trong `work_p11/` giữ nguyên cho lượt sau. Không sửa bug đường bridge (xem
+  dưới — đường bridge đã dùng đúng parser P0-3).
+- Tự kiểm tra: smoke 59/59; full 1.846 = 1.816 đạt / 25 lỗi / 3 fail / 2 bỏ
+  qua, tập 28 đỏ trùng hệt mốc P0-3 (2 fixture thiếu), 0 đỏ mới; 9 check tĩnh
+  `fails: []`; harness item6 14/16 (2 fail gzip từ trước, như đã ghi) với cache
+  thật `beartea-v22-20261117` đủ 120/120 mục + `browser_cache_version_switch`
+  PASS (đổi version xóa cache cũ); harness c5 13/13 PASS. `exp/*.json|*.md`
+  bẩn do chạy harness đã khôi phục byte-identical.
+- Kiểm chứng end-to-end đường bridge/web [ĐÃ ĐO THẬT] (CPython qua
+  `bridge.extract`, đúng mặc định web: locales `["en","zh"]`,
+  `merge_one_file=True`, nguồn tự động; `boot` 20 plugin): worker.js tải đúng
+  danh sách `pb3/files.json` qua SW rồi `import bridge`, không có parser riêng
+  trong JS. IPA 9 Kings v1.0.6: gộp en 6.694 / zh 2.176 (khớp mốc P0-3);
+  langtable en/zh mỗi file 2.150 key tên term, 0 key `.pNNNN`/`.sNNNN`/`.xN`;
+  zh = đúng 1 cột zh-TW (biến thể đầu theo thứ tự bảng), khớp 2.150/2.150 với
+  `zh-TW.json` mẫu P0-3; ST en 100 + zh 26 key; 0 key `.p12664` ở mọi output;
+  `Perk_Benevolent` có mặt, `Achievement_FrugalKing` zh = `小氣鬼` (cũ:
+  `守銭奴`). File mẫu Build 68: langtable 2.086 key; zh gộp khớp 2.086/2.086
+  với `zh-CN.json` mẫu của parent (zh-CN là biến thể đầu ở build này).
+  Giới hạn còn tồn tại, KHÔNG đổi bởi sửa khẩn (cần quyết định riêng, không
+  phải bug parser P0-3): `en.json` gộp vẫn chứa key generic `.sNNNN`/`.pNNNN`
+  của MonoBehaviour không phải bảng ngôn ngữ (IPA 4.445 `.s` / 904 `.p`),
+  và output vẫn kèm file locale-None của plugin khác (plist `Info.*`, `.abi`
+  21.393 key, `RuntimeInitializeOnLoads`) như trước P0-3; bridge gộp biến thể
+  về mã gốc nên không ra file `zh-CN.json`/`zh-TW.json` riêng (chỉ script xuất
+  locales mới tách đủ biến thể).
+- Sau khi bản v22 lên live, user trên Safari cần: có mạng, tải lại trang 1 lần
+  (kích hoạt SW mới: `skipWaiting` + `clients.claim` trong `sw.js`), rồi tải
+  lại lần nữa (hoặc đóng tab/mở lại) để tài liệu chạy code mới; nếu vẫn ra kết
+  quả cũ thì xóa dữ liệu trang rồi mở lại. Cơ sở code: `sw.js` install/
+  activate/fetch + `app.js` chỉ `register("sw.js")`, không có cơ chế báo bản
+  mới; hành vi Safari thật [CHƯA KIỂM CHỨNG].
+- Chờ file v1.0.5: xem "Chờ Joseph" #6 (giữ nguyên, không trùng lặp). Khi có
+  file: chạy lại đúng input v1.0.5 qua bridge với mặc định web; tiêu chí: 0
+  key `.pNNNN` trong output bảng ngôn ngữ/zh, zh thuần 1 cột biến thể,
+  có `Perk_Benevolent`, không lẫn giá trị cột tiếng Nhật, `en.json` có mặt.
+
 ## Đã xong
 
 ### P0-3 (trích xuất cấu trúc bảng ngôn ngữ + StringTable, lọc rác, conflicts) — XONG 2026-11-17 [ĐÃ ĐO THẬT] (commit `f88934c5`, PR #3, gộp vào main `fead921f`)
@@ -226,6 +279,10 @@ diff -rq -x __pycache__ -x logs -x reports -x workspace -x .pytest_cache <pristi
   vì xóa hẳn mất hàng nghìn chuỗi thật không có nguồn thay thế + phá test hiện có.
 - File ảo bảng ngôn ngữ mang đoạn `.langtable` — vì tên cũ đụng file generic
   cùng đơn vị, dict ảo ghi đè làm mất bảng (lỗi thật, đã có test khóa).
+- QUY TẮC BẮT BUỘC: MỌI lần đổi nội dung file precache đều phải tăng
+  CACHE_VERSION + đồng bộ mọi kỳ vọng version, và tự kiểm tra mỗi mục phải
+  grep xác nhận không còn pin version cũ — vì P0-3 quên bump khiến trình duyệt
+  của user tiếp tục chạy code cũ dù main đã có code mới (sửa khẩn 2026-11-17).
 
 ## Đẩy code
 

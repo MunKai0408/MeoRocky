@@ -7,7 +7,7 @@
 //
 // Section:
 //  1. Unit Python (tests.test_merge_one_file, 10 test) + tinh:
-//     files.json=95 / tests.json=166 / sw.js CACHE_VERSION v21, node --check.
+//     files.json=95 / tests.json=166 / sw.js CACHE_VERSION v22, node --check.
 //  2. Fixture acceptance (CPython bridge, file resources.assets that cua
 //     Joseph): en -> dung 1 file en.json (9.753 key), zh -> dung 1 file
 //     zh.json (3.380 key); doi chieu mau 2.086 key (thu tu, so key co);
@@ -80,10 +80,10 @@ if (want(1)) {
   }
   rec("static_counts_and_cache",
     filesJson.files.length === 95 && testsJson.files.length === 166 &&
-    swJs.includes('CACHE_VERSION = "v21-20261117"') && !swJs.includes("v19-20261116") &&
+    swJs.includes('CACHE_VERSION = "v22-20261117"') && !swJs.includes("v19-20261116") &&
     noV17.length === 0,
     "files.json=" + filesJson.files.length + " (ky vong 95) · tests.json=" + testsJson.files.length +
-    " (ky vong 166) · sw.js v21-20261117: " + swJs.includes('CACHE_VERSION = "v21-20261117"') +
+    " (ky vong 166) · sw.js v22-20261117: " + swJs.includes('CACHE_VERSION = "v22-20261117"') +
     " · file exp con sot v17/162: " + (noV17.join(",") || "khong"), performance.now() - t);
   t = performance.now();
   const c = sh("node --check " + SITE + "/app.js && node --check " + SITE + "/worker.js && node --check " + SITE + "/sw.js && python3 -m py_compile " + SITE + "/pb3/bridge.py " + SITE + "/pb3/sdk/extraction.py " + SITE + "/pb3/sdk/exporters.py " + SITE + "/pb3/tests/test_merge_one_file.py", EXP);
