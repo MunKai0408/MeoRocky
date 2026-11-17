@@ -25,7 +25,7 @@
 
 ## Đã xong
 
-### P0-2 (cổng kiểm tra trước khi giao, bước 6) — XONG 2026-11-17 [ĐÃ ĐO THẬT] (chưa đẩy; coordinator điền mục "Đẩy code" sau khi đẩy)
+### P0-2 (cổng kiểm tra trước khi giao, bước 6) — XONG 2026-11-17 [ĐÃ ĐO THẬT] (commit `982174fc`, PR #2, gộp vào main `d93b79a3`)
 
 - Cổng duy nhất: bridge op `delivery_gate` + module mới `pb3/sdk/gate.py`
   (stdlib-only, Python 3.9, chỉ đọc, không ghi file) trả 1 verdict
@@ -170,6 +170,10 @@ diff -rq -x __pycache__ -x logs -x reports -x workspace -x .pytest_cache <pristi
   cục bộ xanh, nguyên nhân đỏ trên CI [CHƯA KIỂM CHỨNG].
 - Gói nhị phân chưa lên repo: `handoff_p01.zip` (18 fixture/font) — Joseph đẩy theo
   `HUONG_DAN.txt` (iSH hoặc web). Nhánh `auto/p0-1` giữ nguyên, không xóa.
+- P0-2: nhánh `auto/p0-2`, commit snapshot `982174fc9c7b8bc0ef2f7bfc86a4a52e44a74c74`
+  (39 file text, từ head `37a1133f`, sync-base đã kiểm khớp), PR #2, ĐÃ GỘP vào main
+  (`d93b79a3272d98b1580d88a7d5ff7dc83c45f17a`) 2026-11-17. Nhánh `auto/p0-2` giữ nguyên,
+  không xóa. Không có gói nhị phân cho P0-2.
 
 ## Backlog còn lại (thứ tự)
 
