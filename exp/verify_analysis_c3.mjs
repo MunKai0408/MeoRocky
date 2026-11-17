@@ -128,6 +128,8 @@ const manifest = JSON.parse(fs.readFileSync(SITE + "/manifest.webmanifest", "utf
     prefetchSkipCached: /caches\.match\(url\)/.test(appSrc),
     prefetchCacheCounts: /cachedFiles/.test(appSrc) && /fetchedFiles/.test(appSrc),
     prefetchSaveData: /saveData/.test(appSrc),
+    prefetchGzipByteCheck: /content-encoding/.test(appSrc) && /!encoded/.test(appSrc) && /got < total/.test(appSrc),
+    prefetchNoStrictByteCheck: !/got !== total/.test(appSrc),
   };
   const missing = Object.entries(checks).filter(([, v]) => !v).map(([k]) => k);
   rec("static_c3_wiring", missing.length === 0,

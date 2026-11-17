@@ -5338,6 +5338,13 @@ async function prefetchPyodide() {
       const res = await fetch(url);
       if (!res.ok) throw new Error("HTTP " + res.status);
       const total = parseInt(res.headers.get("content-length") || "0", 10);
+      // GitHub Pages (và nhiều CDN) nén gzip: Content-Length là kích thước
+      // SAU NÉN nhưng res.body cho ra byte SAU GIẢI NÉN (vd pyodide.mjs:
+      // 7.089 B nén / 17.758 B thật), nên got > total là bình thường — KHÔNG
+      // được so byte với Content-Length khi response có Content-Encoding.
+      // Stream đọc tới done + tính toàn vẹn của gzip đã đủ bảo đảm file
+      // đầy đủ; gzip bị cắt thật thì reader reject và rơi vào catch dưới.
+      const encoded = (res.headers.get("content-encoding") || "").trim() !== "";
       if (total > 0) prefetchState.totalBytes += total;
       const chunks = [];
       let got = 0;
@@ -5357,9 +5364,11 @@ async function prefetchPyodide() {
         got += buf.byteLength;
         prefetchState.loadedBytes += buf.byteLength;
       }
-      if (total > 0 && got !== total) {
-        // Máy chủ trả thiếu so với Content-Length: vẫn ghi những gì đã có,
-        // nhưng không tính là đủ file (để lần sau tải lại).
+      if (!encoded && total > 0 && got < total) {
+        // Máy chủ trả thiếu so với Content-Length (response không nén):
+        // vẫn ghi những gì đã có, nhưng không tính là đủ file (để lần
+        // sau tải lại). Khi có Content-Encoding thì không so byte (xem
+        // ghi chú ở trên) nên nhánh này không bao giờ chạy nhầm do gzip.
         prefetchState.totalBytes -= total;
         prefetchState.failedFiles.push(rel + " (thiếu byte)");
         prefetchUpdateUi();

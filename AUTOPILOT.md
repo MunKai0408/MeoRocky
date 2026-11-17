@@ -21,8 +21,10 @@
 
 ## Mục đang làm
 
-- **BUG#2** (đường merge trích xuất) — XONG 2026-11-17, xem "Đã xong" (nhánh
-  `fix/bug2-merge-extract`, chờ PR/duyệt — chưa gộp vào main).
+- **BUG#2** (đường merge trích xuất) — XONG 2026-11-17, xem "Đã xong"
+  (PR #4, đã gộp vào main `f1a46eb7`).
+- **Prefetch Pyodide báo sai "thiếu byte"** — XONG 2026-11-17, xem "Đã xong"
+  (PR #5, đã gộp vào main `55a8d162`).
 - **P1-1** (mở file theo nội dung, bỏ cổng đuôi) — tiếp theo. P0-4 đã BỎ QUA (chờ
   Joseph, xem "Chờ Joseph" #5): chưa có ảnh Q1/Q2/Q3 bản v4 + xác nhận bản đang
   cài; không đứng chờ, quay lại P0-4 khi có đủ.
@@ -82,7 +84,7 @@
 
 ## Đã xong
 
-### BUG#2 (đường merge trích xuất: loại quét phẳng khỏi file locale, tách biến thể zh, vứt rác) — XONG 2026-11-17 [ĐÃ ĐO THẬT] (nhánh `fix/bug2-merge-extract`, chưa gộp vào main — chờ PR/duyệt)
+### BUG#2 (đường merge trích xuất: loại quét phẳng khỏi file locale, tách biến thể zh, vứt rác) — XONG 2026-11-17 [ĐÃ ĐO THẬT] (PR #4, đã gộp vào main `f1a46eb7`)
 
 - Chuẩn do Joseph chốt: 1 file duy nhất cho mỗi locale xin (en → chỉ
   `en.json`; en+zh → `en.json` + `zh-CN.json` + `zh-TW.json`); đủ toàn bộ
@@ -144,6 +146,54 @@
   lần (kích hoạt SW mới), rồi tải lại lần nữa (hoặc đóng tab/mở lại) để
   chạy code mới; nếu vẫn ra kết quả cũ thì xóa dữ liệu trang rồi mở lại.
 
+### Prefetch Pyodide báo sai "thiếu byte" (response gzip: Content-Length là kích thước sau nén) — XONG 2026-11-17 [ĐÃ ĐO THẬT] (PR #5, đã gộp vào main `55a8d162`)
+
+- Triệu chứng user báo (ảnh chụp màn hình 2026-11-17 15:55, bản v23):
+  "Tải trước Pyodide chưa xong hẳn (3 file lỗi: pyodide/pyodide.mjs
+  (thiếu byte), pyodide/pyodide.asm.mjs (thiếu byte),
+  pyodide/pyodide.asm.wasm (thiếu byte)) — vẫn khởi động bình thường
+  khi bạn chọn file." File KHÔNG hề bị cắt/thiếu thật.
+- Nguyên nhân gốc [ĐÃ ĐO THẬT] (curl -I tới
+  `munkai0408.github.io/MeoRocky/pyodide/<file>` với
+  `Accept-Encoding: gzip`): GitHub Pages trả 5/6 file prefetch với
+  `Content-Encoding: gzip`; `Content-Length` là kích thước SAU NÉN còn
+  `res.body` cho ra byte SAU GIẢI NÉN — pyodide.mjs 7.089/17.758,
+  pyodide.asm.mjs 261.962/1.250.259, pyodide.asm.wasm 3.582.490/9.597.892,
+  pyodide-lock.json 26.858/119.077, file `.whl` lz4 55.075/55.914; chỉ
+  `python_stdlib.zip` không nén (2.545.550/2.545.550). `prefetchPyodide`
+  trong `app.js` so `got !== total` nên báo sai "thiếu byte" cho mọi file
+  gzip phải tải qua mạng. 3 file còn lại thoát chỉ vì đã có trong cache
+  (nhánh `caches.match` bỏ qua bước kiểm tra này). Lỗi hiện ra sau bản
+  v23 vì đổi tên cache làm cache lạnh, tải trước phải tải qua mạng thay
+  vì trúng cache.
+- Sửa (`app.js`, hàm `prefetchPyodide`, nhánh fetch): đọc
+  `Content-Encoding`; khi response có mã hóa thì BỎ QUA bước kiểm tra đếm
+  byte theo Content-Length (stream đọc tới `done` + tính toàn vẹn của
+  gzip đã đủ bảo đảm file đầy đủ; gzip bị cắt thật thì reader reject và
+  rơi vào `catch`, vẫn bị ghi là file lỗi — đúng hành vi). Chỉ ghi
+  "thiếu byte" khi `got < total` VÀ không có Content-Encoding. Giữ nguyên
+  mọi hành vi khác (cache hit, ghi cache, đếm tiến độ).
+  `CACHE_VERSION` v23→**v24-20261117** + đồng bộ mọi kỳ vọng version trong
+  20 file `exp/` (12 `verify_*.mjs` + 8 `check_*_static.py`); check tĩnh
+  `exp/verify_analysis_c3.mjs` (S3) thêm khóa hành vi mới
+  (`prefetchGzipByteCheck`, `prefetchNoStrictByteCheck`).
+- Kiểm chứng [ĐÃ ĐO THẬT] (mô phỏng Node tải thật 6 file prefetch từ
+  Pages với gzip): logic CŨ báo sai 5/6 file, logic MỚI pass 6/6, 0 báo
+  sai; lưới an toàn còn hoạt động (response không nén bị cắt thật
+  got=400 < total=1000 vẫn báo; stream gzip cắt giữa chừng reader
+  reject → rơi vào catch). Check tĩnh 9/9 `fails: []`; harness
+  `exp/verify_analysis_c3.mjs` 5/5 mục tĩnh/vm PASS (mục
+  `browser_end_to_end` không chạy được ở đây — thiếu playwright-core +
+  Chromium, giới hạn môi trường có từ trước, không do bản sửa này).
+  Smoke 59/59; full 1.872 = 1.739 đạt / 102 lỗi / 27 fail / 4 bỏ qua —
+  tập đỏ là tập con của baseline BUG#2 (102 lỗi + 29 fail), 0 đỏ mới,
+  2 test Apple Strings UTF-16 BOM trước fail nay pass (dao động môi
+  trường; bản sửa không đụng code Python).
+- Sau khi bản v24 lên live, user trên Safari cần: có mạng, tải lại trang
+  1 lần (kích hoạt SW mới), rồi tải lại lần nữa (hoặc đóng tab/mở lại)
+  để chạy code mới; dòng "3 file lỗi" phải biến mất ngay từ lần tải
+  trước đầu tiên sau khi cache lạnh.
+
 ### Sắp thứ tự key StringTable theo asset (khớp file mẫu byte-identical) — XONG 2026-11-17 [ĐÃ ĐO THẬT] (nhánh `fix/st-order`, chưa gộp vào main — chờ PR/duyệt)
 
 - Vấn đề: sau BUG#2, nội dung 9 Kings v1.0.6 đã khớp mẫu 100% (2.252
@@ -171,11 +221,11 @@
   `exp/verify_bug2_merge.py` bổ sung check thứ tự key + md5 file thô
   (dict == cũ không kiểm thứ tự). `CACHE_VERSION` v23→**v25-20261117**
   (`extraction.py` nằm trong precache) + đồng bộ mọi kỳ vọng version ở
-  20 file exp. LƯU Ý: v24 đã bị PR #5 (prefetch gzip, chưa gộp) chiếm —
+  20 file exp. LƯU Ý: v24 đã bị PR #5 (prefetch gzip, đã gộp vào main `55a8d162`) chiếm —
   nhánh này dùng v25 để tránh hai PR cùng v24 khiến sw.js sau gộp
   giống hệt byte với bản live và trình duyệt không cập nhật code mới;
-  khi gộp PR #5 và PR này sẽ xung đột ở sw.js + file kỳ vọng version,
-  giữ v25 khi giải quyết.
+  khi gộp PR #5 và PR này đã xung đột ở sw.js + file kỳ vọng version —
+  đã giải quyết trong commit merge này, giữ v25.
 - Kiểm chứng [ĐÃ ĐO THẬT]: trích xuất lại IPA 9K v1.0.6 bằng code sau
   sửa, `en.json` md5 file thô **4c22c9ebcdd04cc21c7f3f4a4952e955** —
   **giống hệt file mẫu** (byte-identical, 142.098 B); zh-TW thứ tự key
