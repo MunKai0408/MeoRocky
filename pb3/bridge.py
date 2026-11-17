@@ -1780,7 +1780,7 @@ def plan_undo(plan_json, path):
 
 def rebuild_apply(path, translations_json, provenance_json=None,
                   choices_json=None, dry_run=True, confirm=False,
-                  gate_verdict_json=None):
+                  gate_verdict_json=None, source_locale="en"):
     """(E) Ép bản dịch lại vào file gốc [bước 5, P0-1].
 
     Preview và apply là CÙNG 1 op với cờ dry_run (tiền lệ plan_apply /
@@ -1790,9 +1790,12 @@ def rebuild_apply(path, translations_json, provenance_json=None,
     ưu tiên, translation sidecar fallback, không provenance thì quét
     tất cả), chọn bản thắng cho xung đột, 1 plan mỗi đơn vị, áp bằng
     executor hiện có + đường rebuild streaming cho bundle .unity3d độc
-    lập lớn. Chỉ ghi TextAsset JSON dạng dict (G1); key MonoBehaviour
-    vào unmatched với reason rõ ràng. File gốc KHÔNG bị ghi đè; output
-    là đơn vị nhỏ nhất đã patch, KHÔNG phải IPA đóng gói lại.
+    lập lớn. Ghi TextAsset JSON dạng dict + MonoBehaviour/StringTable
+    (M1: bảng I2 byte-walk + StringTable co type tree, REBUILD_SECTION);
+    key MonoBehaviour generic (scan path) vao unmatched voi reason ro
+    rang. source_locale: cot ngon ngu goc de ghi (mac dinh "en"). File
+    gốc KHÔNG bị ghi đè; output là đơn vị nhỏ nhất đã patch, KHÔNG
+    phải IPA đóng gói lại.
     Tiến độ thật kind "rebuild" qua _emit. Response: units[]/totals/
     unmatched[]/conflicts[]/refused[]/outputs/dest/zip_path + note.
     gate_verdict_json (P0-2, tùy chọn): verdict của cổng kiểm tra
@@ -1862,7 +1865,8 @@ def rebuild_apply(path, translations_json, provenance_json=None,
             data, source_name=os.path.basename(path),
             translations=translations, provenance=provenance,
             choices=choices, dry_run=dry, confirm=bool(confirm),
-            progress_fn=_pf, src_path=path)
+            progress_fn=_pf, src_path=path,
+            source_locale=source_locale or "en")
         # File gốc không đổi: xác minh sha sau khi chạy (mọi đường ghi
         # đều ra /tmp/rebuild_out, không bao giờ ghi đè nguồn).
         if hashlib.sha256(open(path, "rb").read()).hexdigest() != orig_sha:
@@ -1882,7 +1886,7 @@ def rebuild_apply(path, translations_json, provenance_json=None,
 def delivery_gate(path, translations_json, source_json=None,
                   provenance_json=None, pressed_path=None,
                   allowlist_json=None, font_path=None, choices_json=None,
-                  allow_partial=False):
+                  allow_partial=False, source_locale="en"):
     """Cổng kiểm tra trước khi giao (bước 6, P0-2) — ĐIỂM VÀO DUY NHẤT.
 
     Nhận file gốc (+ file đã ép nếu có) + bản dịch + provenance (+ bản
@@ -1973,7 +1977,8 @@ def delivery_gate(path, translations_json, source_json=None,
             allowlist=allowlist, fonts=fonts,
             display_fonts=display_fonts, font_error=font_error,
             progress_fn=_pf, src_path=path, pressed_path=pressed_arg,
-            allow_partial=bool(allow_partial))
+            allow_partial=bool(allow_partial),
+            source_locale=source_locale or "en")
         # File gốc không đổi: xác minh sha sau khi chạy (cổng chỉ đọc).
         if hashlib.sha256(open(path, "rb").read()).hexdigest() != orig_sha:
             raise ValueError("file gốc đã đổi trong lúc kiểm — từ chối kết quả.")

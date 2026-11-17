@@ -8,7 +8,7 @@
 //
 //  A. Tĩnh: node --check; py_compile (kể cả sdk/gate.py, test_gate.py);
 //     check_delivery_gate_static.py (gate.py stdlib-only + Python 3.9,
-//     không UnityPy/lz4, không ghi file, manifest 95/167, precache 120
+//     không UnityPy/lz4, không ghi file, manifest 95/168, precache 120
 //     + v23, bridge có op delivery_gate + rebuild_apply bắt verdict,
 //     UI đủ id cổng + nút Ghi bị khóa bởi verdict + render cổng esc).
 //  B. Unit test Python: tests.test_gate + test_rebuild + test_plan.
@@ -98,8 +98,8 @@ const checkStatus = (r, id) => ((r.checks || []).find((c) => c.id === id) || {})
     if (j.fails && j.fails.length) { ok = false; detail = j.fails.join(" | "); }
     else detail = "gate.py stdlib-only + Python 3.9 + không UnityPy/lz4/mạng " +
       "+ không ghi file + đủ 5 kiểm tra (translation_complete, placeholders, " +
-      "diffverify, fonts, integrity) + manifest 95/167 + sw.js precache 120 " +
-      "mục có sdk/gate.py, không mục chết, CACHE_VERSION v25-20261117 + " +
+      "diffverify, fonts, integrity) + manifest 95/168 + sw.js precache 120 " +
+      "mục có sdk/gate.py, không mục chết, CACHE_VERSION v26-20261117 + " +
       "bridge delivery_gate + rebuild_apply bắt verdict + UI đủ id cổng + " +
       "nút Ghi bị khóa bởi verdict + render cổng esc";
   } catch (e) { ok = false; detail = "không đọc được JSON: " + (r.stdout || "") + (r.stderr || ""); }

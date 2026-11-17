@@ -130,6 +130,7 @@
   "pb3/tests/test_langdetect.py",
   "pb3/tests/test_language_cli.py",
   "pb3/tests/test_logging_limits.py",
+  "pb3/tests/test_mb_write.py",
   "pb3/tests/test_merge_one_file.py",
   "pb3/tests/test_model.py",
   "pb3/tests/test_multifile.py",

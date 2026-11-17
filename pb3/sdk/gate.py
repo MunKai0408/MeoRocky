@@ -477,14 +477,16 @@ def _err_text(exc: Exception) -> str:
 
 def _build_plans(source_bytes: bytes, source_name: str,
                  translations: Dict[str, str], provenance: Any,
-                 choices: Any, be: Any, lim: Limits
+                 choices: Any, be: Any, lim: Limits,
+                 source_locale: str = "en"
                  ) -> Dict[str, Any]:
     """Lap plan moi don vi theo DUNG duong (E): group_by_unit ->
     _expand_group_units -> build_plan -> _apply_unit_plan (executor
     hien co), roi phan loai key thua nhu apply_rebuild (gom SF cua
     tat ca don vi voi file ZIP de join StringTable). Tra plans (kem
     bytes da mo phong), refused, unmatched, unchanged. Loi tung don
-    vi vao refused, khong fail ca dot (nhu (E))."""
+    vi vao refused, khong fail ca dot (nhu (E)). source_locale: cot
+    ngon ngu goc de ghi vao MonoBehaviour (mac dinh "en")."""
     grouped = _rb.group_by_unit(translations, provenance, choices)
     groups = grouped["groups"]
     refused: List[Dict[str, str]] = []
@@ -492,6 +494,25 @@ def _build_plans(source_bytes: bytes, source_name: str,
     planned_keys: Set[str] = set()
     sfs_by_unit: Dict[str, Any] = {}
     total_changes = 0
+    # M1 (G1): mb_index nhu apply_rebuild (SharedTableData co the nam o
+    # bundle khac StringTable) — quet truoc khi lap plan.
+    mb_index: Dict[str, Dict[str, int]] = {}
+    try:
+        for (vpath, _kind) in _rb._enumerate_units(source_bytes, be, lim):
+            key = vpath or "<file>"
+            if key not in sfs_by_unit:
+                try:
+                    sfs_by_unit[key] = _rb._unit_sfs(
+                        source_bytes, vpath, be, lim)
+                except PB3Error:
+                    pass
+    except PB3Error:
+        pass
+    try:
+        mb_index = _plan.build_mb_shared_index(
+            [sf for lst in sfs_by_unit.values() for sf in lst])
+    except Exception:
+        mb_index = {}
     for group_unit in sorted(groups, key=lambda g: "" if g is None else str(g)):
         grp = groups[group_unit]
         try:
@@ -513,7 +534,8 @@ def _build_plans(source_bytes: bytes, source_name: str,
                 plan = _plan.build_plan(
                     source_bytes, grp["translations"],
                     source_bundle=source_name, entry=vpath,
-                    mode="REBUILD_SECTION", backend=be, limits=lim)
+                    mode="REBUILD_SECTION", backend=be, limits=lim,
+                    source_locale=source_locale, mb_index=mb_index)
             except ValueError:
                 continue
             except PB3Error as exc:
@@ -588,15 +610,47 @@ def _parse_unit(kind: str, unit_bytes: bytes, req_entry: Optional[str],
     return None, sf
 
 
-def _sf_has_assets(sf: Any, probes: List[Tuple[int, str]]) -> bool:
-    for pid, name in probes:
-        try:
-            _pid, found, _script = sf.find_text_asset(path_id=pid)
-        except PB3Error:
-            return False
-        if found != name:
-            return False
+def _sf_has_assets(sf: Any, probes: List[Tuple[Any, ...]]) -> bool:
+    """Don vi co chua cac asset cua plan? Probe (pid, asset_type, name)
+    (dang cu 2-tuple (pid, name) van chap nhan, mac dinh TextAsset).
+    TextAsset: tim dung ten; MonoBehaviour (M1): object phai ton tai,
+    class 114, ten m_Name khop neu doc duoc."""
+    for probe in probes:
+        if len(probe) == 3:
+            pid, asset_type, name = probe
+        else:
+            pid, name = probe
+            asset_type = "TextAsset"
+        if asset_type == "MonoBehaviour":
+            try:
+                o = sf.get_object(int(pid))
+            except PB3Error:
+                return False
+            if o.class_id != 114:
+                return False
+            if name:
+                try:
+                    raw = sf.object_bytes(int(pid))
+                    found_name = _u.read_monobehaviour_name(raw, sf.endian)
+                except PB3Error:
+                    found_name = None
+                if found_name is not None and found_name != name:
+                    return False
+        else:
+            try:
+                _pid, found, _script = sf.find_text_asset(path_id=int(pid))
+            except PB3Error:
+                return False
+            if found != name:
+                return False
     return True
+
+
+def _probes_for_plan(plan: Dict[str, Any]) -> List[Tuple[int, str, str]]:
+    """Probe (pid, asset_type, name) cho moi entry cua plan."""
+    return [(int(e["object"]), str(e.get("asset_type") or "TextAsset"),
+             str(e["asset_path"]).rsplit("::", 1)[-1])
+            for e in (plan.get("entries") or [])]
 
 
 def _candidate_matches(candidate: bytes, req_entry: Optional[str],
@@ -633,8 +687,7 @@ def _find_pressed_unit(pressed_bytes: bytes, plan: Dict[str, Any],
     entries = plan.get("entries") or []
     if not entries:
         return None
-    probes = [(int(e["object"]), str(e["asset_path"]).rsplit("::", 1)[-1])
-              for e in entries]
+    probes = _probes_for_plan(plan)
     req_entry = entries[0].get("entry")
     vpath = plan.get("unit_entry")
     try:
@@ -732,8 +785,7 @@ def _verify_pressed_units(source_bytes: bytes, plan_items: List[Dict[str, Any]],
                                 _sf = _u.parse_serialized(_pb.get_entry(nm), lim, where=nm)
                             except PB3Error:
                                 continue
-                            probes = [(int(e["object"]), str(e["asset_path"]).rsplit("::", 1)[-1])
-                                      for e in plan["entries"]]
+                            probes = _probes_for_plan(plan)
                             if _sf_has_assets(_sf, probes):
                                 pressed_req = nm
                                 break
@@ -789,6 +841,29 @@ def _verify_pressed_units(source_bytes: bytes, plan_items: List[Dict[str, Any]],
         # Noi dung tung entry: key doi == after, key khac giu nguyen, sha == after_sha.
         for entry in plan["entries"]:
             pid = int(entry["object"])
+            if entry.get("asset_type") == "MonoBehaviour":
+                # M1: doc lai object MB, doi chieu tung change theo
+                # field_path + object sha == after_sha (sha bao ca key
+                # khac giu nguyen — doi bat ky byte nao ngoai plan cung
+                # lam lech sha, tuong duong kiem extra_change cua TextAsset).
+                try:
+                    new_obj_b = pressed_sf.object_bytes(pid)
+                except PB3Error as exc:
+                    unit_mismatch.append({"unit": display, "kind": "asset_missing",
+                                          "message_vi": "Đơn vị %s: không tìm thấy MonoBehaviour path_id=%d trong file đã ép: %s" % (display, pid, _err_text(exc))})
+                    continue
+                ok, details = _u._verify_mb_values(
+                    pressed_sf, pid, entry["changes"])
+                for d in details:
+                    unit_mismatch.append({"unit": display, "kind": "value_mismatch",
+                                          "message_vi": "Đơn vị %s: %s" % (display, d)})
+                if ok:
+                    for change in entry["changes"]:
+                        verified_keys.add(change["key"])
+                if _sha(new_obj_b) != entry["after_sha"]:
+                    unit_mismatch.append({"unit": display, "kind": "after_sha",
+                                          "message_vi": "MonoBehaviour path_id=%d trong file đã ép có sha khác after_sha của kế hoạch (đơn vị %s)." % (pid, display)})
+                continue
             try:
                 _p, _name, orig_script = orig_sf.find_text_asset(path_id=pid)
                 _p2, _name2, new_script = pressed_sf.find_text_asset(path_id=pid)
@@ -861,7 +936,8 @@ def run_gate(source_bytes: bytes, *, source_name: str,
              backend: Any = None, limits: Optional[Limits] = None,
              progress_fn: Any = None, src_path: Optional[str] = None,
              pressed_path: Optional[str] = None,
-             allow_partial: bool = False) -> Dict[str, Any]:
+             allow_partial: bool = False,
+             source_locale: str = "en") -> Dict[str, Any]:
     """Chay cong kiem tra day du, tra 1 verdict duy nhat.
 
     Khong ghi file nao. Loi dau vao (translations/source/allowlist sai
@@ -913,13 +989,15 @@ def run_gate(source_bytes: bytes, *, source_name: str,
         preview = _rb.build_rebuild_preview(
             source_bytes, source_name=source_name,
             translations=translations, provenance=provenance,
-            choices=choices, backend=be, limits=lim, src_path=None)
+            choices=choices, backend=be, limits=lim, src_path=None,
+            source_locale=source_locale)
     except ValueError:
         raise
     except PB3Error as exc:
         preview_error = exc
     built = _build_plans(source_bytes, source_name, translations,
-                         provenance, choices, be, lim)
+                         provenance, choices, be, lim,
+                         source_locale=source_locale)
     _prog(3)
     plan_items = built["plans"]
     refused = built["refused"]

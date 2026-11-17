@@ -26,6 +26,12 @@ Model plan (theo phan tich Joseph 13:52, muc C5):
 - Chi TextAsset JSON dang dict moi vao plan. Asset khong phai JSON, JSON
   khong phai dict, hoac khong co key nao trung thi vao `skipped` kem ly do
   (khong bien mat lang le).
+- M1 (G1): MonoBehaviour/StringTable cung vao plan (asset_type
+  "MonoBehaviour", op REBUILD_SECTION): bang ngon ngu I2 (byte-walk) va
+  StringTable co type tree (m_TableData[].m_Localized); key StringTable
+  thieu trong bang thi CHEN entry moi (field_path "m_TableData[+]" kem
+  "element"). before_sha/after_sha = sha object bytes (khong phai script).
+  Generic MonoBehaviour (scan path / field le) chua vao plan o v1.
 - `op` mac dinh REBUILD_SECTION (duong patch da kiem chung qua mod_patch /
   apply_patch, tu leo tu PATCH_INPLACE khi chuoi moi dai hon). Ghi CHU:
   op REBUILD_ALL (che do ghi cua Unity) VAN BI KHOA tren web — can
@@ -208,16 +214,61 @@ def _read_unit_text_assets(kind, unit_bytes, req_entry, backend, limits):
     return sf.text_assets(warnings=warnings), warnings
 
 
+def build_mb_shared_index(sfs):
+    """{collection: {key: m_Id}} tu moi SharedTableData trong sfs.
+
+    Can cho StringTable: tra nguoc m_Id -> (collection, key) de dat ten
+    key "Collection/Key", va biet key nao thieu trong bang de chen entry
+    moi. sfs: list SerializedFile (co the tu nhieu don vi/bundle khac nhau
+    — SharedTableData thuong nam o bundle khac StringTable)."""
+    index: Dict[str, Dict[str, int]] = {}
+    for sf in sfs or []:
+        try:
+            objects = list(sf.objects)
+        except PB3Error:
+            continue
+        for o in objects:
+            if o.class_id != 114:
+                continue
+            try:
+                typ = sf.types[o.type_id]
+            except IndexError:
+                continue
+            if typ.node is None:
+                continue
+            try:
+                val = _u.read_monobehaviour_object(sf, o.path_id)
+            except PB3Error:
+                continue
+            if "m_Entries" not in val or "m_TableCollectionName" not in val:
+                continue
+            coll = val.get("m_TableCollectionName")
+            if not isinstance(coll, str):
+                continue
+            d = index.setdefault(coll, {})
+            for en in val.get("m_Entries") or []:
+                if isinstance(en, dict) \
+                        and isinstance(en.get("m_Key"), str) \
+                        and isinstance(en.get("m_Id"), int):
+                    d[en["m_Key"]] = en["m_Id"]
+    return index
+
+
 def build_plan(source_bytes, translations, *, source_bundle, entry=None,
                mode="REBUILD_SECTION", rebuild_all=False, asset_names=None,
-               backend=None, limits=None):
-    """Lap plan tu bundle/assets: quet TextAsset JSON, doi key trong
-    `translations` (key -> gia tri moi) thanh entry moi asset.
+               backend=None, limits=None, source_locale="en", mb_index=None):
+    """Lap plan tu bundle/assets: quet TextAsset JSON + MonoBehaviour /
+    StringTable, doi key trong `translations` (key -> gia tri moi) thanh
+    entry moi asset.
 
     entry: vpath toi don vi ("Payload/.../x.bundle::CAB-..." hoac None neu
     file dau vao chinh la bundle/.assets). asset_names: chi ap cho cac
     TextAsset co ten nay (vd ["en.json"] — mac dinh: moi asset JSON co key
-    trung)."""
+    trung). source_locale: cot ngon ngu goc de ghi (mac dinh "en" — ghi
+    vao cot/bang cua locale nay vi chua co cot vi). mb_index:
+    {collection: {key: m_Id}} tu build_mb_shared_index (can de dat ten
+    key StringTable va chen entry thieu); None thi StringTable chi ghi
+    entry da co (khong chen duoc key thieu)."""
     if not isinstance(translations, dict) or not translations:
         raise ValueError("translations phai la JSON object khong rong "
                          "(key -> gia tri moi, nhu dau ra tab Dich).")
@@ -301,10 +352,161 @@ def build_plan(source_bytes, translations, *, source_bundle, entry=None,
             "before_sha": _sha(script_b), "after_sha": _sha(after_b),
             "selected": True, "warnings": warnings,
         })
+    # --- M1 (G1): MonoBehaviour / StringTable ---
+    # Quet SF cua don vi, lay target ghi duoc (LS term, ST entry) roi lap
+    # entry MB cho key co trong translations va khac gia tri goc. Key ST
+    # thieu trong bang (co trong SharedTableData nhung chua co entry) thi
+    # CHEN entry moi (field_path "m_TableData[+]", before "").
+    try:
+        if kind == "bundle":
+            bundle = _u.parse_bundle(unit_bytes, be, lim, where="bundle")
+            sf = _u.parse_serialized(bundle.get_entry(req_entry), lim,
+                                     where=req_entry)
+        else:
+            sf = _u.parse_serialized(unit_bytes, lim, where="assets")
+    except PB3Error:
+        sf = None
+    if sf is not None:
+        try:
+            targets, mb_notes = _u.monobehaviour_write_targets(
+                sf, source_locale, mb_index)
+        except PB3Error:
+            targets, mb_notes = [], []
+        for note in mb_notes:
+            skipped.append({"asset_path": "%s::%s"
+                            % (unit_display, req_entry or ""),
+                            "reason": note})
+        by_pid: Dict[int, List[Dict[str, Any]]] = {}
+        generic_hits: List[Dict[str, Any]] = []
+        for t in targets:
+            if t.get("kind") == "generic":
+                # Generic MB chua vao plan o v1 (key la field path, khong
+                # khop output trich xuat da gop) — ghi skipped neu trung
+                # translations, khong bo im lang.
+                if t.get("key") in translations:
+                    generic_hits.append(t)
+                continue
+            by_pid.setdefault(int(t["path_id"]), []).append(t)
+        for t in generic_hits:
+            skipped.append({"asset_path": "%s::%s::%s"
+                            % (unit_display, req_entry or "", t.get("name") or ""),
+                            "reason": "key generic MonoBehaviour %r chua ho tro "
+                                      "ghi o v1" % t.get("key")})
+        rev: Dict[int, Tuple[str, str]] = {}
+        for coll, keys in (mb_index or {}).items():
+            for k, mid in (keys or {}).items():
+                rev[mid] = (coll, k)
+        for pid, tgts in sorted(by_pid.items()):
+            name = tgts[0].get("name") or ""
+            asset_path = "%s::%s::%s" % (unit_display, req_entry, name) \
+                if kind == "bundle" else "%s::%s" % (unit_display, name)
+            changes = []
+            warnings: List[str] = []
+            present_bare = set()
+            for t in tgts:
+                key = t.get("key")
+                if not isinstance(key, str):
+                    continue
+                if t.get("kind") == "string_table" and "/" in key:
+                    present_bare.add(key.split("/", 1)[1])
+                if key not in translations:
+                    continue
+                cur = t.get("before")
+                new = translations[key]
+                if not isinstance(cur, str):
+                    continue
+                if cur == new:
+                    continue
+                if _placeholders(cur) != _placeholders(new):
+                    warnings.append(
+                        "key %r: placeholder doi %s -> %s (kiem tra lai ban dich)"
+                        % (key, sorted(_placeholders(cur)),
+                           sorted(_placeholders(new))))
+                changes.append({"key": key, "field_path": t["field_path"],
+                                "before": cur, "after": new})
+            # Key ST thieu: tim collection qua entry da co, chen entry moi.
+            kinds = {t.get("kind") for t in tgts}
+            if "string_table" in kinds and mb_index:
+                coll = None
+                try:
+                    val = _u.read_monobehaviour_object(sf, pid)
+                    rows = val.get("m_TableData") or []
+                except PB3Error:
+                    rows = []
+                for row in rows:
+                    if isinstance(row, dict) \
+                            and isinstance(row.get("m_Id"), int):
+                        hit = rev.get(row["m_Id"])
+                        if hit is not None:
+                            coll = hit[0]
+                            break
+                if coll is not None and coll in mb_index:
+                    for bare in sorted(mb_index[coll]):
+                        if bare in present_bare:
+                            continue
+                        full_key = "%s/%s" % (coll, bare)
+                        if full_key not in translations:
+                            continue
+                        new = translations[full_key]
+                        if new == "":
+                            continue  # before "" == after "" -> khong doi
+                        el = _u.string_table_element_template(
+                            sf, pid, mb_index[coll][bare], new)
+                        if el is None:
+                            warnings.append(
+                                "key %r: khong dung duoc mau entry de chen, "
+                                "bo qua" % full_key)
+                            continue
+                        changes.append({"key": full_key,
+                                        "field_path": "m_TableData[+]",
+                                        "before": "", "after": new,
+                                        "element": el})
+            if not changes:
+                skipped.append({"asset_path": asset_path,
+                                "reason": "khong co key nao trung voi ban dich"})
+                continue
+            try:
+                old_obj = sf.object_bytes(pid)
+            except PB3Error as exc:
+                skipped.append({"asset_path": asset_path,
+                                "reason": "khong doc duoc object bytes: %s"
+                                          % _err_text(exc)})
+                continue
+            try:
+                if tgts[0].get("kind") == "language_source":
+                    new_obj = _u.write_language_source_bytes(
+                        old_obj, changes, sf.endian)
+                else:
+                    new_obj, _applied = _u.write_monobehaviour_object_bytes(
+                        sf, pid, changes)
+            except PB3Error as exc:
+                skipped.append({"asset_path": asset_path,
+                                "reason": "khong mo phong duoc patch MB: %s"
+                                          % _err_text(exc)})
+                continue
+            eid = hashlib.sha256(
+                ("%s|%s|%d|%s|%s|MonoBehaviour"
+                 % (source_bundle, entry or "", pid, name,
+                    json.dumps(changes, ensure_ascii=False,
+                               sort_keys=True))).encode("utf-8")
+            ).hexdigest()[:12]
+            entries.append({
+                "id": eid, "asset_path": asset_path,
+                "asset_type": "MonoBehaviour",
+                # MB v1 chi ho tro REBUILD_SECTION (khong PATCH_INPLACE).
+                "op": "REBUILD_SECTION", "object": int(pid), "kind": kind,
+                "entry": req_entry, "vpath": entry,
+                "changes": changes,
+                "preview_before": {c["key"]: c["before"] for c in changes},
+                "preview_after": {c["key"]: c["after"] for c in changes},
+                "before_sha": _sha(old_obj), "after_sha": _sha(new_obj),
+                "selected": True, "warnings": warnings,
+            })
     if not entries:
         raise ValueError(
-            "Khong lap duoc entry nao: khong co TextAsset JSON nao co key "
-            "trung voi ban dich (%d asset da bo qua, xem skipped)."
+            "Khong lap duoc entry nao: khong co TextAsset JSON hay "
+            "MonoBehaviour nao co key trung voi ban dich (%d asset/object "
+            "da bo qua, xem skipped)."
             % len(skipped))
     plan = {
         "version": PLAN_VERSION,
@@ -344,9 +546,15 @@ def validate_plan(plan):
             if f not in e:
                 raise ValueError("entry %s thieu truong %r."
                                  % (e.get("id"), f))
-        if e["asset_type"] != "TextAsset":
+        if e["asset_type"] not in ("TextAsset", "MonoBehaviour"):
             raise ValueError("entry %s: asset_type %r khong ho tro tren web "
-                             "(chi TextAsset)." % (e["id"], e["asset_type"]))
+                             "(chi TextAsset va MonoBehaviour)."
+                             % (e["id"], e["asset_type"]))
+        if e["asset_type"] == "MonoBehaviour" \
+                and e["op"] != "REBUILD_SECTION":
+            raise ValueError("entry %s: MonoBehaviour chi ho tro op "
+                             "REBUILD_SECTION (nhan %r)."
+                             % (e["id"], e["op"]))
         if e["op"] not in _PLAN_OPS:
             raise ValueError("entry %s: op %r khong ho tro."
                              % (e["id"], e["op"]))
@@ -355,6 +563,10 @@ def validate_plan(plan):
         for c in e["changes"]:
             if not all(k in c for k in ("key", "before", "after")):
                 raise ValueError("entry %s co change thieu key/before/after."
+                                 % e["id"])
+            if e["asset_type"] == "MonoBehaviour" \
+                    and not isinstance(c.get("field_path"), str):
+                raise ValueError("entry %s co change MB thieu field_path."
                                  % e["id"])
         e.setdefault("selected", True)
         e.setdefault("warnings", [])
@@ -386,16 +598,46 @@ def _parse_checkpoint(checkpoint_json):
 
 def _apply_entry_changes(kind, unit_bytes, req_entry, entry, backend, lim,
                          progress_fn=None):
-    """Ap toan bo changes cua 1 entry len unit bytes: mo phong 1 lan
-    bang _simulate_script (thay theo KEY, giu nguyen moi byte khac) roi
-    patch toan bo script bang 1 lan apply_patch (old = script goc,
-    new = script da mo phong) — dam bao byte ket qua dung after_sha
-    theo dinh nghia. Verify script doc lai dung after_sha + dung dict
-    mong doi. Tra (unit_bytes_moi, write_mode_used). Loi verify ->
-    PB3Error (khong ghi gi).
+    """Ap toan bo changes cua 1 entry len unit bytes.
+
+    TextAsset: mo phong 1 lan bang _simulate_script (thay theo KEY, giu
+    nguyen moi byte khac) roi patch toan bo script bang 1 lan apply_patch
+    (old = script goc, new = script da mo phong) — dam bao byte ket qua
+    dung after_sha theo dinh nghia. Verify script doc lai dung after_sha
+    + dung dict mong doi.
+    MonoBehaviour (M1): ap qua apply_monobehaviour_patch (REBUILD_SECTION)
+    roi verify object bytes sha == after_sha. Tra (unit_bytes_moi,
+    write_mode_used). Loi verify -> PB3Error (khong ghi gi).
     progress_fn(done, total) tuy chon (P0-1): goi sau moi change khi mo
     phong (None thi khong goi, test cu khong doi)."""
     cur = bytes(unit_bytes)
+    if entry.get("asset_type") == "MonoBehaviour":
+        total = len(entry["changes"])
+        if progress_fn is not None:
+            for idx in range(total):
+                try:
+                    progress_fn(idx + 1, total)
+                except Exception:
+                    pass
+        req = _u.MbPatchRequest(
+            data=cur, kind=kind, entry=req_entry,
+            path_id=int(entry["object"]), changes=entry["changes"],
+            write_mode=entry["op"], backend=backend, temp_dir=None)
+        res = _u.apply_monobehaviour_patch(req)
+        cur = res.output_bytes
+        last_mode = res.write_mode_used
+        if kind == "bundle":
+            bundle = _u.parse_bundle(cur, backend, lim, where="bundle::after")
+            sf = _u.parse_serialized(bundle.get_entry(req_entry), lim,
+                                     where="after")
+        else:
+            sf = _u.parse_serialized(cur, lim, where="assets::after")
+        if _sha(sf.object_bytes(int(entry["object"]))) != entry["after_sha"]:
+            raise PB3Error(
+                "E_VERIFY_FAILED",
+                "entry %s: object sau khi ap khac after_sha trong plan."
+                % entry["id"], where=entry["asset_path"])
+        return cur, last_mode
     if kind == "bundle":
         bundle = _u.parse_bundle(cur, backend, lim, where="bundle")
         sf = _u.parse_serialized(bundle.get_entry(req_entry), lim,

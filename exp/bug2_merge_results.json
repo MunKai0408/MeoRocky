@@ -21,6 +21,16 @@
      "detail": "en=2086 key, expected=2086 key"
     },
     {
+     "name": "en.json thứ tự key giống en-build68.json",
+     "ok": true,
+     "detail": "2086/2086 vị trí key giống nhau"
+    },
+    {
+     "name": "en.json md5 file thô giống en-build68.json",
+     "ok": true,
+     "detail": "1a96579e039d61fd6403a873b89f0433"
+    },
+    {
      "name": "en.json 2086 key",
      "ok": true,
      "detail": "2086"
@@ -127,9 +137,24 @@
      "detail": "khác 0 key"
     },
     {
+     "name": "en.json thứ tự key giống file mẫu",
+     "ok": true,
+     "detail": "2252/2252 vị trí key giống nhau"
+    },
+    {
+     "name": "en.json md5 file thô giống file mẫu",
+     "ok": true,
+     "detail": "4c22c9ebcdd04cc21c7f3f4a4952e955"
+    },
+    {
      "name": "zh-TW.json == file mẫu zh-TW.json (trừ key fallback ST zh)",
      "ok": true,
      "detail": "khác 26 key, trong đó 26 key fallback cho phép"
+    },
+    {
+     "name": "zh-TW.json thứ tự key giống file mẫu",
+     "ok": true,
+     "detail": "2252/2252 vị trí key giống nhau"
     },
     {
      "name": "bridge ok",
