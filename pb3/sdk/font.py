@@ -90,6 +90,71 @@ _VI_ACCENTED = _accented_vietnamese()
 #: à á ã è é ì í ò ó õ ù ú ý ĩ ũ — xem decisions.md #206.)
 REQUIRED_VIETNAMESE = frozenset(_VI_BASE) | _VI_ACCENTED | frozenset(_VI_MARKS)
 
+#: Chữ có dấu của từng ngôn ngữ đích (T2) — CHỈ chữ không phải ASCII
+#: (chữ ASCII thì font nào cũng có, không cần kiểm). Mỗi tập đã đo đủ
+#: trên font đi kèm BeVietnamPro-Regular.ttf bằng coverage() (xem
+#: NOTES T2): các ngôn ngữ này phủ đủ 100%; ro thiếu ȘșȚț, ru/uk thiếu
+#: toàn bộ Cyrillic, ja/ko/th/zh thiếu toàn bộ script nên KHÔNG có
+#: trong bảng này (chưa làm đích được — thêm sau khi có font phủ được).
+_REQUIRED_BY_LANG: Dict[str, str] = {
+    "de": "äöüßÄÖÜẞ",
+    "fr": "àâæçéèêëîïôœùûüÿÀÂÆÇÉÈÊËÎÏÔŒÙÛÜŸ",
+    "es": "áéíóúüñ¡¿ÁÉÍÓÚÜÑ",
+    "pt": "áàâãçéêíóôõúÁÀÂÃÇÉÊÍÓÔÕÚ",
+    "it": "àèéìòùÀÈÉÌÒÙ",
+    "nl": "éëïäöüÉËÏÄÖÜ",
+    "tr": "çğıİöşüÇĞIÖŞÜ",
+    "pl": "ąćęłńóśźżĄĆĘŁŃÓŚŹŻ",
+    "cs": "áčďéěíňóřšťúůýžÁČĎÉĚÍŇÓŘŠŤÚŮÝŽ",
+    "sk": "áäčďéíĺľňóôŕšťúýžÁÄČĎÉÍĹĽŇÓÔŔŠŤÚÝŽ",
+    "hu": "áéíóöőúüűÁÉÍÓÖŐÚÜŰ",
+    "sv": "åäöÅÄÖ",
+    "da": "æøåÆØÅ",
+    "no": "æøåÆØÅ",
+    "fi": "äöåÄÖÅ",
+}
+#: Ngôn ngữ đích cổng font kiểm được (vi + các ngôn ngữ trên; en/id/ms
+#: chỉ dùng ASCII nên tập rỗng — không có gì để kiểm).
+REQUIRED_CHARS: Dict[str, frozenset] = {
+    "vi": REQUIRED_VIETNAMESE,
+    "en": frozenset(),
+    "id": frozenset(),
+    "ms": frozenset(),
+}
+for _lang, _chars in _REQUIRED_BY_LANG.items():
+    REQUIRED_CHARS[_lang] = frozenset(ord(c) for c in _chars)
+
+#: Tên hiển thị tiếng Việt của từng mã ngôn ngữ (dùng cho thông báo
+#: cổng font + nhãn giao diện).
+LANG_NAMES: Dict[str, str] = {
+    "en": "tiếng Anh", "zh": "tiếng Trung", "ja": "tiếng Nhật",
+    "ko": "tiếng Hàn", "de": "tiếng Đức", "fr": "tiếng Pháp",
+    "es": "tiếng Tây Ban Nha", "pt": "tiếng Bồ Đào Nha",
+    "it": "tiếng Ý", "nl": "tiếng Hà Lan", "id": "tiếng Indonesia",
+    "ms": "tiếng Mã Lai", "tr": "tiếng Thổ Nhĩ Kỳ", "pl": "tiếng Ba Lan",
+    "cs": "tiếng Séc", "sk": "tiếng Slovakia", "ro": "tiếng Romania",
+    "hu": "tiếng Hungary", "sv": "tiếng Thụy Điển", "da": "tiếng Đan Mạch",
+    "no": "tiếng Na Uy", "fi": "tiếng Phần Lan", "vi": "tiếng Việt",
+    "uk": "tiếng Ukraina", "ru": "tiếng Nga", "el": "tiếng Hy Lạp",
+    "ar": "tiếng Ả Rập", "he": "tiếng Do Thái", "th": "tiếng Thái",
+    "tl": "tiếng Tagalog", "zh-CN": "tiếng Trung giản thể",
+    "zh-TW": "tiếng Trung phồn thể",
+}
+
+
+def required_chars(lang: str) -> frozenset:
+    """Tập codepoint cần kiểm độ phủ cho ngôn ngữ đích `lang`.
+
+    Ngôn ngữ chưa đăng ký (vd zh/ja/ru — chưa làm đích được) -> tập
+    rỗng: cổng không kiểm được gì cho đích đó (kèm fail-closed ở
+    gate.check_font_coverage khi không có font hiển thị)."""
+    return REQUIRED_CHARS.get(lang or "vi", frozenset())
+
+
+def lang_name(code: str) -> str:
+    """Tên hiển thị tiếng Việt của mã ngôn ngữ (mã lạ -> trả mã gốc)."""
+    return LANG_NAMES.get(code or "", code or "")
+
 #: Hằng số checksum toàn font (đặc tả TrueType).
 _CHECKSUM_MAGIC = 0xB1B0AFBA
 #: Magic của bảng head.

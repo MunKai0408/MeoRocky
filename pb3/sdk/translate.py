@@ -47,6 +47,12 @@ from core import safe_io
 from core.errors import PB3Error
 from sdk import exporters as exp
 
+# Chỉ dùng cho chú thích kiểu (tránh import vòng): GameGlossary ở
+# sdk/glossary.py, không import gì từ translate.
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from sdk.glossary import GameGlossary  # noqa: F401
+
 GT_ENDPOINT = "https://translate.googleapis.com/translate_a/single"
 GT_USER_AGENT = "Mozilla/5.0"
 CREDIT_TEXT = "Việt Hoá Bởi Bear"
@@ -376,24 +382,349 @@ for _en, _vi in GLOSSARY_EN_VI.items():
     GLOSSARY_VI_EN.setdefault(_vi.casefold(), _en.capitalize())
 GLOSSARY_VI_EN["ok"] = "OK"
 
+# Từ điển khởi đầu EN -> ngôn ngữ đích mới (T2, 44 cụm UI thông dụng
+# mỗi ngôn ngữ — cùng tập khóa với GLOSSARY_EN_VI để dễ đối chiếu).
+# Chỉ thêm đích nào font Be Vietnam Pro phủ đủ bảng chữ cái có dấu
+# (đã đo bằng sdk/font.py coverage() trên font đi kèm — xem NOTES T2):
+# de/fr/es/pt/it/nl/id/ms/tr/pl/cs/sk/hu/sv/da/no/fi. ro/ru/uk/ja/ko/
+# th/zh KHÔNG có trong danh sách này vì font thiếu chữ của chúng
+# (ro thiếu ȘșȚț; Cyrillic/CJK/Thai thiếu toàn bộ) — thêm sau khi có
+# font phủ được, không thêm cho có rồi để cổng font bắt lỗi.
+GLOSSARY_EN_DE: Dict[str, str] = {
+    "play": "Spielen", "settings": "Einstellungen", "start": "Start",
+    "continue": "Weiter", "quit": "Beenden", "exit": "Verlassen",
+    "level": "Level", "score": "Punkte", "loading": "Wird geladen",
+    "loading...": "Wird geladen...", "tap to start": "Tippen zum Starten",
+    "game over": "Spiel vorbei", "victory": "Sieg", "defeat": "Niederlage",
+    "pause": "Pause", "resume": "Fortsetzen", "restart": "Neustart",
+    "new game": "Neues Spiel", "save": "Speichern", "load": "Laden",
+    "options": "Optionen", "sound": "Ton", "music": "Musik",
+    "language": "Sprache", "back": "Zurück", "cancel": "Abbrechen",
+    "confirm": "Bestätigen", "ok": "OK", "yes": "Ja", "no": "Nein",
+    "next": "Weiter", "buy": "Kaufen", "free": "Kostenlos",
+    "shop": "Shop", "help": "Hilfe", "about": "Über", "error": "Fehler",
+    "retry": "Erneut versuchen", "close": "Schließen", "delete": "Löschen",
+    "welcome": "Willkommen", "level up": "Level aufgestiegen",
+    "you win": "Du gewinnst", "you lose": "Du verlierst",
+}
+GLOSSARY_EN_FR: Dict[str, str] = {
+    "play": "Jouer", "settings": "Paramètres", "start": "Démarrer",
+    "continue": "Continuer", "quit": "Quitter", "exit": "Sortie",
+    "level": "Niveau", "score": "Score", "loading": "Chargement",
+    "loading...": "Chargement...", "tap to start": "Touchez pour commencer",
+    "game over": "Partie terminée", "victory": "Victoire", "defeat": "Défaite",
+    "pause": "Pause", "resume": "Reprendre", "restart": "Recommencer",
+    "new game": "Nouvelle partie", "save": "Sauvegarder", "load": "Charger",
+    "options": "Options", "sound": "Son", "music": "Musique",
+    "language": "Langue", "back": "Retour", "cancel": "Annuler",
+    "confirm": "Confirmer", "ok": "OK", "yes": "Oui", "no": "Non",
+    "next": "Suivant", "buy": "Acheter", "free": "Gratuit",
+    "shop": "Boutique", "help": "Aide", "about": "À propos", "error": "Erreur",
+    "retry": "Réessayer", "close": "Fermer", "delete": "Supprimer",
+    "welcome": "Bienvenue", "level up": "Niveau supérieur",
+    "you win": "Vous gagnez", "you lose": "Vous perdez",
+}
+GLOSSARY_EN_ES: Dict[str, str] = {
+    "play": "Jugar", "settings": "Ajustes", "start": "Iniciar",
+    "continue": "Continuar", "quit": "Salir", "exit": "Salir",
+    "level": "Nivel", "score": "Puntuación", "loading": "Cargando",
+    "loading...": "Cargando...", "tap to start": "Toca para empezar",
+    "game over": "Fin del juego", "victory": "Victoria", "defeat": "Derrota",
+    "pause": "Pausa", "resume": "Reanudar", "restart": "Reiniciar",
+    "new game": "Nueva partida", "save": "Guardar", "load": "Cargar",
+    "options": "Opciones", "sound": "Sonido", "music": "Música",
+    "language": "Idioma", "back": "Atrás", "cancel": "Cancelar",
+    "confirm": "Confirmar", "ok": "OK", "yes": "Sí", "no": "No",
+    "next": "Siguiente", "buy": "Comprar", "free": "Gratis",
+    "shop": "Tienda", "help": "Ayuda", "about": "Acerca de", "error": "Error",
+    "retry": "Reintentar", "close": "Cerrar", "delete": "Eliminar",
+    "welcome": "Bienvenido", "level up": "Subida de nivel",
+    "you win": "Ganas", "you lose": "Pierdes",
+}
+GLOSSARY_EN_PT: Dict[str, str] = {
+    "play": "Jogar", "settings": "Configurações", "start": "Iniciar",
+    "continue": "Continuar", "quit": "Sair", "exit": "Sair",
+    "level": "Nível", "score": "Pontuação", "loading": "Carregando",
+    "loading...": "Carregando...", "tap to start": "Toque para começar",
+    "game over": "Fim de jogo", "victory": "Vitória", "defeat": "Derrota",
+    "pause": "Pausa", "resume": "Continuar", "restart": "Reiniciar",
+    "new game": "Novo jogo", "save": "Salvar", "load": "Carregar",
+    "options": "Opções", "sound": "Som", "music": "Música",
+    "language": "Idioma", "back": "Voltar", "cancel": "Cancelar",
+    "confirm": "Confirmar", "ok": "OK", "yes": "Sim", "no": "Não",
+    "next": "Próximo", "buy": "Comprar", "free": "Grátis",
+    "shop": "Loja", "help": "Ajuda", "about": "Sobre", "error": "Erro",
+    "retry": "Tentar novamente", "close": "Fechar", "delete": "Excluir",
+    "welcome": "Bem-vindo", "level up": "Subiu de nível",
+    "you win": "Você ganhou", "you lose": "Você perdeu",
+}
+GLOSSARY_EN_IT: Dict[str, str] = {
+    "play": "Gioca", "settings": "Impostazioni", "start": "Inizia",
+    "continue": "Continua", "quit": "Esci", "exit": "Esci",
+    "level": "Livello", "score": "Punteggio", "loading": "Caricamento",
+    "loading...": "Caricamento...", "tap to start": "Tocca per iniziare",
+    "game over": "Fine del gioco", "victory": "Vittoria", "defeat": "Sconfitta",
+    "pause": "Pausa", "resume": "Riprendi", "restart": "Ricomincia",
+    "new game": "Nuova partita", "save": "Salva", "load": "Carica",
+    "options": "Opzioni", "sound": "Suono", "music": "Musica",
+    "language": "Lingua", "back": "Indietro", "cancel": "Annulla",
+    "confirm": "Conferma", "ok": "OK", "yes": "Sì", "no": "No",
+    "next": "Avanti", "buy": "Compra", "free": "Gratis",
+    "shop": "Negozio", "help": "Aiuto", "about": "Informazioni", "error": "Errore",
+    "retry": "Riprova", "close": "Chiudi", "delete": "Elimina",
+    "welcome": "Benvenuto", "level up": "Livello superiore",
+    "you win": "Hai vinto", "you lose": "Hai perso",
+}
+GLOSSARY_EN_NL: Dict[str, str] = {
+    "play": "Spelen", "settings": "Instellingen", "start": "Start",
+    "continue": "Doorgaan", "quit": "Stoppen", "exit": "Afsluiten",
+    "level": "Level", "score": "Score", "loading": "Laden",
+    "loading...": "Laden...", "tap to start": "Tik om te starten",
+    "game over": "Game over", "victory": "Overwinning", "defeat": "Nederlaag",
+    "pause": "Pauze", "resume": "Hervatten", "restart": "Opnieuw starten",
+    "new game": "Nieuw spel", "save": "Opslaan", "load": "Laden",
+    "options": "Opties", "sound": "Geluid", "music": "Muziek",
+    "language": "Taal", "back": "Terug", "cancel": "Annuleren",
+    "confirm": "Bevestigen", "ok": "OK", "yes": "Ja", "no": "Nee",
+    "next": "Volgende", "buy": "Kopen", "free": "Gratis",
+    "shop": "Winkel", "help": "Help", "about": "Over", "error": "Fout",
+    "retry": "Opnieuw proberen", "close": "Sluiten", "delete": "Verwijderen",
+    "welcome": "Welkom", "level up": "Level omhoog",
+    "you win": "Je wint", "you lose": "Je verliest",
+}
+GLOSSARY_EN_ID: Dict[str, str] = {
+    "play": "Main", "settings": "Pengaturan", "start": "Mulai",
+    "continue": "Lanjutkan", "quit": "Keluar", "exit": "Keluar",
+    "level": "Level", "score": "Skor", "loading": "Memuat",
+    "loading...": "Memuat...", "tap to start": "Ketuk untuk memulai",
+    "game over": "Permainan berakhir", "victory": "Kemenangan", "defeat": "Kekalahan",
+    "pause": "Jeda", "resume": "Lanjutkan", "restart": "Mulai ulang",
+    "new game": "Permainan baru", "save": "Simpan", "load": "Muat",
+    "options": "Opsi", "sound": "Suara", "music": "Musik",
+    "language": "Bahasa", "back": "Kembali", "cancel": "Batal",
+    "confirm": "Konfirmasi", "ok": "OK", "yes": "Ya", "no": "Tidak",
+    "next": "Berikutnya", "buy": "Beli", "free": "Gratis",
+    "shop": "Toko", "help": "Bantuan", "about": "Tentang", "error": "Kesalahan",
+    "retry": "Coba lagi", "close": "Tutup", "delete": "Hapus",
+    "welcome": "Selamat datang", "level up": "Naik level",
+    "you win": "Kamu menang", "you lose": "Kamu kalah",
+}
+GLOSSARY_EN_MS: Dict[str, str] = {
+    "play": "Main", "settings": "Tetapan", "start": "Mula",
+    "continue": "Teruskan", "quit": "Keluar", "exit": "Keluar",
+    "level": "Tahap", "score": "Skor", "loading": "Memuatkan",
+    "loading...": "Memuatkan...", "tap to start": "Ketik untuk mula",
+    "game over": "Tamat permainan", "victory": "Kemenangan", "defeat": "Kekalahan",
+    "pause": "Jeda", "resume": "Sambung", "restart": "Mula semula",
+    "new game": "Permainan baharu", "save": "Simpan", "load": "Muat",
+    "options": "Pilihan", "sound": "Bunyi", "music": "Muzik",
+    "language": "Bahasa", "back": "Kembali", "cancel": "Batal",
+    "confirm": "Sahkan", "ok": "OK", "yes": "Ya", "no": "Tidak",
+    "next": "Seterusnya", "buy": "Beli", "free": "Percuma",
+    "shop": "Kedai", "help": "Bantuan", "about": "Tentang", "error": "Ralat",
+    "retry": "Cuba lagi", "close": "Tutup", "delete": "Padam",
+    "welcome": "Selamat datang", "level up": "Naik tahap",
+    "you win": "Anda menang", "you lose": "Anda kalah",
+}
+GLOSSARY_EN_TR: Dict[str, str] = {
+    "play": "Oyna", "settings": "Ayarlar", "start": "Başla",
+    "continue": "Devam et", "quit": "Çık", "exit": "Çıkış",
+    "level": "Seviye", "score": "Skor", "loading": "Yükleniyor",
+    "loading...": "Yükleniyor...", "tap to start": "Başlamak için dokun",
+    "game over": "Oyun bitti", "victory": "Zafer", "defeat": "Yenilgi",
+    "pause": "Duraklat", "resume": "Devam et", "restart": "Yeniden başlat",
+    "new game": "Yeni oyun", "save": "Kaydet", "load": "Yükle",
+    "options": "Seçenekler", "sound": "Ses", "music": "Müzik",
+    "language": "Dil", "back": "Geri", "cancel": "İptal",
+    "confirm": "Onayla", "ok": "Tamam", "yes": "Evet", "no": "Hayır",
+    "next": "İleri", "buy": "Satın al", "free": "Ücretsiz",
+    "shop": "Mağaza", "help": "Yardım", "about": "Hakkında", "error": "Hata",
+    "retry": "Tekrar dene", "close": "Kapat", "delete": "Sil",
+    "welcome": "Hoş geldin", "level up": "Seviye atladın",
+    "you win": "Kazandın", "you lose": "Kaybettin",
+}
+GLOSSARY_EN_PL: Dict[str, str] = {
+    "play": "Graj", "settings": "Ustawienia", "start": "Start",
+    "continue": "Kontynuuj", "quit": "Wyjdź", "exit": "Wyjście",
+    "level": "Poziom", "score": "Wynik", "loading": "Ładowanie",
+    "loading...": "Ładowanie...", "tap to start": "Dotknij, aby zacząć",
+    "game over": "Koniec gry", "victory": "Zwycięstwo", "defeat": "Porażka",
+    "pause": "Pauza", "resume": "Wznów", "restart": "Restart",
+    "new game": "Nowa gra", "save": "Zapisz", "load": "Wczytaj",
+    "options": "Opcje", "sound": "Dźwięk", "music": "Muzyka",
+    "language": "Język", "back": "Wstecz", "cancel": "Anuluj",
+    "confirm": "Potwierdź", "ok": "OK", "yes": "Tak", "no": "Nie",
+    "next": "Dalej", "buy": "Kup", "free": "Za darmo",
+    "shop": "Sklep", "help": "Pomoc", "about": "O grze", "error": "Błąd",
+    "retry": "Spróbuj ponownie", "close": "Zamknij", "delete": "Usuń",
+    "welcome": "Witamy", "level up": "Nowy poziom",
+    "you win": "Wygrałeś", "you lose": "Przegrałeś",
+}
+GLOSSARY_EN_CS: Dict[str, str] = {
+    "play": "Hrát", "settings": "Nastavení", "start": "Start",
+    "continue": "Pokračovat", "quit": "Ukončit", "exit": "Ukončit",
+    "level": "Úroveň", "score": "Skóre", "loading": "Načítání",
+    "loading...": "Načítání...", "tap to start": "Klepnutím spustíte hru",
+    "game over": "Konec hry", "victory": "Vítězství", "defeat": "Porážka",
+    "pause": "Pauza", "resume": "Pokračovat", "restart": "Restartovat",
+    "new game": "Nová hra", "save": "Uložit", "load": "Načíst",
+    "options": "Možnosti", "sound": "Zvuk", "music": "Hudba",
+    "language": "Jazyk", "back": "Zpět", "cancel": "Zrušit",
+    "confirm": "Potvrdit", "ok": "OK", "yes": "Ano", "no": "Ne",
+    "next": "Další", "buy": "Koupit", "free": "Zdarma",
+    "shop": "Obchod", "help": "Nápověda", "about": "O hře", "error": "Chyba",
+    "retry": "Zkusit znovu", "close": "Zavřít", "delete": "Smazat",
+    "welcome": "Vítejte", "level up": "Nová úroveň",
+    "you win": "Vyhrál jsi", "you lose": "Prohrál jsi",
+}
+GLOSSARY_EN_SK: Dict[str, str] = {
+    "play": "Hrať", "settings": "Nastavenia", "start": "Štart",
+    "continue": "Pokračovať", "quit": "Ukončiť", "exit": "Ukončiť",
+    "level": "Úroveň", "score": "Skóre", "loading": "Načítavanie",
+    "loading...": "Načítavanie...", "tap to start": "Ťuknutím spustíte hru",
+    "game over": "Koniec hry", "victory": "Víťazstvo", "defeat": "Porážka",
+    "pause": "Pauza", "resume": "Pokračovať", "restart": "Reštartovať",
+    "new game": "Nová hra", "save": "Uložiť", "load": "Načítať",
+    "options": "Možnosti", "sound": "Zvuk", "music": "Hudba",
+    "language": "Jazyk", "back": "Späť", "cancel": "Zrušiť",
+    "confirm": "Potvrdiť", "ok": "OK", "yes": "Áno", "no": "Nie",
+    "next": "Ďalej", "buy": "Kúpiť", "free": "Zadarmo",
+    "shop": "Obchod", "help": "Pomoc", "about": "O hre", "error": "Chyba",
+    "retry": "Skúsiť znova", "close": "Zavrieť", "delete": "Vymazať",
+    "welcome": "Vitajte", "level up": "Nová úroveň",
+    "you win": "Vyhral si", "you lose": "Prehral si",
+}
+GLOSSARY_EN_HU: Dict[str, str] = {
+    "play": "Játék", "settings": "Beállítások", "start": "Indítás",
+    "continue": "Folytatás", "quit": "Kilépés", "exit": "Kilépés",
+    "level": "Szint", "score": "Pontszám", "loading": "Betöltés",
+    "loading...": "Betöltés...", "tap to start": "Érintsd meg az indításhoz",
+    "game over": "Játék vége", "victory": "Győzelem", "defeat": "Vereség",
+    "pause": "Szünet", "resume": "Folytatás", "restart": "Újraindítás",
+    "new game": "Új játék", "save": "Mentés", "load": "Betöltés",
+    "options": "Beállítások", "sound": "Hang", "music": "Zene",
+    "language": "Nyelv", "back": "Vissza", "cancel": "Mégse",
+    "confirm": "Megerősítés", "ok": "OK", "yes": "Igen", "no": "Nem",
+    "next": "Tovább", "buy": "Vásárlás", "free": "Ingyenes",
+    "shop": "Bolt", "help": "Súgó", "about": "Névjegy", "error": "Hiba",
+    "retry": "Újrapróbálkozás", "close": "Bezárás", "delete": "Törlés",
+    "welcome": "Üdvözöljük", "level up": "Szintlépés",
+    "you win": "Nyertél", "you lose": "Vesztettél",
+}
+GLOSSARY_EN_SV: Dict[str, str] = {
+    "play": "Spela", "settings": "Inställningar", "start": "Start",
+    "continue": "Fortsätt", "quit": "Avsluta", "exit": "Avsluta",
+    "level": "Nivå", "score": "Poäng", "loading": "Laddar",
+    "loading...": "Laddar...", "tap to start": "Tryck för att starta",
+    "game over": "Spelet är slut", "victory": "Seger", "defeat": "Förlust",
+    "pause": "Paus", "resume": "Fortsätt", "restart": "Starta om",
+    "new game": "Nytt spel", "save": "Spara", "load": "Ladda",
+    "options": "Alternativ", "sound": "Ljud", "music": "Musik",
+    "language": "Språk", "back": "Tillbaka", "cancel": "Avbryt",
+    "confirm": "Bekräfta", "ok": "OK", "yes": "Ja", "no": "Nej",
+    "next": "Nästa", "buy": "Köp", "free": "Gratis",
+    "shop": "Butik", "help": "Hjälp", "about": "Om", "error": "Fel",
+    "retry": "Försök igen", "close": "Stäng", "delete": "Ta bort",
+    "welcome": "Välkommen", "level up": "Ny nivå",
+    "you win": "Du vinner", "you lose": "Du förlorar",
+}
+GLOSSARY_EN_DA: Dict[str, str] = {
+    "play": "Spil", "settings": "Indstillinger", "start": "Start",
+    "continue": "Fortsæt", "quit": "Afslut", "exit": "Afslut",
+    "level": "Niveau", "score": "Point", "loading": "Indlæser",
+    "loading...": "Indlæser...", "tap to start": "Tryk for at starte",
+    "game over": "Spillet er slut", "victory": "Sejr", "defeat": "Nederlag",
+    "pause": "Pause", "resume": "Fortsæt", "restart": "Genstart",
+    "new game": "Nyt spil", "save": "Gem", "load": "Indlæs",
+    "options": "Indstillinger", "sound": "Lyd", "music": "Musik",
+    "language": "Sprog", "back": "Tilbage", "cancel": "Annuller",
+    "confirm": "Bekræft", "ok": "OK", "yes": "Ja", "no": "Nej",
+    "next": "Næste", "buy": "Køb", "free": "Gratis",
+    "shop": "Butik", "help": "Hjælp", "about": "Om", "error": "Fejl",
+    "retry": "Prøv igen", "close": "Luk", "delete": "Slet",
+    "welcome": "Velkommen", "level up": "Nyt niveau",
+    "you win": "Du vinder", "you lose": "Du taber",
+}
+GLOSSARY_EN_NO: Dict[str, str] = {
+    "play": "Spill", "settings": "Innstillinger", "start": "Start",
+    "continue": "Fortsett", "quit": "Avslutt", "exit": "Avslutt",
+    "level": "Nivå", "score": "Poeng", "loading": "Laster",
+    "loading...": "Laster...", "tap to start": "Trykk for å starte",
+    "game over": "Spillet er over", "victory": "Seier", "defeat": "Nederlag",
+    "pause": "Pause", "resume": "Fortsett", "restart": "Start på nytt",
+    "new game": "Nytt spill", "save": "Lagre", "load": "Last inn",
+    "options": "Alternativer", "sound": "Lyd", "music": "Musikk",
+    "language": "Språk", "back": "Tilbake", "cancel": "Avbryt",
+    "confirm": "Bekreft", "ok": "OK", "yes": "Ja", "no": "Nei",
+    "next": "Neste", "buy": "Kjøp", "free": "Gratis",
+    "shop": "Butikk", "help": "Hjelp", "about": "Om", "error": "Feil",
+    "retry": "Prøv igjen", "close": "Lukk", "delete": "Slett",
+    "welcome": "Velkommen", "level up": "Nytt nivå",
+    "you win": "Du vinner", "you lose": "Du taper",
+}
+GLOSSARY_EN_FI: Dict[str, str] = {
+    "play": "Pelaa", "settings": "Asetukset", "start": "Aloita",
+    "continue": "Jatka", "quit": "Lopeta", "exit": "Poistu",
+    "level": "Taso", "score": "Pisteet", "loading": "Ladataan",
+    "loading...": "Ladataan...", "tap to start": "Napauta aloittaaksesi",
+    "game over": "Peli ohi", "victory": "Voitto", "defeat": "Tappio",
+    "pause": "Tauko", "resume": "Jatka", "restart": "Aloita alusta",
+    "new game": "Uusi peli", "save": "Tallenna", "load": "Lataa",
+    "options": "Asetukset", "sound": "Ääni", "music": "Musiikki",
+    "language": "Kieli", "back": "Takaisin", "cancel": "Peruuta",
+    "confirm": "Vahvista", "ok": "OK", "yes": "Kyllä", "no": "Ei",
+    "next": "Seuraava", "buy": "Osta", "free": "Ilmainen",
+    "shop": "Kauppa", "help": "Ohje", "about": "Tietoja", "error": "Virhe",
+    "retry": "Yritä uudelleen", "close": "Sulje", "delete": "Poista",
+    "welcome": "Tervetuloa", "level up": "Uusi taso",
+    "you win": "Voitit", "you lose": "Hävisit",
+}
+
+# Chiều ngược XX -> EN suy ra như VI_EN (nghĩa đầu tiên khi trùng,
+# viết hoa chữ đầu; "OK" giữ nguyên).
+def _reverse_glossary(table: Dict[str, str]) -> Dict[str, str]:
+    out: Dict[str, str] = {}
+    for en, xx in table.items():
+        out.setdefault(xx.casefold(), en.capitalize())
+    out["ok"] = "OK"
+    return out
+
+
+# Đăng ký cặp ngôn ngữ từ điển offline: (nguồn, đích) -> bảng tra.
+# Cặp không có trong này -> OfflineGlossaryProvider trả None (rơi về
+# Google như trước). GLOSSARY_EN_VI giữ nguyên 105 cụm.
+GLOSSARIES: Dict[Tuple[str, str], Dict[str, str]] = {
+    ("en", "vi"): GLOSSARY_EN_VI,
+    ("vi", "en"): GLOSSARY_VI_EN,
+}
+for _code, _table in (("de", GLOSSARY_EN_DE), ("fr", GLOSSARY_EN_FR),
+                      ("es", GLOSSARY_EN_ES), ("pt", GLOSSARY_EN_PT),
+                      ("it", GLOSSARY_EN_IT), ("nl", GLOSSARY_EN_NL),
+                      ("id", GLOSSARY_EN_ID), ("ms", GLOSSARY_EN_MS),
+                      ("tr", GLOSSARY_EN_TR), ("pl", GLOSSARY_EN_PL),
+                      ("cs", GLOSSARY_EN_CS), ("sk", GLOSSARY_EN_SK),
+                      ("hu", GLOSSARY_EN_HU), ("sv", GLOSSARY_EN_SV),
+                      ("da", GLOSSARY_EN_DA), ("no", GLOSSARY_EN_NO),
+                      ("fi", GLOSSARY_EN_FI)):
+    GLOSSARIES[("en", _code)] = _table
+    GLOSSARIES[(_code, "en")] = _reverse_glossary(_table)
+
 
 class OfflineGlossaryProvider(TranslationProvider):
     """Từ điển offline: chỉ khớp cụm nguyên văn (không cần mạng).
 
     Không dịch được -> None (giữ nguyên câu gốc, đánh dấu cần dịch tay).
-    Chỉ có cặp en<->vi; cặp khác luôn trả None."""
+    Tra theo đăng ký GLOSSARIES (en<->vi + en<->17 đích mới); cặp khác
+    luôn trả None. src == "auto" thì thử EN_VI trước rồi VI_EN (như cũ).
+    """
 
     name = "offline"
 
     def translate_batch(self, texts: List[str], src: str, dst: str,
                         on_item: Optional[Callable[[int], None]] = None
                         ) -> List[Optional[str]]:
-        table = None
-        if src == "en" and dst == "vi":
-            table = GLOSSARY_EN_VI
-        elif src == "vi" and dst == "en":
-            table = GLOSSARY_VI_EN
-        elif src == "auto":
+        table = GLOSSARIES.get((src, dst))
+        if table is None and src == "auto":
             table = GLOSSARY_EN_VI
         if table is None:
             return [None] * len(texts)
@@ -521,8 +852,13 @@ def _repair_placeholder_lines(pending, seg_out, provider, fallback,
     by_masked = {}
     for key, (value, lines, segs) in pending.items():
         for seg in segs:
-            val, _origin = seg_out.get((key, seg.line_no), (None, ""))
+            val, origin = seg_out.get((key, seg.line_no), (None, ""))
             if val is None:
+                continue
+            # Đoạn từ từ điển game (người dùng chọn tay): KHÔNG dịch lại
+            # bằng máy — ghi đè entry của user là sai, dù placeholder
+            # có lệch (cảnh báo vẫn phát ra ở bước ráp như trước).
+            if origin == "glossary":
                 continue
             if placeholders_match_strict(lines[seg.line_no],
                                          unmask_line(val, seg.tokens)):
@@ -569,9 +905,14 @@ def translate_table(kv: Dict[str, str], *, source_lang: str = "auto",
                     cache: Optional[TranslationCache] = None,
                     progress_fn: Optional[Callable[[int, int], None]] = None,
                     chunk: int = DEFAULT_CHUNK,
-                    credit: bool = True) -> TranslationResult:
+                    credit: bool = True,
+                    game_glossary: Optional["GameGlossary"] = None) -> TranslationResult:
     """Dịch bảng key-value: chỉ dịch VALUE, giữ nguyên KEY.
 
+    - game_glossary (sdk.glossary.GameGlossary): từ điển riêng theo game,
+      áp dụng TRƯỚC cache và TRƯỚC dịch máy, ở mức từng dòng: dòng nào
+      khớp chính xác trong từ điển thì dùng luôn, không gửi provider,
+      không đưa vào cache, không bị bước sửa placeholder dịch lại.
     - Lỗi mạng ở một lô: ghi vào network_error, dùng fallback (từ điển
       offline) cho lô đó rồi dịch tiếp, không crash.
     - Câu dịch xong mà placeholder/xuống dòng lệch thì dịch lại 1 lần;
@@ -595,11 +936,39 @@ def translate_table(kv: Dict[str, str], *, source_lang: str = "auto",
     result = TranslationResult(translated={}, total=len(kv))
     pending: Dict[str, Tuple[str, List[str], List[_Segment]]] = {}
     segments: List[_Segment] = []
+    # Đoạn đã có đáp án từ từ điển game (dòng khớp) — không gửi provider.
+    seg_out: Dict[Tuple[str, int], Tuple[Optional[str], str]] = {}
     for key, value in kv.items():
         if value == "":
             result.translated[key] = ""
             result.empty += 1
             continue
+        # Từ điển game TRƯỚC cache: cả giá trị khớp hết thì dùng luôn
+        # (cache cũ của máy dịch không được ghi đè entry của user).
+        if game_glossary is not None:
+            lines = value.split("\n")
+            resolved: List[str] = []
+            all_glossary = True
+            for line in lines:
+                masked, _tokens = mask_line(line)
+                if not _line_has_text(masked):
+                    resolved.append(line)
+                    continue
+                hit = game_glossary.lookup(line)
+                if hit is None:
+                    all_glossary = False
+                    break
+                resolved.append(hit)
+            if all_glossary:
+                new_value = "\n".join(resolved)
+                result.translated[key] = new_value
+                result.glossary += 1
+                if not placeholders_ok(value, new_value):
+                    result.warnings.append(
+                        "key %s: placeholder/thẻ/xuống dòng thay đổi sau khi "
+                        "dịch bằng từ điển game (đã giữ bản dịch, kiểm tra "
+                        "lại trước khi ghi ngược)" % key)
+                continue
         hit = cache.get(value, source_lang, target_lang) if cache is not None else None
         if hit is not None:
             result.translated[key] = hit
@@ -617,14 +986,22 @@ def translate_table(kv: Dict[str, str], *, source_lang: str = "auto",
             result.unchanged += 1
             continue
         pending[key] = (value, lines, segs)
-        segments.extend(segs)
+        # Từ điển game ở mức đoạn: dòng nào khớp thì dùng luôn, dòng còn
+        # lại mới gửi provider (giá trị nhiều dòng khớp một phần vẫn được).
+        for seg in segs:
+            ghit = (game_glossary.lookup(lines[seg.line_no])
+                    if game_glossary is not None else None)
+            if ghit is not None:
+                seg_out[(seg.key, seg.line_no)] = (ghit, "glossary")
+            else:
+                segments.append(seg)
 
     # Dịch theo lô; mỗi lô lỗi mạng thì fallback rồi dịch tiếp.
     # progress_fn(done, total) gọi sau MỖI chuỗi đã dịch xong (on_item),
     # không đợi hết lô — % tính theo số chuỗi thật (luật #152). Lô nào
     # provider không báo từng chuỗi (hoặc fallback) thì báo một lần khi
     # xong lô; dãy done không bao giờ lùi.
-    seg_out: Dict[Tuple[str, int], Tuple[Optional[str], str]] = {}
+    # (seg_out đã có sẵn đáp án từ điển game ở trên — không reset ở đây.)
     total = len(segments)
     done = 0
     for start in range(0, total, chunk):
@@ -726,7 +1103,8 @@ def translate_json_file(input_path: str, output_path: str, *,
                         cache: Optional[TranslationCache] = None,
                         progress_fn: Optional[Callable[[int, int], None]] = None,
                         chunk: int = DEFAULT_CHUNK,
-                        credit: bool = True) -> TranslationResult:
+                        credit: bool = True,
+                        game_glossary: Optional["GameGlossary"] = None) -> TranslationResult:
     """Đọc bảng JSON key-value, dịch, ghi file đã dịch (ghi nguyên tử).
 
     File đầu vào phải là object {key: value chuỗi}; giá trị khác chuỗi ->
@@ -748,7 +1126,8 @@ def translate_json_file(input_path: str, output_path: str, *,
                            where=input_path)
     result = translate_table(doc, source_lang=source_lang, target_lang=target_lang,
                              provider=provider, fallback=fallback, cache=cache,
-                             progress_fn=progress_fn, chunk=chunk, credit=credit)
+                             progress_fn=progress_fn, chunk=chunk, credit=credit,
+                             game_glossary=game_glossary)
     data = exp.export_key_value_json(result.translated)
     check = exp.verify_export_bytes(data, result.translated)
     if not check["ok"]:

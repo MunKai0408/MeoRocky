@@ -325,8 +325,18 @@ class TestGlossary(unittest.TestCase):
                          ["Play", "Settings"])
 
     def test_other_pair_is_none(self):
+        # Cặp chưa đăng ký từ điển (vd en->ru: font chưa phủ Cyrillic
+        # nên chưa làm đích) vẫn trả None như trước.
         p = tr.OfflineGlossaryProvider()
-        self.assertEqual(p.translate_batch(["Play"], "en", "fr"), [None])
+        self.assertEqual(p.translate_batch(["Play"], "en", "ru"), [None])
+        self.assertEqual(p.translate_batch(["Play"], "en", "zh"), [None])
+
+    def test_new_pair_en_de(self):
+        # T2: đích mới có từ điển khởi đầu (44 cụm).
+        p = tr.OfflineGlossaryProvider()
+        self.assertEqual(p.translate_batch(["Play", "Settings", "Victory"], "en", "de"),
+                         ["Spielen", "Einstellungen", "Sieg"])
+        self.assertEqual(p.translate_batch(["Spielen"], "de", "en"), ["Play"])
 
     def test_auto_src_tries_en_first(self):
         p = tr.OfflineGlossaryProvider()

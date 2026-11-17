@@ -460,7 +460,7 @@
     tắt tab vẫn tiếp tục được). Nếu Google không dùng được (mất mạng, bị
     giới hạn tốc độ, trình duyệt chặn CORS) thì tự động thử MyMemory (và
     LibreTranslate nếu đã cấu hình bên dưới) rồi dùng từ điển offline
-    (~100 từ/cụm thông dụng) và báo rõ lý do + bước nào đã dùng.</p>
+    (~1.700 cụm thông dụng cho 36 cặp ngôn ngữ) và báo rõ lý do + bước nào đã dùng.</p>
     <div class="row">
       <label style="flex:1;min-width:220px">URL proxy dịch (Cloudflare Worker, không bắt buộc):
         <input type="text" id="translate-proxy" placeholder="vd: beartea-translate-proxy.<tên>.workers.dev">
@@ -513,17 +513,86 @@
         <select id="translate-from" style="width:auto">
           <option value="en" selected>Tiếng Anh</option>
           <option value="zh">Tiếng Trung</option>
+          <option value="ja">Tiếng Nhật</option>
+          <option value="ko">Tiếng Hàn</option>
+          <option value="de">Tiếng Đức</option>
+          <option value="fr">Tiếng Pháp</option>
+          <option value="es">Tiếng Tây Ban Nha</option>
+          <option value="pt">Tiếng Bồ Đào Nha</option>
+          <option value="ru">Tiếng Nga</option>
+          <option value="th">Tiếng Thái</option>
+          <option value="id">Tiếng Indonesia</option>
+          <option value="ms">Tiếng Malaysia</option>
+          <option value="it">Tiếng Ý</option>
+          <option value="nl">Tiếng Hà Lan</option>
+          <option value="tr">Tiếng Thổ Nhĩ Kỳ</option>
+          <option value="pl">Tiếng Ba Lan</option>
+          <option value="vi">Tiếng Việt</option>
+          <option value="cs">Tiếng Séc</option>
+          <option value="sk">Tiếng Slovakia</option>
+          <option value="ro">Tiếng Romania</option>
+          <option value="hu">Tiếng Hungary</option>
+          <option value="sv">Tiếng Thụy Điển</option>
+          <option value="da">Tiếng Đan Mạch</option>
+          <option value="no">Tiếng Na Uy</option>
+          <option value="fi">Tiếng Phần Lan</option>
+          <option value="uk">Tiếng Ukraina</option>
+          <option value="el">Tiếng Hy Lạp</option>
+          <option value="ar">Tiếng Ả Rập</option>
+          <option value="he">Tiếng Do Thái</option>
+          <option value="tl">Tiếng Tagalog</option>
         </select>
       </label>
       <label>Dịch sang:
         <select id="translate-to" style="width:auto">
           <option value="vi" selected>Tiếng Việt</option>
           <option value="en">Tiếng Anh</option>
+          <option value="de">Tiếng Đức</option>
+          <option value="fr">Tiếng Pháp</option>
+          <option value="es">Tiếng Tây Ban Nha</option>
+          <option value="pt">Tiếng Bồ Đào Nha</option>
+          <option value="it">Tiếng Ý</option>
+          <option value="nl">Tiếng Hà Lan</option>
+          <option value="id">Tiếng Indonesia</option>
+          <option value="ms">Tiếng Malaysia</option>
+          <option value="tr">Tiếng Thổ Nhĩ Kỳ</option>
+          <option value="pl">Tiếng Ba Lan</option>
+          <option value="cs">Tiếng Séc</option>
+          <option value="sk">Tiếng Slovakia</option>
+          <option value="hu">Tiếng Hungary</option>
+          <option value="sv">Tiếng Thụy Điển</option>
+          <option value="da">Tiếng Đan Mạch</option>
+          <option value="no">Tiếng Na Uy</option>
+          <option value="fi">Tiếng Phần Lan</option>
         </select>
       </label>
       <label><input type="checkbox" id="translate-google" checked> Dùng Google Translate (cần mạng)</label>
       <label><input type="checkbox" id="translate-credit" checked> Gắn credit “Việt Hoá Bởi Bear”</label>
     </div>
+    <details id="glossary-box" open>
+      <summary>Từ điển riêng theo game (ưu tiên cao nhất)</summary>
+      <p class="note">Từ điển theo game được áp dụng <b>trước</b> bộ nhớ dịch (TM) và dịch máy: chuỗi nào đã có trong từ điển sẽ giữ nguyên bản dịch của bạn, không bị Google ghi đè. Lưu theo từng game trên máy này (localStorage). Bấm “Lưu bản dịch vừa xong vào từ điển” sau mỗi lần dịch để học từ bản dịch đó — rồi sửa/xóa từng mục ở dưới.</p>
+      <div class="row">
+        <label style="flex:1;min-width:180px">Tên game:
+          <input type="text" id="glossary-game" placeholder="vd: 9 Kings">
+        </label>
+        <button id="btn-glossary-learn" class="secondary" disabled>Lưu bản dịch vừa xong vào từ điển</button>
+        <button id="btn-glossary-export" class="secondary">Xuất từ điển (.json)</button>
+        <button id="btn-glossary-import" class="secondary">Nhập từ điển (.json)…</button>
+        <input type="file" id="glossary-import-file" accept=".json,application/json" class="visually-hidden">
+      </div>
+      <div class="row">
+        <label style="flex:2;min-width:160px">Chuỗi gốc (<span id="glossary-src-label">tiếng Anh</span>):
+          <input type="text" id="glossary-src" placeholder="vd: Play">
+        </label>
+        <label style="flex:2;min-width:160px">Bản dịch (<span id="glossary-dst-label">tiếng Việt</span>):
+          <input type="text" id="glossary-dst" placeholder="vd: Chơi">
+        </label>
+        <button id="btn-glossary-add" class="secondary">Thêm / cập nhật</button>
+      </div>
+      <div id="glossary-list"></div>
+      <p id="glossary-info" class="sub">Chưa có từ điển cho game này.</p>
+    </details>
     <p class="note">Chỉ dịch chuỗi thuộc ngôn ngữ nguồn đã chọn — chuỗi ngôn ngữ khác giữ nguyên từng byte, không dịch nhầm. Cuối mỗi lần dịch, tool báo rõ tổng dòng nguồn / đã dịch / bỏ qua kèm lý do / mất / ngôn ngữ khác bị đổi, và tự kiểm tra trước khi cho tải file về.</p>
     <p class="note">Giữ nguyên placeholder ({0}, %s), thẻ và xuống dòng — luôn bật, không cần tick.</p>
     <button id="btn-translate-run">Dịch</button>
@@ -572,7 +641,33 @@
     <div id="rebuild-result"></div>
 
     <h3>Bước 3 — Cổng kiểm tra trước khi giao (bước 6)</h3>
-    <p class="note">Một cổng kiểm tra duy nhất trước khi giao file: đối chiếu bản dịch với bản gốc (đủ key, không trống), giữ nguyên placeholder/thẻ/xuống dòng, trích lại file đã ép phải khớp bản dịch, font hiển thị phải đủ chữ tiếng Việt đang dùng, và hash/cấu trúc phải khớp kế hoạch ép. Chỉ có 1 kết quả <b>ĐẠT / CHƯA ĐẠT</b> — <b>CHƯA ĐẠT thì nút “Ép và ghi file” ở mục (E) vẫn tắt, không giao file</b>; không có đường giao khi cảnh báo. Cổng chỉ đọc, không ghi file nào. Bản gốc lấy từ file JSON đang mở ở phần B trong mục Nâng cao bên dưới (lấy từ file trích xuất), hoặc nhập file .json bản gốc từ máy.</p>
+    <p class="note">Một cổng kiểm tra duy nhất trước khi giao file: đối chiếu bản dịch với bản gốc (đủ key, không trống), giữ nguyên placeholder/thẻ/xuống dòng, trích lại file đã ép phải khớp bản dịch, font hiển thị phải đủ chữ của ngôn ngữ đích đang dùng, và hash/cấu trúc phải khớp kế hoạch ép. Chỉ có 1 kết quả <b>ĐẠT / CHƯA ĐẠT</b> — <b>CHƯA ĐẠT thì nút “Ép và ghi file” ở mục (E) vẫn tắt, không giao file</b>; không có đường giao khi cảnh báo. Cổng chỉ đọc, không ghi file nào. Bản gốc lấy từ file JSON đang mở ở phần B trong mục Nâng cao bên dưới (lấy từ file trích xuất), hoặc nhập file .json bản gốc từ máy.</p>
+    <div class="row">
+      <label style="flex:1;min-width:180px">Ngôn ngữ đích của bản dịch:
+        <select id="gate-target-lang" style="width:auto">
+          <option value="vi" selected>Tiếng Việt</option>
+          <option value="en">Tiếng Anh</option>
+          <option value="de">Tiếng Đức</option>
+          <option value="fr">Tiếng Pháp</option>
+          <option value="es">Tiếng Tây Ban Nha</option>
+          <option value="pt">Tiếng Bồ Đào Nha</option>
+          <option value="it">Tiếng Ý</option>
+          <option value="nl">Tiếng Hà Lan</option>
+          <option value="id">Tiếng Indonesia</option>
+          <option value="ms">Tiếng Malaysia</option>
+          <option value="tr">Tiếng Thổ Nhĩ Kỳ</option>
+          <option value="pl">Tiếng Ba Lan</option>
+          <option value="cs">Tiếng Séc</option>
+          <option value="sk">Tiếng Slovakia</option>
+          <option value="hu">Tiếng Hungary</option>
+          <option value="sv">Tiếng Thụy Điển</option>
+          <option value="da">Tiếng Đan Mạch</option>
+          <option value="no">Tiếng Na Uy</option>
+          <option value="fi">Tiếng Phần Lan</option>
+        </select>
+      </label>
+      <span class="sub">Cổng kiểm độ phủ font theo đúng ngôn ngữ này (tự đồng bộ với “Dịch sang” ở tab Dịch). Đích nào font chưa phủ được chữ thì cổng báo CHƯA ĐẠT — không tự cho qua.</span>
+    </div>
     <div class="row">
       <label style="flex:1;min-width:180px">Bản gốc (JSON đã trích xuất):
         <select id="gate-source-mode">
