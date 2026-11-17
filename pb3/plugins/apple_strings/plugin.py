@@ -5,8 +5,10 @@
 # giữ nguyên như chuỗi thường.
 # + Bổ sung 2026-11-17 (follow-up dò text): file .strings dạng bplist
 # (binary plist, magic "bplist00" — toàn bộ .strings của vỏ app iOS
-# trong IPA, vd My Talking Tom: 156/159 file) cũng đọc được cặp
-# key→value bằng plistlib (stdlib), ghi ngược bằng plistlib round-trip.
+# trong IPA, vd My Talking Tom: 156/159 file) và dạng XML plist
+# (vd InfoPlist.strings của EK2: 7 file, key NSUserTrackingUsageDescription)
+# cũng đọc được cặp key→value bằng plistlib (stdlib), ghi ngược bằng
+# plistlib round-trip.
 # Kiểm tra: python3 menu.py plugin test apple_strings
 from __future__ import annotations
 
@@ -20,11 +22,12 @@ from sdk.types import LocTable
 
 BPLIST_MAGIC = b"bplist00"
 BPLIST_FLAVOR = "strings-bplist"
+XML_PLIST_FLAVOR = "strings-xml-plist"
 
 MANIFEST = {
     "id": "apple_strings",
     "name": "Apple .strings",
-    "version": "1.1.0",
+    "version": "1.2.0",
     "api_version": 3,
     "kind": "format",
     "capabilities": ["read", "write"],
@@ -41,9 +44,9 @@ MANIFEST = {
             "UTF-8). Giữ nguyên comment, thứ tự và phần không sửa khi ghi ngược; "
             "escape lại giá trị đã sửa. Placeholder (%@, %d...) giữ nguyên. "
             "Không hỗ trợ chuỗi không đóng hoặc thiếu dấu chấm phẩy (báo lỗi). "
-            "Dạng bplist (binary plist, magic bplist00) cũng đọc/ghi được "
-            "cặp key→value qua plistlib (ghi ngược rebuild toàn bộ dict, "
-            "giữ đủ key).",
+            "Dạng bplist (binary plist, magic bplist00) và XML plist cũng đọc/ghi "
+            "được cặp key→value qua plistlib (ghi ngược rebuild toàn bộ dict, "
+            "giữ đủ key, giữ thứ tự key gốc).",
 }
 
 _ESCAPES = {"n": "\n", "r": "\r", "t": "\t", '"': '"', "\\": "\\", "'": "'"}
@@ -148,20 +151,37 @@ def _escape(value: str) -> str:
     return "".join(out)
 
 
-def _parse_bplist_bytes(data: bytes, path: str,
-                        locale: Optional[str]) -> Dict[str, Any]:
-    """Parse .strings dạng bplist (binary plist) -> cùng dict kết quả
-    như _parse_bytes của text. Gốc phải là dict; cặp key→value không
+def _is_xml_plist(data: bytes) -> bool:
+    """Đầu file có phải XML plist không (vd InfoPlist.strings của EK2:
+    `<?xml ...?><plist ...>`). Chấp nhận BOM UTF-8 và cả 2 dạng UTF-16
+    của `<?xml`. Chỉ nhìn 64 byte đầu, không đoán theo nội dung sau."""
+    head = bytes(data[:64])
+    if head.startswith(b"\xef\xbb\xbf"):
+        head = head[3:]
+    head = head.lstrip()
+    if head.startswith(b"<?xml") or head.startswith(b"<plist"):
+        return True
+    if head.startswith(b"<\x00?\x00x\x00m\x00l\x00"):
+        return True  # UTF-16LE "<?xml"
+    if head.startswith(b"\x00<\x00?\x00x\x00m\x00l"):
+        return True  # UTF-16BE "<?xml"
+    return False
+
+
+def _parse_plist_bytes(data: bytes, path: str, locale: Optional[str],
+                       flavor: str, encoding: str) -> Dict[str, Any]:
+    """Parse .strings dạng plist (bplist hoặc XML plist) -> cùng dict kết
+    quả như _parse_bytes của text. Gốc phải là dict; cặp key→value không
     phải chuỗi thì bỏ qua kèm cảnh báo (không đoán kiểu)."""
     try:
         obj = plistlib.loads(data)
     except Exception as exc:  # noqa: BLE001 - plistlib lỗi nhiều dạng
         raise PB3Error("E_CORRUPT",
-                       "bplist không giải mã được (%s)" % type(exc).__name__,
+                       "plist không giải mã được (%s)" % type(exc).__name__,
                        where=path)
     if not isinstance(obj, dict):
         raise PB3Error("E_CORRUPT",
-                       "bplist .strings phải là dict ở gốc, gặp %s"
+                       "plist .strings phải là dict ở gốc, gặp %s"
                        % type(obj).__name__, where=path)
     pairs: List[Tuple[str, str, str, List[str]]] = []
     warnings: List[Dict[str, Any]] = []
@@ -173,22 +193,26 @@ def _parse_bplist_bytes(data: bytes, path: str,
         pairs.append((key, value, "ok", []))
     entries, conflicts = make_entries(pairs, path, len(data), "utf-8", locale)
     return {"entries": entries,
-            "schema_hint": {"flavor": BPLIST_FLAVOR, "encoding": "bplist"},
+            "schema_hint": {"flavor": flavor, "encoding": encoding},
             "stats": {"keys": len(entries)},
             "conflicts": conflicts, "warnings": warnings}
 
 
 def parse_strings_bytes(data: bytes, path: str,
                         locale: Optional[str] = None) -> Dict[str, Any]:
-    """Parse .strings ở cả 2 dạng (text "key" = "value"; và bplist).
+    """Parse .strings ở cả 3 dạng (text "key" = "value"; bplist; XML plist).
 
     Hàm public dùng chung: plugin._parse_bytes + đường trích sâu
     (sdk/inspect.py) cùng gọi để khỏi parse 2 nơi lệch nhau.
     Trả dict {entries, schema_hint, stats, conflicts, warnings} như
     FormatPluginBase._parse_bytes; schema_hint["flavor"] là "strings"
-    (text) hoặc "strings-bplist" (bplist)."""
+    (text), "strings-bplist" (bplist) hoặc "strings-xml-plist" (XML)."""
     if bytes(data[:8]) == BPLIST_MAGIC:
-        return _parse_bplist_bytes(data, path, locale)
+        return _parse_plist_bytes(data, path, locale, BPLIST_FLAVOR,
+                                  "bplist")
+    if _is_xml_plist(data):
+        return _parse_plist_bytes(data, path, locale, XML_PLIST_FLAVOR,
+                                  "xml-plist")
     doc = decode_text(data, path)
     occ = _parse_occurrences(doc.text, path)
     pairs = [(k, v, "ok", []) for (k, v, _s, _e) in occ]
@@ -206,8 +230,11 @@ class AppleStringsPlugin(FormatPluginBase):
     SELFTEST_BASE = b'"hello" = "Xin chao";\n"bye" = "Tam biet";\n'
 
     def _sniff(self, head: bytes, path: str) -> float:
-        # bplist: magic chắc chắn (8 byte đầu), không cần đoán encoding.
+        # bplist / XML plist: magic / đầu file chắc chắn, không cần đoán
+        # encoding (XML plist: vd InfoPlist.strings của EK2).
         if bytes(head[:8]) == BPLIST_MAGIC:
+            return 0.9
+        if _is_xml_plist(head):
             return 0.9
         for enc in ("utf-8", "utf-16"):
             try:
@@ -223,23 +250,31 @@ class AppleStringsPlugin(FormatPluginBase):
 
     def _build_bytes(self, table: LocTable, base_bytes: bytes) -> bytes:
         if bytes(base_bytes[:8]) == BPLIST_MAGIC:
-            # Ghi ngược bplist: rebuild toàn bộ dict bằng plistlib (giữ
-            # đủ key, giữ thứ tự chèn của dict gốc). Chỉ sửa key đã có
-            # trong file gốc (giống đường text: key mới không ghi thêm).
+            fmt = plistlib.FMT_BINARY
+        elif _is_xml_plist(base_bytes):
+            fmt = plistlib.FMT_XML
+        else:
+            fmt = None
+        if fmt is not None:
+            # Ghi ngược plist (bplist hoặc XML): rebuild toàn bộ dict
+            # bằng plistlib (giữ đủ key, giữ thứ tự chèn của dict gốc).
+            # Chỉ sửa key đã có trong file gốc (giống đường text: key mới
+            # không ghi thêm). XML round-trip viết lại header/DOCTYPE theo
+            # chuẩn plistlib (nội dung key→value giữ nguyên).
             try:
                 base = plistlib.loads(base_bytes)
             except Exception as exc:  # noqa: BLE001
                 raise PB3Error(
                     "E_CORRUPT",
-                    "bplist gốc không giải mã được (%s)" % type(exc).__name__,
+                    "plist gốc không giải mã được (%s)" % type(exc).__name__,
                     where="base")
             if not isinstance(base, dict):
                 raise PB3Error("E_CORRUPT",
-                               "bplist gốc phải là dict ở gốc", where="base")
+                               "plist gốc phải là dict ở gốc", where="base")
             if not all(isinstance(v, str) for v in base.values()):
                 raise PB3Error(
                     "E_CORRUPT",
-                    "bplist gốc có giá trị không phải chuỗi, không ghi được",
+                    "plist gốc có giá trị không phải chuỗi, không ghi được",
                     where="base")
             queue = value_queue(table)
             for key in list(base):
@@ -251,8 +286,7 @@ class AppleStringsPlugin(FormatPluginBase):
                                        where="base")
                     base[key] = new
             # sort_keys=False: giữ đúng thứ tự key của dict gốc.
-            return plistlib.dumps(base, fmt=plistlib.FMT_BINARY,
-                                  sort_keys=False)
+            return plistlib.dumps(base, fmt=fmt, sort_keys=False)
         doc = decode_text(base_bytes, "base")
         occ = _parse_occurrences(doc.text, "base")
         queue = value_queue(table)

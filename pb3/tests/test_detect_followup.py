@@ -41,6 +41,9 @@ from sdk.types import LocTable  # noqa: E402
 TOM_IPA = Path(os.environ.get(
     "TOM_IPA", Path.home() / "workspace" / "test-ipas" /
     "My_Talking_Tom_v26.5.1_Decrypted.ipa"))
+EK2_IPA = Path(os.environ.get(
+    "EK2_IPA", Path.home() / "workspace" / "test-ipas" /
+    "ek2-v0.0.18.ipa"))
 TOM_BINARY = "Payload/MyTalkingTom-row.app/MyTalkingTom-row"
 TOM_STRINGS = "Payload/MyTalkingTom-row.app/%s.lproj/Localizable.strings"
 # 14 locale của Localizable.strings chính trong Tom [ĐÃ ĐO THẬT].
@@ -152,11 +155,48 @@ class TestBplistStrings(unittest.TestCase):
         self.assertEqual(kv, {"Hello": "CHANGED", "Camera": "Máy ảnh"})
 
 
+class TestXmlPlistStrings(unittest.TestCase):
+    def test_parse_fixture_key_value(self):
+        data = plistlib.dumps(
+            {"NSUserTrackingUsageDescription": "We use tracking data."},
+            fmt=plistlib.FMT_XML)
+        r = parse_strings_bytes(data, "en.lproj/InfoPlist.strings", "en")
+        self.assertEqual(r["schema_hint"]["flavor"], "strings-xml-plist")
+        kv = {e.key: e.value for e in r["entries"]}
+        self.assertEqual(kv, {"NSUserTrackingUsageDescription":
+                              "We use tracking data."})
+
+    def test_sniff_xml_plist(self):
+        p = AppleStringsPlugin()
+        data = plistlib.dumps({"a": "b"}, fmt=plistlib.FMT_XML)
+        self.assertEqual(p._sniff(data, "x"), 0.9)
+        # Text .strings chứa chữ "xml" trong giá trị KHÔNG bị nhận nhầm.
+        self.assertEqual(
+            p._sniff(b'"k" = "see <?xml inside";\n', "x"), 0.8)
+
+    def test_build_round_trip_xml(self):
+        p = AppleStringsPlugin()
+        base = plistlib.dumps({"Hello": "Xin chào"},
+                              fmt=plistlib.FMT_XML)
+        r0 = parse_strings_bytes(base, "en", "en")
+        table = LocTable(list(r0["entries"]), "en", "apple_strings",
+                         dict(r0["schema_hint"]), dict(r0["stats"]), [], [])
+        table.entries[0].value = "CHANGED"
+        new = p._build_bytes(table, base)
+        self.assertTrue(new.lstrip().startswith(b"<?xml"))
+        r1 = parse_strings_bytes(new, "en", "en")
+        self.assertEqual(r1["schema_hint"]["flavor"], "strings-xml-plist")
+        kv = {e.key: e.value for e in r1["entries"]}
+        self.assertEqual(kv, {"Hello": "CHANGED"})
+
+
 class TestOriginKindBplist(unittest.TestCase):
     def test_bplist_is_other_not_merged(self):
         fn = extraction_sdk._origin_kind_for
         self.assertEqual(fn("a.strings", None, "apple_strings",
                             flavor="strings-bplist"), "other")
+        self.assertEqual(fn("a.strings", None, "apple_strings",
+                            flavor="strings-xml-plist"), "other")
 
     def test_text_strings_still_text_asset(self):
         fn = extraction_sdk._origin_kind_for
@@ -337,6 +377,32 @@ class TestInspectAppleStringsRealTom(unittest.TestCase):
         self.assertEqual(vi["keys"], 36)
         self.assertEqual(vi["sample"][2],
                          {"key": "Camera", "value": "Máy ảnh"})
+
+
+class TestInspectAppleStringsRealEk2(unittest.TestCase):
+    def test_inspect_deep_apple_strings_ek2(self):
+        if not EK2_IPA.exists():
+            raise unittest.SkipTest("thieu IPA EK2: %s" % EK2_IPA)
+        out = json.loads(bridge.inspect_deep(str(EK2_IPA)))
+        a = out["apple_strings"]
+        # 52 file: 38 text + 7 bplist + 7 XML plist; 0 bỏ qua.
+        self.assertEqual(a["total_files"], 52)
+        self.assertEqual(a["total_keys"], 425)
+        self.assertEqual(a["skipped"], [])
+        formats = {}
+        for f in a["files"]:
+            formats[f["format"]] = formats.get(f["format"], 0) + 1
+        self.assertEqual(formats.get("strings"), 38)
+        self.assertEqual(formats.get("strings-bplist"), 7)
+        self.assertEqual(formats.get("strings-xml-plist"), 7)
+        by_path = {f["path"]: f for f in a["files"]}
+        en = by_path["Payload/ipastore.app/en.lproj/InfoPlist.strings"]
+        self.assertEqual(en["keys"], 1)
+        self.assertEqual(en["format"], "strings-xml-plist")
+        self.assertEqual(en["sample"][0]["key"],
+                         "NSUserTrackingUsageDescription")
+        self.assertTrue(en["sample"][0]["value"].startswith(
+            "We use tracking data"))
 
 
 if __name__ == "__main__":

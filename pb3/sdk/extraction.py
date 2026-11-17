@@ -2506,19 +2506,20 @@ def _origin_kind_for(full_path: str, layer, plugin_id: str,
     thô -> generic_flat; plugin cấu hình (apple_plist) -> other; còn lại
     là file locale có cấu trúc -> text_asset.
 
-    Ngoại lệ (follow-up dò text 2026-11-17): file .strings dạng bplist
-    (flavor "strings-bplist") là chuỗi vỏ app iOS (quyền mic/camera,
-    Game Center, IAP...), KHÔNG phải text game -> origin_kind "other",
-    không gộp vào file locale chính. Nếu gộp sẽ làm vỡ chuẩn đã chốt
-    (9K en.json 2252 key byte-identical vs mẫu sẽ thành 2253 key vì
-    InfoPlist.strings có 1 key; PB3 2348 -> 2349). File .strings dạng
-    text giữ nguyên "text_asset" (vẫn gộp như trước, vd CSJ 32 key của
-    Tom). flavor lấy từ table.schema_hint ở chỗ parse; đường checkpoint
-    (resume) không có flavor nên giữ hành vi cũ ở đó."""
+    Ngoại lệ (follow-up dò text 2026-11-17): file .strings dạng plist
+    (flavor "strings-bplist" hoặc "strings-xml-plist") là chuỗi vỏ app
+    iOS (quyền mic/camera, Game Center, IAP, App Tracking...), KHÔNG
+    phải text game -> origin_kind "other", không gộp vào file locale
+    chính. Nếu gộp sẽ làm vỡ chuẩn đã chốt (9K en.json 2252 key
+    byte-identical vs mẫu sẽ thành 2253 key vì InfoPlist.strings có 1
+    key; PB3 2348 -> 2349). File .strings dạng text giữ nguyên
+    "text_asset" (vẫn gộp như trước, vd CSJ 32 key của Tom). flavor lấy
+    từ table.schema_hint ở chỗ parse; đường checkpoint (resume) không
+    có flavor nên giữ hành vi cũ ở đó."""
     origin_map = getattr(layer, "origin_map", None) if layer is not None else None
     if origin_map and full_path in origin_map:
         return origin_map[full_path]
-    if flavor == "strings-bplist":
+    if flavor in ("strings-bplist", "strings-xml-plist"):
         return "other"
     if plugin_id == "generic_strings":
         return "generic_flat"
