@@ -1670,6 +1670,20 @@ function renderDeepInspect(parsed) {
   for (const s of (parsed.skipped || [])) {
     html += "<p class=\"warn\">Bỏ qua: " + esc(s.path || "") + " — " + esc(s.reason || "") + "</p>";
   }
+  const as = parsed.apple_strings || {};
+  if (as.total_files) {
+    html += "<p><b>.strings (vỏ app iOS / SDK):</b> " + (as.total_files || 0) + " file · " + (as.total_keys || 0) + " key — " + esc(as.note || "") + "</p>";
+    for (const f of (as.files || []).slice(0, 20)) {
+      html += "<p>" + esc(f.path || "") + " — " + esc(f.locale || "?") + " · " + esc(f.format || "") + " · " + (f.keys || 0) + " key";
+      const smp = (f.sample || []).slice(0, 2).map((s) => esc(s.key) + " = " + esc(s.value)).join("; ");
+      if (smp) html += " — " + smp;
+      html += "</p>";
+    }
+    if ((as.files || []).length > 20) html += "<p class=\"note\">… còn " + ((as.files || []).length - 20) + " file nữa.</p>";
+  }
+  for (const s of (as.skipped || [])) {
+    html += "<p class=\"warn\">Bỏ qua .strings: " + esc(s.path || "") + " — " + esc(s.reason || "") + "</p>";
+  }
   return html;
 }
 function renderRawScan(parsed) {

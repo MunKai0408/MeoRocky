@@ -34,6 +34,8 @@ LABEL = "deep-inspect"
 MAX_TEXT_HEAD = 200       # ký tự đầu TextAsset đưa vào báo cáo
 MAX_SAMPLE_NAMES = 5      # số tên mẫu mỗi loại
 MAX_CLASS_ROWS = 10       # số loại object liệt kê (còn lại gộp "khác")
+MAX_STRINGS_SAMPLE = 3    # số cặp key→value mẫu mỗi file .strings
+MAX_STRINGS_FILE_BYTES = 8 * 1024 * 1024  # = giới hạn plugin apple_strings
 
 
 def _compression_name(code):
@@ -133,6 +135,78 @@ def _bundle_layout_info(fh, where):
         "entries": [{"name": e.name, "size": int(e.size),
                      "serialized": bool(e.is_serialized)}
                     for e in layout.entries],
+    }
+
+
+def _locale_from_lproj(path):
+    """Locale từ thư mục .lproj trong đường dẫn (vd .../en.lproj/... -> "en",
+    .../zh-Hans.lproj/... -> "zh-Hans", .../Base.lproj/... -> "Base")."""
+    for part in str(path).replace("\\", "/").split("/"):
+        if part.endswith(".lproj"):
+            return part[:-len(".lproj")] or None
+    return None
+
+
+def _strings_section(inv, nested):
+    """Mục .strings (Apple) cho báo cáo xem sâu: mọi file .strings trong
+    container, đọc cặp key→value (text + bplist) qua plugin apple_strings.
+
+    Output deep-inspect, TÁCH RIÊNG khỏi file locale chính (bplist
+    .strings không gộp vào en.json/zh.json — xem _origin_kind_for).
+    Chỉ đọc, không sửa; file lỗi/bỏ qua ghi rõ lý do, không crash inspect.
+    """
+    try:
+        from plugins.apple_strings.plugin import parse_strings_bytes
+    except Exception:  # noqa: BLE001 - plugin lỗi thì mục này rỗng
+        parse_strings_bytes = None
+    files = []
+    skipped = []
+    total_keys = 0
+    if parse_strings_bytes is not None:
+        for e in inv:
+            if not str(e.path).lower().endswith(".strings"):
+                continue
+            if e.size > MAX_STRINGS_FILE_BYTES:
+                skipped.append({
+                    "path": e.path,
+                    "reason": "file %d byte > giới hạn %d byte"
+                              % (int(e.size), MAX_STRINGS_FILE_BYTES)})
+                continue
+            try:
+                data = bytes(nested.read(e.path, None))
+            except Exception as exc:  # noqa: BLE001
+                skipped.append({"path": e.path,
+                                "reason": "không đọc được: %s" % exc})
+                continue
+            try:
+                parsed = parse_strings_bytes(data, e.path)
+            except PB3Error as exc:
+                skipped.append({
+                    "path": e.path,
+                    "reason": "không parse được [%s]" % exc.code})
+                continue
+            entries = parsed.get("entries") or []
+            total_keys += len(entries)
+            files.append({
+                "path": e.path,
+                "locale": _locale_from_lproj(e.path),
+                "format": (parsed.get("schema_hint") or {}).get(
+                    "flavor", "strings"),
+                "keys": len(entries),
+                "sample": [{"key": en.key, "value": en.value}
+                           for en in entries[:MAX_STRINGS_SAMPLE]],
+            })
+    files.sort(key=lambda f: f["path"])
+    return {
+        "label": "apple-strings",
+        "total_files": len(files),
+        "total_keys": total_keys,
+        "skipped": skipped,
+        "files": files,
+        "note": ("chuỗi vỏ app iOS / SDK quảng cáo (xin quyền, Game Center, "
+                 "IAP...), KHÔNG phải text gameplay Unity — xem sâu, tách "
+                 "riêng khỏi file locale chính; bplist .strings không gộp "
+                 "vào en.json/zh.json"),
     }
 
 
@@ -334,6 +408,9 @@ def inspect_container(source, limits=None, *, entry=None):
             continue
         item["deep"] = deep
         report["unity_files"].append(item)
+    # .strings (Apple): vỏ app iOS / SDK — xem sâu, tách riêng khỏi file
+    # locale chính (không gộp vào en.json/zh.json).
+    report["apple_strings"] = _strings_section(inv, nested)
     if entry is not None and not report["unity_files"]:
         report["notes"].append("không tìm thấy entry Unity %r trong file"
                                % entry)
