@@ -93,6 +93,13 @@
 - Kiểm chứng [ĐÃ ĐO THẬT]: 9K v1.0.6 en→vi ("Tiếng Việt: " + en, 2.252 key) → ép thật → vá IPA (chỉ để kiểm chứng, /tmp) → trích lại đúng 2.252 key, giá trị khớp 100%, thứ tự key khớp mẫu; delivery_gate PASS cả pre_write lẫn pressed (font hiển thị Be Vietnam Pro); file gốc sha không đổi. Harness `exp/verify_bug2_merge.py` PASS 4/4. Smoke 59/59; full suite 0 đỏ mới (branch 1.761 đạt / 102 lỗi / 27 fail / 4 bỏ qua vs main 1.743 đạt / 102 lỗi / 27 fail / 4 bỏ qua — +18 đúng 18 test mới, tập FAIL giống hệt). 18 test mới trong `pb3/tests/test_mb_write.py` (round-trip trên fixture + 1 test trên dữ liệu game thật 9K). `CACHE_VERSION` v25→**v26-20261117** + đồng bộ mọi kỳ vọng version ở 21 file exp + `tests.json` 167→168 (thêm test mới).
 - Sau khi bản v26 lên live, user trên Safari cần tải lại trang 2 lần (kích hoạt SW mới rồi chạy code mới) như các bản trước.
 
+### Sửa text mục (E) sau M1 (ghi chú UI nói sai phạm vi mod) — XONG 2026-11-17 [ĐÃ ĐO THẬT] (nhánh `fix/e-section-text-v27`)
+
+- Vấn đề: sau M1 (PR #7), giao diện tab Mod vẫn ghi "(E) v1 chỉ ghi TextAsset JSON dạng dict — key MonoBehaviour/StringTable sẽ liệt kê rõ là không ép được" nên user tưởng mod vẫn không ghi được MB.
+- Sửa (`index.html`, `app.js`, `pb3/sdk/gate.py`): dòng mô tả mục (E) thành "(E) ghi được TextAsset JSON dạng dict + MonoBehaviour/StringTable"; lý do unmatched `monobehaviour` (cả ở gate lẫn UI) thành "MonoBehaviour generic (scan path) / bảng ngôn ngữ CÓ type tree — chưa có đường ghi". Giữ nguyên mọi cảnh báo an toàn khác (dry-run, cổng bước 6, không ghi đè file gốc, không phải IPA, v9 chỉ đọc, bundle mã hóa không giải mã).
+- Kiểm chứng [ĐÃ ĐO THẬT]: 9 check tĩnh `exp/check_*_static.py` đều `fails: []`; smoke 59/59; harness `exp/verify_bug2_merge.py` PASS 4/4. `CACHE_VERSION` v26→**v27-20261117** + đồng bộ kỳ vọng version ở 21 file exp; ghi chú dung lượng precache trong `sw.js` đo lại: 16.295.629 B.
+- Sau khi bản v27 lên live, user trên Safari cần tải lại trang 2 lần như các bản trước.
+
 ### BUG#2 (đường merge trích xuất: loại quét phẳng khỏi file locale, tách biến thể zh, vứt rác) — XONG 2026-11-17 [ĐÃ ĐO THẬT] (PR #4, đã gộp vào main `f1a46eb7`)
 
 - Chuẩn do Joseph chốt: 1 file duy nhất cho mỗi locale xin (en → chỉ

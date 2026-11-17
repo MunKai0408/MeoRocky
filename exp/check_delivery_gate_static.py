@@ -2,7 +2,7 @@
 """Kiem tra tinh cong kiem tra truoc khi giao (P0-2, buoc 6):
 sdk/gate.py chi stdlib + Python 3.9, khong UnityPy/lz4, khong ghi file;
 manifest (files.json 95, tests.json 168); sw.js precache 120 muc co
-sdk/gate.py, khong muc chet, CACHE_VERSION v26-20261117; bridge co op
+sdk/gate.py, khong muc chet, CACHE_VERSION v27-20261117; bridge co op
 delivery_gate + rebuild_apply bat verdict cong khi duoc truyen; UI du
 id cong + nut Ghi bi khoa boi verdict + render cong esc du lieu game.
 In JSON {"fails": [...]}.
@@ -86,8 +86,8 @@ if "pb3/tests/test_gate.py" not in tests:
 sw = (SITE / "sw.js").read_text(encoding="utf-8")
 if '"pb3/sdk/gate.py"' not in sw:
     fails.append("sw.js precache thieu pb3/sdk/gate.py")
-if 'CACHE_VERSION = "v26-20261117"' not in sw:
-    fails.append("sw.js CACHE_VERSION khong phai v26-20261117")
+if 'CACHE_VERSION = "v27-20261117"' not in sw:
+    fails.append("sw.js CACHE_VERSION khong phai v27-20261117")
 m = re.search(r"const PRECACHE_URLS = \[(.*?)\];", sw, re.S)
 if not m:
     fails.append("sw.js khong tim thay PRECACHE_URLS")

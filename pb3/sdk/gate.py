@@ -79,7 +79,7 @@ _PLACEHOLDER_RE = re.compile(
     r"<[A-Za-z][^>]*>|\\[nrt\\'\"]")
 
 _REASON_VI = {
-    "monobehaviour": "MonoBehaviour/StringTable — (E) v1 chỉ ghi TextAsset JSON, chưa ghi được nhóm này",
+    "monobehaviour": "MonoBehaviour generic (scan path) / bảng ngôn ngữ CÓ type tree — chưa có đường ghi",
     "not_found": "không tìm thấy trong đơn vị nào",
     "not_json_dict": "TextAsset không phải JSON dạng dict",
     "non_string_value": "giá trị gốc không phải chuỗi",
