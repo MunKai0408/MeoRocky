@@ -65,6 +65,7 @@
   "pb3/sdk/font_list.py",
   "pb3/sdk/format_probe.py",
   "pb3/sdk/formats.py",
+  "pb3/sdk/gate.py",
   "pb3/sdk/godot.py",
   "pb3/sdk/ir.py",
   "pb3/sdk/kb.py",

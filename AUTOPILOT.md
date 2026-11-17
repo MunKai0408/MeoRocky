@@ -21,9 +21,57 @@
 
 ## Mục đang làm
 
-- **P0-2 (cổng kiểm tra trước khi giao, bước 6)** — sắp bắt đầu, theo brief mục 7.
+- **P0-3** — tiếp theo, theo brief mục 7.
 
 ## Đã xong
+
+### P0-2 (cổng kiểm tra trước khi giao, bước 6) — XONG 2026-11-17 [ĐÃ ĐO THẬT] (chưa đẩy; coordinator điền mục "Đẩy code" sau khi đẩy)
+
+- Cổng duy nhất: bridge op `delivery_gate` + module mới `pb3/sdk/gate.py`
+  (stdlib-only, Python 3.9, chỉ đọc, không ghi file) trả 1 verdict
+  PASS/FAIL + 5 kiểm tra (bản dịch đầy đủ, placeholder/thẻ/xuống dòng,
+  diffverify theo đúng đường (E) + provenance, độ phủ font bộ 142 mục
+  theo từng font, toàn vẹn hash/cấu trúc theo kế hoạch ép) + lỗi dễ hiểu.
+  Không verdict thì không giao file. UI: mục cổng trong tab Mod, nút
+  "Ép và ghi file" chỉ bật khi cổng ĐẠT cho đúng file + bản dịch + lựa
+  chọn hiện tại (khóa theo hash đầu vào); `rebuild_apply` bắt verdict
+  PASS khớp sha nguồn + sha bản dịch khi được truyền verdict.
+- Quy tắc chặn: FAIL chặn giao tuyệt đối, không có đường giao khi cảnh
+  báo — vì file giao sai (thiếu key, mất placeholder, thiếu glyph) hỏng
+  game theo cách user khó phát hiện. Áp nhất quán ở UI + bridge.
+- Phạm vi + giới hạn có ghi rõ: cổng chỉ áp flow (E); gọi bridge trực
+  tiếp không verdict giữ hành vi cũ (UI là đường giao duy nhất, luôn
+  truyền verdict). Kiểm pre-write bằng mô phỏng RAM; bundle độc lập
+  ≥64MB kiểm file đã ép thật ở chế độ pressed. File đã ép chỉ cần khớp
+  nội dung + sha script, không cần byte-identical (khác bytes thì cảnh
+  báo). Font nhúng Unity không đọc được bytes → "chưa kiểm được", không
+  mặc định tốt/xấu. Placeholder so theo multiset có thứ tự + số lượng
+  newline (chặt hơn `placeholders_ok` cũ).
+- Đếm file: `files.json` 94→95 (+`pb3/sdk/gate.py`); `tests.json` 165→166
+  (+`pb3/tests/test_gate.py`, 52 test); `sw.js` CACHE_VERSION
+  v20-20261117→v21-20261117, precache 119→120 (0 mục chết, tổng thật
+  16.185.827 B = 15,44 MiB); kỳ vọng đếm/version ở MỌI harness cũ đã
+  đồng bộ; driver D1 của harness P0-1 nay chạy cổng (9 key đủ, gồm
+  `title`) giữa preview và apply.
+- Tự kiểm tra §E: smoke 59/59 [ĐÃ ĐO THẬT]; full (unittest discover)
+  1811 chạy = 1781 đạt / 25 lỗi / 3 fail / 2 bỏ qua (79,6s), tập 28 đỏ
+  giống hệt baseline (2 fixture thiếu đã biết), không đỏ mới; harness
+  mới `verify_delivery_gate.mjs` 13/13 PASS trên Chromium thật
+  (Playwright scratch, C1–C5 + D1–D4 xanh); harness P0-1 chạy lại 13/13
+  PASS; item6 giữ 2 fail gzip từ trước, item7 giữ 1 fail fixture từ
+  trước. Hồi quy §4 khớp mốc brief (xem bên dưới).
+- Game thật [ĐÃ ĐO THẬT]: cổng FAIL đúng trên cả 3 IPA (9K: 13.465 key
+  chưa ép, 13.464 MB + 1 non-string; PB3: 14.556 key, 14.517 MB + 39
+  not_found + 1 đơn vị CSV bị từ chối; EK2: 17.240 key MB) — (E) v1 vẫn
+  phủ 0% key ngôn ngữ thật; font FAIL ở 9K/PB3 (0 font đọc được), PASS
+  ở EK2 (Roboto-Bold 139/142 phủ đủ chữ đang dùng). Vòng tròn khép trên
+  `resources.assets` 9K (3 key → 5 changes, PASS cả pre-write lẫn
+  pressed, sha bản copy không đổi). DungeonWithin probe-only: FAIL
+  (key không tìm thấy + font chưa kiểm được), không giải mã.
+- CHƯA ĐẠT / CHƯA KIỂM CHỨNG: RAM + flow Safari thật [CHƯA KIỂM CHỨNG]
+  (bước thử trong `exp/delivery_gate_results.md` §6); thử iSH chưa làm;
+  đường ghi MonoBehaviour (G1, để mục sau); job CI `unit` exit 1 (nguyên
+  nhân chưa rõ, như P0-1).
 
 ### P0-1 (E) — XONG 2026-11-17 [ĐÃ ĐO THẬT] (commit `41e98028`, PR #1, gộp vào main `9fb4a2ed`)
 
@@ -60,7 +108,8 @@
 1. Tải asset `pb3-fixtures-v1.zip` lên Release `fixtures-v1` (id 446604484, hiện
    `assets: []`) — nguyên nhân job CI `assets` exit 1 đã xác định [ĐÃ ĐO THẬT].
    Không sửa code/workflow nào khắc phục được; tải qua giao diện web GitHub.
-2. Thử Safari thật + đo RAM (bước thử trong `exp/analysis_rebuild_results.md` §6);
+2. Thử Safari thật + đo RAM (bước thử trong `exp/analysis_rebuild_results.md` §6
+   cho (E) và `exp/delivery_gate_results.md` §6 cho cổng);
    chạy iSH (patch02 suite + extract + font scan) khi tới P2-4.
 3. File `data.unity3d` 590MB (brief §4) chưa được cung cấp — cần để đủ tiêu chí vòng tròn
    P0-1 trên file lớn; đã thay bằng bundle lớn nhất có thật + ghi rõ.
@@ -81,6 +130,7 @@ Khớp chính xác mốc brief §4 → mốc đo trên đúng 3 build này. Phâ
 15.254 + mb_table 125; PB3 mb_generic 12.426 + CSV 4.700; EK2 mb_generic 17.247;
 TextAsset JSON dict = 0 ở cả 3. DungeonWithin (91.389.555 B): chỉ quét/probe, 4 bundle
 Addressables mã hóa AES — KHÔNG giải mã. Passpartout/Dead Cells/data.unity3d: chưa có file.
+Chạy lại sau P0-2 (2026-11-17): khớp chính xác cả 3 game, merged==tách 100%, không lệch.
 
 ## Lệnh đã chạy (mốc + kiểm tra)
 
@@ -88,6 +138,7 @@ Addressables mã hóa AES — KHÔNG giải mã. Passpartout/Dead Cells/data.uni
 cd pb3 && TMPDIR=~/workspace/beartea/tmpdir_p01 python3 run_tests.py --tier smoke
 cd pb3 && TMPDIR=~/workspace/beartea/tmpdir_p01 python3 -m unittest discover -s tests -t .
 cd exp && node verify_analysis_rebuild.mjs   # D1-D4 cần Playwright (scratch ngoài repo)
+cd exp && node verify_delivery_gate.mjs      # P0-2, D1-D4 cần Playwright (scratch ngoài repo)
 diff -rq -x __pycache__ -x logs -x reports -x workspace -x .pytest_cache <pristine> <cây>
 ```
 
@@ -103,6 +154,12 @@ diff -rq -x __pycache__ -x logs -x reports -x workspace -x .pytest_cache <pristi
   trên nhánh trước khi gộp; gộp chỉ khi test xanh.
 - Tài liệu theo code, không sửa test cho vừa tài liệu — trừ đồng bộ kỳ vọng đếm/version
   đã lệch từ trước theo giá trị thật của cây (ghi rõ từng chỗ).
+- Cổng FAIL chặn giao tuyệt đối, không đường giao khi cảnh báo — vì file giao sai hỏng
+  game theo cách user khó phát hiện; cảnh báo không bao giờ chặn nhưng luôn hiện.
+- File đã ép chỉ cần khớp nội dung + sha script, không cần byte-identical với mô phỏng
+  — vì file ép bằng công cụ khác vẫn hợp lệ; khác bytes thì cảnh báo rõ.
+- Font nhúng Unity không đọc được bytes thì "chưa kiểm được", không mặc định tốt/xấu
+  — vì reader hiện tại không trích được bytes font; kết luận chắc chắn cần font chỉ định.
 
 ## Đẩy code
 
@@ -116,5 +173,5 @@ diff -rq -x __pycache__ -x logs -x reports -x workspace -x .pytest_cache <pristi
 
 ## Backlog còn lại (thứ tự)
 
-P0-2 → P0-3 → P0-4 (xem "Chờ Joseph" #5) → P1-1 → P1-2 → P1-3 (I1) → P1-4 (I2) →
+P0-3 → P0-4 (xem "Chờ Joseph" #5) → P1-1 → P1-2 → P1-3 (I1) → P1-4 (I2) →
 P1-5 (I3) → P2-1 → P2-2 → P2-3 → P2-4 → P3. Tiêu chí XONG từng mục theo brief mục 7.

@@ -14,7 +14,7 @@
 //  B. Trình duyệt THẬT (Playwright chromium headless shell, 390px, serve
 //     site qua HTTP local): lần thăm 1 chưa chọn file thì không tải
 //     Pyodide/worker.js/pb3 (đo qua request thật + __PB3_BOOT_STATE);
-//     SW đăng ký được, precache đủ 119 mục (P0-1: bỏ 13 wheel chết, thêm sdk/rebuild.py); chọn file -> boot tới
+//     SW đăng ký được, precache đủ 120 mục (P0-2: thêm sdk/gate.py; P0-1: bỏ 13 wheel chết, thêm sdk/rebuild.py); chọn file -> boot tới
 //     "Sẵn sàng — 20 plugin" + list được file mẫu; lần thăm 2 OFFLINE
 //     (context.setOffline(true)) vẫn boot tới Sẵn sàng + list được;
 //     SW không phục vụ request dịch (fetch khác origin bị từ chối khi

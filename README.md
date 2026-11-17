@@ -43,7 +43,13 @@ GitHub API không bật được Pages nên bước này cần bấm tay:
      nhận bản dịch JSON + sidecar provenance, xem trước dry-run (đơn vị/
      key sẽ đổi, key không ép được kèm lý do, xung đột chọn bản thắng),
      rồi ghi các đơn vị đã patch về (1 đơn vị → 1 file, nhiều đơn vị →
-     1 ZIP; không phải IPA đóng gói lại, cần re-sign).
+     1 ZIP; không phải IPA đóng gói lại, cần re-sign). Sau (E) là
+     **“Cổng kiểm tra trước khi giao”** (bước 6, P0-2): 1 verdict
+     PASS/FAIL duy nhất gộp 5 kiểm tra (bản dịch đầy đủ, placeholder/
+     thẻ/xuống dòng, diffverify ép lại, độ phủ font 142 mục, toàn vẹn
+     file); nút “Ép và ghi file” chỉ bật khi cổng ĐẠT cho đúng file +
+     bản dịch hiện tại, FAIL thì chặn giao (xem
+     `exp/delivery_gate_results.md`).
    - **Batch**: chạy hàng loạt theo manifest JSON/CSV (menu [4] bản iSH)
      — **pool worker song song thật** (mỗi worker là 1 thread hệ điều hành
      thật, chạy 1 Pyodide + PB3 riêng, không dùng threading/SharedArrayBuffer;
@@ -80,7 +86,7 @@ GitHub API không bật được Pages nên bước này cần bấm tay:
   về main thread (luật PB3 #152–153).
 - `pb3/`: mã nguồn PB3 được vendor (core, sdk, registry, plugins, config,
   services) — bản web chỉ gọi API tầng sdk qua `pb3/bridge.py`, không dùng
-  menu chữ. Trình duyệt chỉ nạp 94 file runtime trong `pb3/files.json`;
+  menu chữ. Trình duyệt chỉ nạp 95 file runtime trong `pb3/files.json`;
   `pb3/tests/` (kể cả `tests/corpus/*.json`) có trong repo nhưng KHÔNG nạp
   vào trình duyệt — tests chỉ chạy ở CI (xem mục CI), corpus chỉ là bằng
   chứng ngày test cho ma trận hỗ trợ.
@@ -88,6 +94,10 @@ GitHub API không bật được Pages nên bước này cần bấm tay:
   `rebuild_apply` (sdk.rebuild: nhóm bản dịch theo provenance → 1 plan
   mỗi đơn vị → áp bằng executor của plan + đường rebuild streaming cho
   bundle độc lập lớn; xem `exp/analysis_rebuild_results.md`),
+  `delivery_gate` (sdk.gate: cổng kiểm tra bước 6 — 1 verdict PASS/FAIL
+  gộp 5 kiểm tra trước khi giao file; `rebuild_apply` bắt verdict PASS
+  khớp file + bản dịch khi được truyền verdict; xem
+  `exp/delivery_gate_results.md`),
   `batch_run` (sdk.batch.BatchRunner, jobs=1 tuần tự trong 1 worker),
   `batch_split`/`batch_zip`/`batch_merge_zip`/`batch_finalize`/`batch_checkpoint`
   (pool worker, Mục 4),
@@ -163,6 +173,19 @@ Hai điều chỉnh ở tầng khởi động (không sửa mã PB3): dựng reg
   từ chối (không giải mã). File >400MB có confirm riêng về RAM/streaming;
   flow trình duyệt (E) chưa kiểm chứng trên Safari thật (xem
   `exp/analysis_rebuild_results.md`).
+- **Cổng kiểm tra (bước 6, P0-2):** chỉ áp cho flow (E); đường plan/mod
+  trực tiếp giữ dry-run/confirm riêng, chưa qua cổng. Cổng kiểm bằng mô
+  phỏng trong RAM (đường RAM của (E)); bundle độc lập ≥64MB thì kiểm file
+  đã ép thật ở chế độ pressed thay vì mô phỏng. File đã ép chỉ cần khớp
+  nội dung + sha script theo kế hoạch, không cần giống hệt bytes mô phỏng
+  (công cụ ép khác vẫn được chấp nhận; khác bytes thì có cảnh báo). Gọi
+  bridge `rebuild_apply` trực tiếp mà không truyền verdict thì giữ hành vi
+  cũ (không bị cổng chặn) — UI là đường giao duy nhất của sản phẩm và luôn
+  truyền verdict. Font nhúng Unity (class 128) chỉ liệt kê được tên, không
+  đọc được bytes nên độ phủ của chúng là “chưa kiểm được”, không mặc định
+  tốt/xấu; muốn kết luận chắc chắn thì chỉ định font hiển thị hoặc dùng
+  font đi kèm. Flow trình duyệt cổng chưa kiểm chứng trên Safari thật (xem
+  `exp/delivery_gate_results.md`).
 - **Ma trận hỗ trợ**: bảng plugin/container/Unity lấy từ dữ liệu thật của
   PB3 (registry + sdk), nhưng cột “ngày test” hiện “chưa có” vì bản web
   không vendor tests/corpus/*.json; cột “số game đã test” chỉ đếm KB đã

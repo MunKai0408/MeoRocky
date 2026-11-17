@@ -50,7 +50,7 @@ await pyodide.loadPackage("lz4");
   const bin = Buffer.from(b64, "base64");
   pyodide.FS.mkdirTree("/pb3web/fonts");
   pyodide.FS.writeFile("/pb3web/fonts/BeVietnamPro-Regular.ttf", new Uint8Array(bin));
-  rec("write_site_files", man.files.length === 94, `${man.files.length} file pb3/ + font b64 ghi vào /pb3web`, performance.now() - t0); // 94 = 93 + 1 (P0-1 thêm sdk/rebuild.py, 2026-11-17)
+  rec("write_site_files", man.files.length === 95, `${man.files.length} file pb3/ + font b64 ghi vào /pb3web`, performance.now() - t0); // 95 = 94 + 1 (P0-2 thêm sdk/gate.py, 2026-11-17)
 }
 
 pyodide.runPython("import sys; sys.path.insert(0, '/pb3web')\nimport bridge");
