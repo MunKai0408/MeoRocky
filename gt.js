@@ -82,6 +82,44 @@ async function gtThrottle() {
   }
 }
 
+// ---- Cooldown khi Google 429/5xx liên tiếp (tăng tốc khi bị giới hạn) ----
+// Đo thật (bench-gt S6): Google 429 mãi thì mỗi chuỗi tốn 4 lần gọi +
+// backoff 1+2+4s (~8,6s/chuỗi) rồi mới rơi xuống MyMemory, mà bridge vẫn
+// đếm là "thành công" (qua MyMemory) nên không có circuit breaker nào dừng
+// được. 2 lần 429/5xx liên tiếp -> Google tạm nghỉ GT_COOL_MS; các lần gọi
+// sau kiểm tra cooldown TRƯỚC khi chờ token bucket -> lỗi nhanh, rơi thẳng
+// xuống MyMemory (~0,4s/chuỗi). 429 đơn lẻ vẫn retry bình thường (thành
+// công reset streak về 0). Chỉ áp cho Google trực tiếp, proxy có giới
+// hạn riêng (quota).
+let gt429Streak = 0;
+let gtCoolUntilMs = 0;
+const GT_COOL_MS = 30000;
+const GT_COOL_STREAK = 2;
+function gtInCooldown() { return Date.now() < gtCoolUntilMs; }
+function gtNoteHttpError() {
+  gt429Streak++;
+  if (gt429Streak >= GT_COOL_STREAK) gtCoolUntilMs = Date.now() + GT_COOL_MS;
+}
+function gtNoteSuccess() { gt429Streak = 0; }
+function gtThrowIfCoolingDown() {
+  if (gtInCooldown()) {
+    throw gtError("http",
+      "Google Translate giới hạn tốc độ (HTTP 429) — đang tạm nghỉ 30 giây, thử bước sau.",
+      { status: 429 });
+  }
+}
+
+// Reset trạng thái giới hạn tốc độ (cooldown Google + breaker MyMemory) —
+// chỉ dùng cho harness/kiểm thử (giữa các scenario cần trạng thái sạch).
+// Worker thật KHÔNG gọi: cooldown phải sống qua các chunk/job vì giới hạn
+// là theo IP, không theo job.
+export function resetGoogleRateLimitState() {
+  gt429Streak = 0;
+  gtCoolUntilMs = 0;
+  mmFailStreak = 0;
+  mmCoolUntilMs = 0;
+}
+
 // Chuẩn hoá mảng chuỗi từ Python: Pyodide truyền list Python sang JS
 // dưới dạng JsProxy (Array.isArray=false nhưng có .length + chỉ số) chứ
 // KHÔNG phải Array thật — mọi hàm batch phải Array.from() trước khi
@@ -125,8 +163,19 @@ export function getTranslateProxyUrl() { return proxyUrl; }
 // chất lượng thấp hơn Google). Chỉ là tầng fallback giữa Google và từ điển
 // offline — lỗi thì ném để bridge dùng từ điển offline. Endpoint cho phép
 // ghi đè để harness kiểm chứng bằng server giả.
-const MYMEMORY_TIMEOUT_MS = 10000;
+// Fail-fast: timeout 10s -> 5s (MyMemory thường trả <2s; treo 10s/chuỗi
+// nhân 500 chuỗi là hàng giờ) + breaker: 3 lỗi liên tiếp -> bỏ qua
+// MyMemory 60s, về offline nhanh (MyMemory sập thì chờ cũng vô ích).
+const MYMEMORY_TIMEOUT_MS = 5000;
 const MYMEMORY_MAX_CHARS = 500;
+let mmFailStreak = 0;
+let mmCoolUntilMs = 0;
+const MM_COOL_MS = 60000;
+const MM_COOL_STREAK = 3;
+function mmNoteFail() {
+  mmFailStreak++;
+  if (mmFailStreak >= MM_COOL_STREAK) mmCoolUntilMs = Date.now() + MM_COOL_MS;
+}
 let myMemoryEndpoint = "https://api.mymemory.translated.net/get";
 export function setMyMemoryEndpoint(url) { myMemoryEndpoint = url; }
 
@@ -266,12 +315,23 @@ function fallbackAllFailedError(trace, quotaHit, batch) {
       "- " + (FALLBACK_STEP_LABEL[t.step] || t.step) + ": " +
       (t.skipped ? "bỏ qua (" + t.detail + ")" : (t.ok ? "thành công" : t.detail))).join("\n"));
   e.fallbackTrace = trace;
+  if (batch) {
+    // Python chia đôi batch thử lại (split-on-failure) CHỈ khi lỗi là mất
+    // marker (bad_response) — 429/quota thì chia cũng lỗi như cũ, không
+    // chia. Đọc kind của bước google trong trace (noteErr đã ghi kind).
+    const g = (trace || []).find((t) => t.step === "google");
+    e.splitRetryable = !!(g && g.kind === "bad_response");
+  }
   return e;
 }
 
 export async function myMemoryTranslateOne(text, src, dst) {
   if ([...text].length > MYMEMORY_MAX_CHARS) {
     throw gtError("mymemory", "Chuỗi quá dài cho MyMemory (>500 ký tự).");
+  }
+  if (Date.now() < mmCoolUntilMs) {
+    throw gtError("mymemory",
+      "MyMemory tạm nghỉ sau 3 lỗi liên tiếp — thử bước sau.");
   }
   const url = myMemoryEndpoint + "?" + new URLSearchParams({
     q: text, langpair: src + "|" + dst,
@@ -286,25 +346,30 @@ export async function myMemoryTranslateOne(text, src, dst) {
       clearTimeout(timer);
     }
   } catch (e) {
+    mmNoteFail();
     if (e && e.name === "AbortError") {
-      throw gtError("mymemory", "MyMemory quá thời gian chờ (10 giây).", { errName: e.name });
+      throw gtError("mymemory", "MyMemory quá thời gian chờ (5 giây).", { errName: e.name });
     }
     throw gtError("mymemory", "Không gọi được MyMemory (mất mạng hoặc chặn CORS).", { errName: e.name });
   }
   if (!res.ok) {
+    mmNoteFail();
     throw gtError("mymemory", "MyMemory trả HTTP " + res.status + ".", { status: res.status });
   }
   let data;
   try {
     data = await res.json();
   } catch (e) {
+    mmNoteFail();
     throw gtError("mymemory", "MyMemory trả về dữ liệu không đọc được.");
   }
   if (Number(data && data.responseStatus) !== 200 ||
       !data || !data.responseData || typeof data.responseData.translatedText !== "string") {
+    mmNoteFail();
     throw gtError("mymemory",
       "MyMemory lỗi: " + ((data && data.responseDetails) || ("status " + (data && data.responseStatus))));
   }
+  mmFailStreak = 0;
   return data.responseData.translatedText;
 }
 
@@ -651,6 +716,7 @@ async function gtxFetchOnce(q, usePost, src, dst) {
       { errName: e.name });
   }
   if (res.status === 429 || (res.status >= 500 && res.status <= 504)) {
+    gtNoteHttpError();
     const e = gtError("http",
       "Google Translate giới hạn tốc độ (HTTP " + res.status + ").",
       { status: res.status });
@@ -678,14 +744,18 @@ async function gtxFetchOnce(q, usePost, src, dst) {
   if (got == null) {
     throw gtError("bad_response", "Google Translate trả về thiếu bản dịch.");
   }
+  gtNoteSuccess();
   return got;
 }
 
 // Thử lại tối đa GT_MAX_RETRIES lần với backoff khi 429/5xx; lỗi khác
-// (mất mạng, CORS, Sorry, JSON hỏng, Hủy) ném ngay.
+// (mất mạng, CORS, Sorry, JSON hỏng, Hủy) ném ngay. Cooldown: nếu Google
+// đang tạm nghỉ (2 lần 429 liên tiếp trước đó) thì lỗi ngay KHÔNG gọi,
+// để caller rơi nhanh xuống MyMemory thay vì đốt 4 lần gọi + backoff.
 async function gtxWithRetry(attemptFn) {
   let lastErr = null;
   for (let attempt = 0; attempt <= GT_MAX_RETRIES; attempt++) {
+    gtThrowIfCoolingDown();
     if (attempt > 0) {
       await sleep(GT_BACKOFF_MS[Math.min(attempt - 1, GT_BACKOFF_MS.length - 1)]);
     }
@@ -704,7 +774,9 @@ async function gtxWithRetry(attemptFn) {
 
 // Dịch 1 chuỗi (1 request). Token bucket giới hạn tốc độ gọi; 429/5xx
 // thì thử lại với backoff; lỗi khác ném ngay để Python dùng offline.
+// Cooldown được kiểm tra TRƯỚC khi chờ token (khỏi đốt 500ms vô ích).
 export async function googleTranslateOne(text, src, dst) {
+  gtThrowIfCoolingDown();
   await gtThrottle();
   return gtxWithRetry(() => gtxFetchOnce(text, false, src, dst));
 }
@@ -738,6 +810,7 @@ export function splitJoinedBatch(translated, n) {
 export async function googleTranslateBatch(texts, src, dst) {
   const arr = toTextArray(texts);
   if (!arr || !arr.length) return [];
+  gtThrowIfCoolingDown();
   await gtThrottle();
   if (arr.length === 1) {
     const one = await gtxWithRetry(() => gtxFetchOnce(arr[0], false, src, dst));
