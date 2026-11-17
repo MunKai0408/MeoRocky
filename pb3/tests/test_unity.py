@@ -1075,8 +1075,8 @@ class TestPatcher(unittest.TestCase):
         by_format = {row["format"]: row for row in m}
         self.assertIn("UnityFS v6/v7/v8 (bundle)", by_format)
         self.assertEqual(by_format["UnityFS v6/v7/v8 (bundle)"]["maturity"], "M2")
-        self.assertIn("SerializedFile v15-23 (.assets)", by_format)
-        self.assertEqual(by_format["SerializedFile v15-23 (.assets)"]["maturity"], "M2")
+        self.assertIn("SerializedFile v15-26 (.assets)", by_format)
+        self.assertEqual(by_format["SerializedFile v15-26 (.assets)"]["maturity"], "M2")
         unsupported = [r for r in m if r["maturity"] == "M0"]
         self.assertTrue(any("LZHAM" in r["format"] for r in unsupported))
 
