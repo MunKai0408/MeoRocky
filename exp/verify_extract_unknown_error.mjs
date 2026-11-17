@@ -2,7 +2,7 @@
 // "Trích xuất text lỗi: Lỗi không rõ" trên Safari thật (Joseph 15:42,
 // repo MunKai0408/MeoRocky).
 //
-// Chạy: node verify_extract_unknown_error.mjs (từ /home/hatch/workspace/pb3_web/exp)
+// Chạy: node verify_extract_unknown_error.mjs (từ thư mục exp/ của repo)
 // Kết quả: extract_unknown_error_results.md + extract_unknown_error_results.json
 //
 // Bối cảnh: trang boot tốt (20 plugin, font 142/142) nhưng thao tác trích
@@ -37,10 +37,11 @@ import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
-import { loadPyodide } from "../site/pyodide/pyodide.mjs";
+import { loadPyodide } from "../pyodide/pyodide.mjs";
 
-const SITE = "/home/hatch/workspace/pb3_web/site";
-const EXP = "/home/hatch/workspace/pb3_web/exp";
+const ROOT = decodeURIComponent(new URL("..", import.meta.url).pathname).replace(/\/$/, "");
+const SITE = ROOT;
+const EXP = ROOT + "/exp";
 const FX = EXP + "/fixtures/extract_select_fixture.zip";
 const BUNDLE = "Payload/9Kings.app/Data/Raw/aa/iOS/localization-locales_assets_all.bundle";
 const RES = "Payload/9Kings.app/Data/resources.assets";

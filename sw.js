@@ -15,13 +15,17 @@
 // Bản SW mới tự kích hoạt (skipWaiting) và xóa cache cũ ở sự kiện
 // activate, nên user không bao giờ kẹt bản cũ.
 //
-// Lưu ý dung lượng: precache ~18,5 MB (Pyodide ~16,5 MB + PB3 ~1,4 MB +
-// shell ~0,24 MB + font 0,18 MB + fzstd 24KB). Nạp 1 lần ở lần thăm đầu (nền, không
-// chặn vẽ trang); lần sau đọc từ Cache Storage, không tốn mạng nữa.
+// Lưu ý dung lượng (đo thật từ đĩa, cùng phương pháp kiểm A3 của
+// harness mục 6: tổng các file trong PRECACHE_URLS, chưa tính "./" là
+// alias của index.html): precache 16.103.797 B (15,36 MiB) = Pyodide
+// 13.605.176 B (12,97 MiB, 7 file) + PB3 1.821.402 B (1,74 MiB) +
+// shell/gốc 464.999 B + font 177.264 B + fzstd 24.407 B +
+// icons/fixtures 10.549 B. Nạp 1 lần ở lần thăm đầu (nền, không chặn
+// vẽ trang); lần sau đọc từ Cache Storage, không tốn mạng nữa.
 
 // ĐỔI SỐ NÀY MỖI KHI DEPLOY BẢN MỚI (bất kỳ file nào trong PRECACHE_URLS
 // đổi nội dung). Bản cũ sẽ bị xóa ở activate.
-const CACHE_VERSION = "v19-20261116";
+const CACHE_VERSION = "v20-20261117";
 const CACHE_NAME = "beartea-" + CACHE_VERSION;
 // Cache riêng cho prefetch Pyodide sau first paint (Mục C3): app.js ghi
 // file đã tải trước vào đây; SW dùng làm dự phòng khi cache chính trượt
@@ -31,7 +35,7 @@ const PREFETCH_CACHE = "beartea-prefetch-v1";
 // Danh sách precache: shell tĩnh + Pyodide vendored + mã PB3 (khớp đúng
 // pb3/files.json mà worker.js tải lúc boot) + font đi kèm + fixture tự
 // kiểm tra (C2/C3: fixtures/selftest.zip để lần thăm 2 offline vẫn chạy
-// được "Tự kiểm tra"). Sinh từ đĩa lúc viết file này (131 mục);
+// được "Tự kiểm tra"). Sinh từ đĩa lúc viết file này (119 mục);
 // thêm/bớt file vendored thì cập nhật cả danh sách này, không thì
 // lần thăm 2 offline sẽ thiếu file đó.
 const PRECACHE_URLS = [
@@ -52,26 +56,13 @@ const PRECACHE_URLS = [
   "icons/icon-512.png",
   "icons/apple-touch-icon.png",
   "fonts/BeVietnamPro-Regular.ttf.b64",
-  "pyodide/atomicwrites-1.4.1-py2.py3-none-any.whl",
-  "pyodide/attrs-26.1.0-py3-none-any.whl",
-  "pyodide/exceptiongroup-1.3.1-py3-none-any.whl",
-  "pyodide/iniconfig-2.3.0-py3-none-any.whl",
   "pyodide/lz4-4.4.5-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
-  "pyodide/micropip-0.11.1-py3-none-any.whl",
-  "pyodide/more_itertools-11.0.1-py3-none-any.whl",
-  "pyodide/pluggy-1.6.0-py3-none-any.whl",
-  "pyodide/py-1.11.0-py2.py3-none-any.whl",
-  "pyodide/pygments-2.20.0-py3-none-any.whl",
   "pyodide/pyodide-lock.json",
   "pyodide/pyodide.asm.mjs",
   "pyodide/pyodide.asm.wasm",
   "pyodide/pyodide.js",
   "pyodide/pyodide.mjs",
-  "pyodide/pyparsing-3.3.2-py3-none-any.whl",
-  "pyodide/pytest-9.0.2-py3-none-any.whl",
   "pyodide/python_stdlib.zip",
-  "pyodide/setuptools-82.0.1-py3-none-any.whl",
-  "pyodide/six-1.17.0-py2.py3-none-any.whl",
   "pb3/files.json",
   "pb3/bridge.py",
   "pb3/config/default.toml",
@@ -146,6 +137,7 @@ const PRECACHE_URLS = [
   "pb3/sdk/manifest.py",
   "pb3/sdk/patch_pack.py",
   "pb3/sdk/plan.py",
+  "pb3/sdk/rebuild.py",
   "pb3/sdk/support_matrix.py",
   "pb3/sdk/tmp_font.py",
   "pb3/sdk/translate.py",

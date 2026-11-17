@@ -3,7 +3,7 @@
 // Thông tin Unity + bottom nav 5 mục + sáng/tối; giữ nguyên toàn bộ chức
 // năng (11 thao tác, worker protocol, download Share, bảng vỡ chữ, không
 // accept ở input file chính).
-// Chạy: node verify_redesign.mjs (từ /home/hatch/workspace/pb3_web/exp)
+// Chạy: node verify_redesign.mjs (từ thư mục exp/ của repo)
 // Kết quả: verify_redesign_results.json/.md + redesign_390_*.png
 import fs from "node:fs";
 import http from "node:http";
@@ -11,9 +11,10 @@ import path from "node:path";
 import vm from "node:vm";
 import { chromium } from "playwright-core";
 
-const SITE = "/home/hatch/workspace/pb3_web/site";
-const EXP = "/home/hatch/workspace/pb3_web/exp";
-const GAME1 = "/home/hatch/workspace/pb3_fix/pb3/tests/fixtures/extract/game1.zip";
+const ROOT = decodeURIComponent(new URL("..", import.meta.url).pathname).replace(/\/$/, "");
+const SITE = ROOT;
+const EXP = ROOT + "/exp";
+const GAME1 = SITE + "/pb3/tests/fixtures/extract/game1.zip";
 const UCONTAINER = EXP + "/unity_container.zip";
 const EXE = process.env.HOME + "/.cache/ms-playwright/chromium_headless_shell-1148/chrome-linux/headless_shell";
 const sec = (ms) => Math.round(ms / 100) / 10;

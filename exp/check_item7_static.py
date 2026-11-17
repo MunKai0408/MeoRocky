@@ -20,7 +20,7 @@ import re
 import sys
 
 ROOT = os.path.join(os.path.dirname(__file__), "..")
-SITE = os.path.join(ROOT, "site")
+SITE = ROOT  # P0-1: code o goc repo, khong co thu muc site/ (giong Q2)
 PB3 = os.path.join(SITE, "pb3")
 FAILS = []
 
@@ -119,8 +119,8 @@ chk("pb3/tests/test_tmp_font.py" in tests_json["files"],
     "tests.json thieu pb3/tests/test_tmp_font.py")
 sw = open(os.path.join(SITE, "sw.js"), encoding="utf-8").read()
 m = re.search(r'const CACHE_VERSION = "([^"]+)"', sw)
-chk(m is not None and m.group(1) == "v11-20261116",
-    "sw.js CACHE_VERSION %r != v11-20261116" % (m.group(1) if m else None))
+chk(m is not None and m.group(1) == "v20-20261117",
+    "sw.js CACHE_VERSION %r != v20-20261117" % (m.group(1) if m else None))
 listed = re.findall(r'"([^"]+)"', re.search(
     r"const PRECACHE_URLS = \[(.*?)\];", sw, re.S).group(1))
 chk("pb3/sdk/tmp_font.py" in listed, "sw.js precache thieu pb3/sdk/tmp_font.py")

@@ -1,13 +1,13 @@
 // verify_analysis_merge_one_file.mjs — Harness GOP 1 FILE (Joseph 23:35):
 // trich xuat gop thanh dung 1 file en.json/zh.json moi ngon ngu.
-// Chay: node verify_analysis_merge_one_file.mjs (tu /home/hatch/workspace/pb3_web/exp)
+// Chay: node verify_analysis_merge_one_file.mjs (tu thu muc exp/ cua repo)
 //   ONLY=1,2,3,4,5 — chi chay section do (de moi luot vua gioi han phien).
 // Ket qua: analysis_merge_one_file_results.json (+ .md viet tay sau).
 //   + out/merge_one_file/*.png (anh UI 390px)
 //
 // Section:
 //  1. Unit Python (tests.test_merge_one_file, 10 test) + tinh:
-//     files.json=93 / tests.json=164 / sw.js CACHE_VERSION v18, node --check.
+//     files.json=94 / tests.json=165 / sw.js CACHE_VERSION v20, node --check.
 //  2. Fixture acceptance (CPython bridge, file resources.assets that cua
 //     Joseph): en -> dung 1 file en.json (9.753 key), zh -> dung 1 file
 //     zh.json (3.380 key); doi chieu mau 2.086 key (thu tu, so key co);
@@ -31,8 +31,9 @@ import path from "node:path";
 import http from "node:http";
 import { execSync, spawnSync } from "node:child_process";
 
-const SITE = "/home/hatch/workspace/pb3_web/site";
-const EXP = "/home/hatch/workspace/pb3_web/exp";
+const ROOT = decodeURIComponent(new URL("..", import.meta.url).pathname).replace(/\/$/, "");
+const SITE = ROOT;
+const EXP = ROOT + "/exp";
 const OUT = EXP + "/out/merge_one_file";
 const FIXTURE = "/home/hatch/workspace/user/files/EAC193F5-FBAE-43A0-8CE2-6748EA5AF5DC-resources.assets";
 const JOSEPH_EN = "/home/hatch/workspace/user/files/en.json";
@@ -78,11 +79,11 @@ if (want(1)) {
     if (f !== "verify_analysis_reselect.mjs" && (c.includes("v17-20261116") || c.includes("== 162") || c.includes("=== 162") || c.includes("ky vong 162") || c.includes("tests.json=162"))) noV17.push(f);
   }
   rec("static_counts_and_cache",
-    filesJson.files.length === 93 && testsJson.files.length === 164 &&
-    swJs.includes('CACHE_VERSION = "v19-20261116"') && !swJs.includes("v17-20261116") &&
+    filesJson.files.length === 94 && testsJson.files.length === 165 &&
+    swJs.includes('CACHE_VERSION = "v20-20261117"') && !swJs.includes("v19-20261116") &&
     noV17.length === 0,
-    "files.json=" + filesJson.files.length + " (ky vong 93) · tests.json=" + testsJson.files.length +
-    " (ky vong 164) · sw.js v19-20261116: " + swJs.includes('CACHE_VERSION = "v19-20261116"') +
+    "files.json=" + filesJson.files.length + " (ky vong 94) · tests.json=" + testsJson.files.length +
+    " (ky vong 165) · sw.js v20-20261117: " + swJs.includes('CACHE_VERSION = "v20-20261117"') +
     " · file exp con sot v17/162: " + (noV17.join(",") || "khong"), performance.now() - t);
   t = performance.now();
   const c = sh("node --check " + SITE + "/app.js && node --check " + SITE + "/worker.js && node --check " + SITE + "/sw.js && python3 -m py_compile " + SITE + "/pb3/bridge.py " + SITE + "/pb3/sdk/extraction.py " + SITE + "/pb3/sdk/exporters.py " + SITE + "/pb3/tests/test_merge_one_file.py", EXP);
@@ -92,7 +93,7 @@ if (want(1)) {
 // ================= 2. Fixture acceptance =================
 if (want(2)) {
   let t = performance.now();
-  const r = sh("python3 exp/check_merge_fixture.py 2>&1 | tail -n 8", "/home/hatch/workspace/pb3_web");
+  const r = sh("python3 exp/check_merge_fixture.py 2>&1 | tail -n 8", ROOT);
   const fx = JSON.parse(fs.readFileSync(OUT + "/fixture.json", "utf8"));
   rec("fixture_en_one_file",
     r.status === 0 && fx.en.ok === true && fx.en.locale_en_files === 1 &&
@@ -151,7 +152,7 @@ if (want(2)) {
 // ================= 3. 5 game that =================
 if (want(3)) {
   let t = performance.now();
-  const r = sh("python3 exp/merge_5games.py 2>&1 | tail -n 20", "/home/hatch/workspace/pb3_web");
+  const r = sh("python3 exp/merge_5games.py 2>&1 | tail -n 20", ROOT);
   const sum = JSON.parse(fs.readFileSync(OUT + "/summary.json", "utf8"));
   const g = sum.games;
   const games = ["9kings", "data", "ek2", "pb3", "passpartout"];

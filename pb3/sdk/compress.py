@@ -403,6 +403,25 @@ def _discard(path: Path) -> None:
         pass
 
 
+def _reject_same_source_dest(src_p: Path, dest_p: Path) -> None:
+    """Chốt dest != source: từ chối khi đích trùng nguồn (cùng đường dẫn
+    sau realpath, hoặc cùng file qua symlink/hardlink) — kể cả --force.
+    Trước đây compress_ipa/decompress_archive chỉ kiểm tra đích-đã-tồn-
+    tại, nên --force + --out trùng nguồn sẽ ghi đè file gốc."""
+    if os.path.realpath(str(dest_p)) == os.path.realpath(str(src_p)):
+        raise PB3Error("E_CONFIG_INVALID",
+                       "không ghi đè file gốc: đích trùng nguồn",
+                       where=str(dest_p))
+    if dest_p.exists():
+        try:
+            if os.path.samefile(str(src_p), str(dest_p)):
+                raise PB3Error("E_CONFIG_INVALID",
+                               "không ghi đè file gốc: đích trùng nguồn",
+                               where=str(dest_p))
+        except OSError:
+            pass
+
+
 def compress_ipa(src, dest, *, preset=DEFAULT_PRESET, limits: Optional[Limits] = None,
                  max_input_bytes: int = MAX_INPUT_BYTES,
                  target_bytes: int = TARGET_BYTES,
@@ -422,6 +441,7 @@ def compress_ipa(src, dest, *, preset=DEFAULT_PRESET, limits: Optional[Limits] =
     where = str(src_p)
     if not src_p.is_file():
         raise PB3Error("E_INPUT_NOT_FOUND", "không phải tệp", where=where)
+    _reject_same_source_dest(src_p, dest_p)
     src_size = _check_input_size(src_p, max_input_bytes, where)
     if dest_p.exists() and not force:
         raise PB3Error("E_OUTPUT_EXISTS", "đã tồn tại (dùng --force để ghi đè)",
@@ -682,6 +702,7 @@ def decompress_archive(src, dest, *, limits: Optional[Limits] = None,
     where = str(src_p)
     if not src_p.is_file():
         raise PB3Error("E_INPUT_NOT_FOUND", "không phải tệp", where=where)
+    _reject_same_source_dest(src_p, dest_p)
     if dest_p.exists() and not force:
         raise PB3Error("E_OUTPUT_EXISTS", "đã tồn tại (dùng --force để ghi đè)",
                        where=str(dest_p))

@@ -5,14 +5,15 @@
 // 2 job (manifest + checkpoint/resume), KB (thêm/tra cứu/xuất file/nhập lại
 // file đã xuất/quên), support matrix từ dữ liệu thật, dịch offline/Google
 // (không vỡ gt.js).
-// Chạy: node verify_parity.mjs (từ /home/hatch/workspace/pb3_web/exp)
+// Chạy: node verify_parity.mjs (từ thư mục exp/ của repo)
 // Kết quả: parity_results.md + parity_results.json
-import { loadPyodide } from "../site/pyodide/pyodide.mjs";
+import { loadPyodide } from "../pyodide/pyodide.mjs";
 import fs from "node:fs";
 
-const SITE = "/home/hatch/workspace/pb3_web/site";
-const PB3 = "/home/hatch/workspace/pb3_fix/pb3";
-const EXP = "/home/hatch/workspace/pb3_web/exp";
+const ROOT = decodeURIComponent(new URL("..", import.meta.url).pathname).replace(/\/$/, "");
+const SITE = ROOT;
+const PB3 = SITE + "/pb3";
+const EXP = ROOT + "/exp";
 const sec = (ms) => Math.round(ms / 100) / 10;
 const results = {};
 let failures = 0;

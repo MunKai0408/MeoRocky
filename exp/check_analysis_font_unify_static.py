@@ -7,8 +7,8 @@
 - bridge.py: co op font_list + font_unify + cache _LAST_FONT_SCAN.
 - index.html + app.js: nut btn-font-list + btn-font-unify, handler goi
   dung op, hien tmp_candidates + font_unified.zip.
-- Manifest: files.json 93 (co pb3/sdk/font_list.py), tests.json 164
-  (co pb3/tests/test_font_unify.py); sw.js CACHE_VERSION v19-20261116
+- Manifest: files.json 94 (co pb3/sdk/font_list.py), tests.json 165
+  (co pb3/tests/test_font_unify.py); sw.js CACHE_VERSION v20-20261117
   + precache co pb3/sdk/font_list.py.
 - Tieng Viet moi du dau.
 In JSON {"fails": [...]}.
@@ -18,7 +18,7 @@ import json
 import sys
 from pathlib import Path
 
-SITE = Path(__file__).resolve().parent.parent / "site"
+SITE = Path(__file__).resolve().parent.parent  # P0-1: goc repo (Q2)
 fails = []
 
 app = (SITE / "app.js").read_text(encoding="utf-8")
@@ -75,17 +75,17 @@ for s in ('"font_list"', '"font_unify"', "tmp_candidates",
 
 # 4. Manifest + precache + cache version.
 files = json.loads((SITE / "pb3" / "files.json").read_text())["files"]
-if len(files) != 93:
-    fails.append("files.json co %d file, ky vong 93" % len(files))
+if len(files) != 94:
+    fails.append("files.json co %d file, ky vong 94" % len(files))
 if "pb3/sdk/font_list.py" not in files:
     fails.append("files.json thieu pb3/sdk/font_list.py")
 tests = json.loads((SITE / "pb3" / "tests.json").read_text())["files"]
-if len(tests) != 164:
-    fails.append("tests.json co %d file, ky vong 164" % len(tests))
+if len(tests) != 165:
+    fails.append("tests.json co %d file, ky vong 165" % len(tests))
 if "pb3/tests/test_font_unify.py" not in tests:
     fails.append("tests.json thieu pb3/tests/test_font_unify.py")
-if 'CACHE_VERSION = "v19-20261116"' not in sw:
-    fails.append("sw.js CACHE_VERSION khong phai v19-20261116")
+if 'CACHE_VERSION = "v20-20261117"' not in sw:
+    fails.append("sw.js CACHE_VERSION khong phai v20-20261117")
 if '"pb3/sdk/font_list.py"' not in sw:
     fails.append("sw.js precache thieu pb3/sdk/font_list.py")
 

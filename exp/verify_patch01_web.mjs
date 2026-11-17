@@ -7,13 +7,14 @@
 // (2) file XML được xử lý bởi xml_strings, KHÔNG phải yaml_ini;
 // (3) mức đơn vị: yaml_ini sniff XML = 0.0, _parse_ini_struct(XML) -> E_CORRUPT
 //     (không AttributeError), normalize_typed_path bỏ dấu "." cuối.
-// Chạy: node verify_patch01_web.mjs (từ /home/hatch/workspace/pb3_web/exp)
+// Chạy: node verify_patch01_web.mjs (từ thư mục exp/ của repo)
 // Kết quả: patch01_web_results.md + patch01_web_results.json
-import { loadPyodide } from "../site/pyodide/pyodide.mjs";
+import { loadPyodide } from "../pyodide/pyodide.mjs";
 import fs from "node:fs";
 
-const SITE = "/home/hatch/workspace/pb3_web/site";
-const EXP = "/home/hatch/workspace/pb3_web/exp";
+const ROOT = decodeURIComponent(new URL("..", import.meta.url).pathname).replace(/\/$/, "");
+const SITE = ROOT;
+const EXP = ROOT + "/exp";
 const sec = (ms) => Math.round(ms / 100) / 10;
 const results = {};
 let failures = 0;
@@ -49,7 +50,7 @@ await pyodide.loadPackage("lz4");
   const bin = Buffer.from(b64, "base64");
   pyodide.FS.mkdirTree("/pb3web/fonts");
   pyodide.FS.writeFile("/pb3web/fonts/BeVietnamPro-Regular.ttf", new Uint8Array(bin));
-  rec("write_site_files", man.files.length === 93, `${man.files.length} file pb3/ + font b64 ghi vào /pb3web`, performance.now() - t0); // 93 = 92 + 1 (phần D thêm sdk/font_list.py, 2026-11-17)
+  rec("write_site_files", man.files.length === 94, `${man.files.length} file pb3/ + font b64 ghi vào /pb3web`, performance.now() - t0); // 94 = 93 + 1 (P0-1 thêm sdk/rebuild.py, 2026-11-17)
 }
 
 pyodide.runPython("import sys; sys.path.insert(0, '/pb3web')\nimport bridge");

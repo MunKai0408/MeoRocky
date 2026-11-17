@@ -2,7 +2,7 @@
 // DecompressionStream native + ghi output streaming + cảnh báo >600/800MB
 // (repo MunKai0408/MeoRocky, KHÔNG đẩy lên GitHub).
 //
-// Chạy: node verify_item5.mjs (từ /home/hatch/workspace/pb3_web/exp)
+// Chạy: node verify_item5.mjs (từ thư mục exp/ của repo)
 // Kết quả: item5_results.md + item5_results.json
 //
 //  A. Unit stream.js trong Node vm: sizeWarning (ngưỡng 600/800MB/2GB),
@@ -28,11 +28,12 @@ import path from "node:path";
 import vm from "node:vm";
 import zlib from "node:zlib";
 import { execFileSync, execSync } from "node:child_process";
-import { loadPyodide } from "../site/pyodide/pyodide.mjs";
+import { loadPyodide } from "../pyodide/pyodide.mjs";
 
-const SITE = "/home/hatch/workspace/pb3_web/site";
-const EXP = "/home/hatch/workspace/pb3_web/exp";
-const PB3 = "/home/hatch/workspace/pb3_fix/pb3";
+const ROOT = decodeURIComponent(new URL("..", import.meta.url).pathname).replace(/\/$/, "");
+const SITE = ROOT;
+const EXP = ROOT + "/exp";
+const PB3 = SITE + "/pb3";
 const GAME1 = PB3 + "/tests/fixtures/extract/game1.zip";
 const AMBIG = PB3 + "/tests/fixtures/extract/ambig.zip";
 const BIG = EXP + "/fixtures/bigtest.zip";

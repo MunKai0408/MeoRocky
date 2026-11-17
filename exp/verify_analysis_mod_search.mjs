@@ -1,6 +1,6 @@
 // verify_analysis_mod_search.mjs — Harness PHẦN (B): Mod tìm theo chữ +
 // nhập file .json. Chạy trên code hiện tại (chưa đẩy).
-// Chạy: node verify_analysis_mod_search.mjs (từ /home/hatch/workspace/pb3_web/exp)
+// Chạy: node verify_analysis_mod_search.mjs (từ thư mục exp/ của repo)
 //   ONLY=1,2,3,4,5 — chỉ chạy section đó (để mỗi lượt vừa giới hạn phiên).
 // Kết quả: analysis_mod_search_results.md + .json (ghi đè phần đã chạy)
 //   + out/mod_search/*.png (ảnh UI 390px)
@@ -31,8 +31,9 @@ import path from "node:path";
 import http from "node:http";
 import { execSync, spawnSync } from "node:child_process";
 
-const SITE = "/home/hatch/workspace/pb3_web/site";
-const EXP = "/home/hatch/workspace/pb3_web/exp";
+const ROOT = decodeURIComponent(new URL("..", import.meta.url).pathname).replace(/\/$/, "");
+const SITE = ROOT;
+const EXP = ROOT + "/exp";
 const OUT = EXP + "/out/mod_search";
 const EXTRACT_OUT = EXP + "/out/extract_5games";
 const TINY_ZIP = "/tmp/mod_tiny.zip";

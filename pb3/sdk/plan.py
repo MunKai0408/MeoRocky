@@ -81,15 +81,89 @@ def _placeholders(text: str):
     return set(_PLACEHOLDER_RE.findall(text or ""))
 
 
+def _top_level_value_spans(script: str):
+    """[(key, value_start, value_end)] cho moi member cap cao nhat cua
+    JSON object, theo thu tu xuat hien trong script. Span cua value bao
+    gom ca dau ngoac kep khi value la chuoi. Dung JSONDecoder that de
+    ton trong escape/khoang trang/lon nhau — khong dung regex."""
+    dec = json.JSONDecoder()
+    n = len(script)
+
+    def _ws(i):
+        while i < n and script[i] in " \t\r\n":
+            i += 1
+        return i
+
+    idx = _ws(0)
+    if idx >= n or script[idx] != "{":
+        raise ValueError("script khong phai JSON object")
+    idx = _ws(idx + 1)
+    if idx < n and script[idx] == "}":
+        return []
+    spans = []
+    while True:
+        key, end = dec.raw_decode(script, _ws(idx))
+        if not isinstance(key, str):
+            raise ValueError("key JSON khong phai chuoi")
+        idx = _ws(end)
+        if idx >= n or script[idx] != ":":
+            raise ValueError("thieu ':' sau key JSON")
+        val_start = _ws(idx + 1)
+        _val, end = dec.raw_decode(script, val_start)
+        spans.append((key, val_start, end))
+        idx = _ws(end)
+        if idx < n and script[idx] == ",":
+            idx += 1
+            continue
+        if idx < n and script[idx] == "}":
+            return spans
+        raise ValueError("JSON object ket thuc khong hop le")
+
+
 def _simulate_script(script_b: bytes, changes) -> bytes:
-    """Mo phong dung apply_patch: thay old -> new, lan luot tung change
-    (replace 1 lan xuat hien dau tien). Executor phai ap dung dung thu tu
-    nay thi after_sha moi khop."""
-    out = bytes(script_b)
+    """Mo phong ap change THEO KEY (khong phai gia tri tran): tim span
+    cua literal gia tri ung voi key trong script goc, kiem tra gia tri
+    giai ma == before, thay bang literal moi. Giu nguyen moi byte khac
+    (khoang trang, thu tu key, escape). Executor phai ap dung dung
+    phep bien doi nay thi after_sha moi khop. Gia tri rong, gia tri
+    trung nhau giua cac key, gia tri xuat hien o cho khac trong script
+    deu ap dung dung (ban cu thay chuoi tran xuat hien dau tien nen
+    gia tri "" khong bao gio patch duoc va gia tri trung de patch
+    nham cho). Key trung lap trong JSON: lay lan xuat hien CUOI co gia
+    tri == before (giong json.loads). Khong xac dinh duoc span thi
+    raise ValueError (build_plan se bo qua asset do kem ly do)."""
+    script = script_b.decode("utf-8")
+    spans = _top_level_value_spans(script)
+    by_key = {}
+    for (k, s, e) in spans:
+        by_key.setdefault(k, []).append((s, e))
+    dec = json.JSONDecoder()
+    edits = []
+    used = set()
     for ch in changes:
-        out = out.replace(ch["before"].encode("utf-8"),
-                          ch["after"].encode("utf-8"), 1)
-    return out
+        picked = None
+        for (s, e) in reversed(by_key.get(ch["key"], [])):
+            if (s, e) in used:
+                continue
+            val, _end = dec.raw_decode(script, s)
+            if val == ch["before"]:
+                picked = (s, e)
+                break
+        if picked is None:
+            raise ValueError(
+                "khong xac dinh duoc vi tri gia tri cua key %r "
+                "(before %r) trong script" % (ch["key"], ch["before"]))
+        used.add(picked)
+        edits.append((picked[0], picked[1],
+                      json.dumps(ch["after"], ensure_ascii=False)))
+    out = []
+    pos = 0
+    for (s, e, lit) in sorted(edits):
+        out.append(script[pos:s])
+        out.append(lit)
+        pos = e
+    out.append(script[pos:])
+    return "".join(out).encode("utf-8")
 
 
 def _unit_key(vpath, kind, req_entry):
@@ -206,7 +280,12 @@ def build_plan(source_bytes, translations, *, source_bundle, entry=None,
                             "reason": "khong co key nao trung voi ban dich"})
             continue
         script_b = script.encode("utf-8")
-        after_b = _simulate_script(script_b, changes)
+        try:
+            after_b = _simulate_script(script_b, changes)
+        except ValueError as exc:
+            skipped.append({"asset_path": asset_path,
+                            "reason": "khong mo phong duoc patch: %s" % exc})
+            continue
         eid = hashlib.sha256(
             ("%s|%s|%d|%s|%s" % (source_bundle, entry or "", pid, name,
                                  json.dumps(changes, ensure_ascii=False,
@@ -305,21 +384,48 @@ def _parse_checkpoint(checkpoint_json):
     return ck
 
 
-def _apply_entry_changes(kind, unit_bytes, req_entry, entry, backend, lim):
-    """Ap toan bo changes cua 1 entry len unit bytes, verify script doc
-    lai dung after_sha + dung dict mong doi. Tra (unit_bytes_moi,
-    write_mode_used). Loi verify -> PB3Error (khong ghi gi)."""
+def _apply_entry_changes(kind, unit_bytes, req_entry, entry, backend, lim,
+                         progress_fn=None):
+    """Ap toan bo changes cua 1 entry len unit bytes: mo phong 1 lan
+    bang _simulate_script (thay theo KEY, giu nguyen moi byte khac) roi
+    patch toan bo script bang 1 lan apply_patch (old = script goc,
+    new = script da mo phong) — dam bao byte ket qua dung after_sha
+    theo dinh nghia. Verify script doc lai dung after_sha + dung dict
+    mong doi. Tra (unit_bytes_moi, write_mode_used). Loi verify ->
+    PB3Error (khong ghi gi).
+    progress_fn(done, total) tuy chon (P0-1): goi sau moi change khi mo
+    phong (None thi khong goi, test cu khong doi)."""
     cur = bytes(unit_bytes)
-    last_mode = entry["op"]
-    for ch in entry["changes"]:
-        req = _u.PatchRequest(
-            data=cur, kind=kind, entry=req_entry,
-            path_id=int(entry["object"]),
-            old_text=ch["before"], new_text=ch["after"],
-            write_mode=entry["op"], backend=backend, temp_dir=None)
-        res = _u.apply_patch(req)
-        cur = res.output_bytes
-        last_mode = res.write_mode_used
+    if kind == "bundle":
+        bundle = _u.parse_bundle(cur, backend, lim, where="bundle")
+        sf = _u.parse_serialized(bundle.get_entry(req_entry), lim,
+                                 where=req_entry)
+    else:
+        sf = _u.parse_serialized(cur, lim, where="assets")
+    _pid, _name, script = sf.find_text_asset(path_id=int(entry["object"]))
+    try:
+        new_script_b = _simulate_script(script.encode("utf-8"),
+                                        entry["changes"])
+    except ValueError as exc:
+        raise PB3Error(
+            "E_CONFIG_INVALID",
+            "entry %s: khong ap duoc change theo key (%s)"
+            % (entry["id"], exc), where=entry["asset_path"])
+    total = len(entry["changes"])
+    if progress_fn is not None:
+        for idx in range(total):
+            try:
+                progress_fn(idx + 1, total)
+            except Exception:
+                pass
+    req = _u.PatchRequest(
+        data=cur, kind=kind, entry=req_entry,
+        path_id=int(entry["object"]),
+        old_text=script, new_text=new_script_b.decode("utf-8"),
+        write_mode=entry["op"], backend=backend, temp_dir=None)
+    res = _u.apply_patch(req)
+    cur = res.output_bytes
+    last_mode = res.write_mode_used
     # Verify lai: script doc duoc phai co sha = after_sha va dict dung.
     if kind == "bundle":
         bundle = _u.parse_bundle(cur, backend, lim, where="bundle::after")
@@ -391,7 +497,8 @@ def _write_outputs(source_bundle, patched_units, dry_run):
 
 def apply_plan(source_bytes, plan, *, dry_run=True, checkpoint_json=None,
                stop_after=None, backend=None, limits=None,
-               backup_root=PLAN_BACKUP_ROOT, out_dir=PLAN_OUT_DIR):
+               backup_root=PLAN_BACKUP_ROOT, out_dir=PLAN_OUT_DIR,
+               progress_fn=None):
     """Executor: ap plan len file goc.
 
     - Chi entry duoc chon moi ap (tru khi plan.rebuild_all=true: ap toan bo).
@@ -401,6 +508,9 @@ def apply_plan(source_bytes, plan, *, dry_run=True, checkpoint_json=None,
       ca plan (nhu batch: loi 1 game khong dung ca lo).
     - stop_after=N: dung sau N entry ap xong, tra status "partial" +
       checkpoint de resume.
+    - progress_fn(done, total) tuy chon (P0-1): goi sau moi entry ap xong
+      (done = so entry da xu ly, total = so entry can ap); None thi khong
+      goi (test cu khong doi).
     """
     plan = validate_plan(plan)
     ck = _parse_checkpoint(checkpoint_json)
@@ -452,6 +562,7 @@ def apply_plan(source_bytes, plan, *, dry_run=True, checkpoint_json=None,
     patched: List[Tuple[Tuple[str, str, str], bytes]] = []
     done_ids: List[str] = list(completed)
     stopped = False
+    processed = 0  # so entry da xu ly (de bao progress_fn don dieu)
     for key in order:
         if stop_after is not None and len(applied) >= stop_after:
             stopped = True
@@ -481,6 +592,12 @@ def apply_plan(source_bytes, plan, *, dry_run=True, checkpoint_json=None,
                                "nen chua ap duoc tren web; doi op thanh "
                                "REBUILD_SECTION trong plan roi ap lai."
                                % _u.UnityBackend.MATURITY})
+                processed += 1
+                if progress_fn is not None:
+                    try:
+                        progress_fn(processed, len(todo))
+                    except Exception:
+                        pass
                 continue
             try:
                 cur, mode_used = _apply_entry_changes(
@@ -491,6 +608,13 @@ def apply_plan(source_bytes, plan, *, dry_run=True, checkpoint_json=None,
                                "message": _err_text(exc)})
                 unit_ok = False
                 break
+            finally:
+                processed += 1
+                if progress_fn is not None:
+                    try:
+                        progress_fn(processed, len(todo))
+                    except Exception:
+                        pass
             unit_applied.append({
                 "id": e["id"], "asset_path": e["asset_path"],
                 "object": int(e["object"]), "changes": len(e["changes"]),

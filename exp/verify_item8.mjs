@@ -1,13 +1,14 @@
 // verify_item8.mjs — Kiểm chứng MỤC 8: plan JSON + UI checkbox cho REBUILD_ALL.
 // (repo MunKai0408/MeoRocky, nhánh main; KHÔNG đẩy lên GitHub.)
 //
-// Chạy: node verify_item8.mjs (từ /home/hatch/workspace/pb3_web/exp)
+// Chạy: node verify_item8.mjs (từ thư mục exp/ của repo)
 // Kết quả: item8_results.json + item8_results.md (báo cáo tay).
 //
 //  A. Tĩnh: node --check; py_compile; plan.py chỉ dùng stdlib + tương thích
-//     Python 3.9 (không có cú pháp 3.10+); files.json 90, tests.json 159,
-//     sw.js precache có sdk/plan.py + CACHE_VERSION v9 (C3 thêm fixtures/selftest.zip).
-//  B. Unit test Python: tests.test_plan (13 test).
+//     Python 3.9 (không có cú pháp 3.10+); files.json 94, tests.json 165,
+//     sw.js precache có sdk/plan.py + CACHE_VERSION v20-20261117
+//     (đồng bộ 2026-11-17; lúc viết mục 8: 90/159/v9).
+//  B. Unit test Python: tests.test_plan (19 test).
 //  C. Node Pyodide + bridge thật (fixture item8_fixture.zip: bundle v7 LZ4,
 //     3 TextAsset JSON en/menu/dialog):
 //     C1 plan_build -> đúng model + đủ 3 entry + after_sha khớp.
@@ -27,8 +28,9 @@ import http from "node:http";
 import path from "node:path";
 import { execFileSync, spawnSync } from "node:child_process";
 
-const SITE = "/home/hatch/workspace/pb3_web/site";
-const EXP = "/home/hatch/workspace/pb3_web/exp";
+const ROOT = decodeURIComponent(new URL("..", import.meta.url).pathname).replace(/\/$/, "");
+const SITE = ROOT;
+const EXP = ROOT + "/exp";
 const FX = EXP + "/fixtures/item8_fixture.zip";
 const BUNDLE = "Payload/9Kings.app/Data/Raw/aa/iOS/localization-locales_assets_all.bundle";
 const CAB = "CAB-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -74,7 +76,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   try {
     const j = JSON.parse(r.stdout || "{}");
     if (j.fails && j.fails.length) { ok = false; detail = j.fails.join(" | "); }
-    else detail = "stdlib-only + Python 3.9 + files.json=90 + tests.json=159 + sw.js precache có sdk/plan.py + CACHE_VERSION=v12-20261116";
+    else detail = "stdlib-only + Python 3.9 + files.json=94 + tests.json=165 + sw.js precache có sdk/plan.py + CACHE_VERSION=v20-20261117";
   } catch (e) { ok = false; detail = "không đọc được JSON: " + (r.stdout || "") + (r.stderr || ""); }
   rec("static_item8_checks", ok, detail, performance.now() - t0);
 }
@@ -107,7 +109,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 }
 
 // ================= C. Node Pyodide + bridge thật =================
-const { loadPyodide } = await import("../site/pyodide/pyodide.mjs");
+const { loadPyodide } = await import("../pyodide/pyodide.mjs");
 async function bootPyodide() {
   const pyodide = await loadPyodide({ indexURL: SITE + "/pyodide/" });
   await pyodide.loadPackage("lz4");

@@ -9,17 +9,17 @@
 
 PB3 v3.1 (tên hiển thị: **BearTea**) là công cụ xử lý/mod game Unity, viết bằng Python (stdlib only).
 
-- **Bản iSH**: chạy trên iPhone của Joseph qua iSH, thư mục `/root/pb3`. Game thật: **9 Kings v1.0.5** (file IPA 141.865.757 byte).
+- **Bản iSH**: chạy trên iPhone của Joseph qua iSH, thư mục `/root/pb3`. Game thật: **9 Kings v1.0.5** (file IPA 141.865.757 byte). (Bản khác với file 9 Kings v1.0.6, 173.472.485 byte, dùng trong các báo cáo thử game thật trên web — hai bản build khác nhau, không dùng chung số đo khi chưa đối chiếu danh tính build.)
 - **Bản web**: Python chạy trong trình duyệt bằng Pyodide (100% client-side), host trên GitHub Pages. Repo: **MunKai0408/MeoRocky** (public), trang live: https://munkai0408.github.io/MeoRocky/
-- Chức năng: Danh sách entry (ZIP/IPA), Inspect Unity, Trích xuất, Dịch (Google Translate + offline), Mod (sửa text TextAsset), Batch, Kho KB, Hỗ trợ, Nén IPA (tar.xz), Font tiếng Việt, Chẩn đoán. Menu iSH có [1]–[7]; web có 11 tab tương ứng.
+- Chức năng: Danh sách entry (ZIP/IPA), Inspect Unity, Trích xuất, Dịch (Google Translate + offline), Mod (sửa text TextAsset), Ép lại bản dịch vào file gốc (E, bước 5 — chỉ ghi TextAsset JSON dict, xem `exp/analysis_rebuild_results.md`), Batch, Kho KB, Hỗ trợ, Nén IPA (tar.xz), Font tiếng Việt, Chẩn đoán. Menu iSH có [1]–[7]; web có 11 tab tương ứng.
 
 ## 2. Tài liệu và code — đọc trước theo thứ tự
 
 1. File này (HANDOVER.md).
-2. Repo web https://github.com/MunKai0408/MeoRocky — code web đầy đủ trong `site/` (`index.html`, `app.js`, `worker.js`, `pb3/` = cây PB3 đã vendor, `pyodide/`).
-3. File zip iSH mới nhất: **`pb3_handoff_final_patch02_sandbox.zip`** (1.142.330 byte, md5 `d18a5f7b7caa65f143f56fc3d99cbf30`, 383 entry, suite **1562 test xanh** trong sandbox, 20 plugin [ok]) — đây là cây iSH ĐẦY ĐỦ (code + test + docs + handoff). **Cây iSH đầy đủ CHƯA có trên GitHub** (repo web chỉ có bản vendor trong `site/pb3/`); AI mới cần file zip này để làm tiếp bản iSH.
+2. Repo web https://github.com/MunKai0408/MeoRocky — code web đầy đủ ở gốc repo (`index.html`, `app.js`, `worker.js`, `pb3/` = cây PB3 đã vendor, `pyodide/`). (Không có thư mục `site/` — đó là tên cây staging cũ.)
+3. File zip iSH mới nhất: **`pb3_handoff_final_patch02_sandbox.zip`** (1.142.330 byte, md5 `d18a5f7b7caa65f143f56fc3d99cbf30`, 383 entry, suite **1562 test xanh** trong sandbox, 20 plugin [ok]) — đây là cây iSH ĐẦY ĐỦ (code + test + docs + handoff). **Cây iSH đầy đủ CHƯA có trên GitHub** (repo web chỉ có bản vendor trong `pb3/`); AI mới cần file zip này để làm tiếp bản iSH.
 4. Trong cây iSH: `handoff/account_01.md` … `account_10.md`, `account_final.md`, `account_patch01.md`, `account_patch02.md`, `decisions.md` (quyết định #1–#208), `CURRENT_STATE.md`.
-5. Trong repo web: `exp/*.md` (báo cáo từng đợt: `upgrade_results.md`, `redesign_results.md`, `item1_results.md`, `item2_results.md`, `item3_results.md`, `clone_fix_results.md`, `phase1_ci_results.md` …), `README.md`.
+5. Trong repo web: `exp/*.md` (báo cáo từng đợt: `item2_results.md`, `item3_results.md`, `clone_fix_results.md`, `phase1_ci_results.md`, `analysis_rebuild_results.md`, …), `README.md`. (Các file `upgrade_results.md`, `redesign_results.md`, `item1_results.md` không có trong cây — kết quả kiểm chứng redesign xem ở `exp/verify_redesign_results.md`.)
 
 ## 3. Trạng thái hiện tại (2026-11-16 ~12:36, đã kiểm chứng)
 
@@ -33,6 +33,8 @@ PB3 v3.1 (tên hiển thị: **BearTea**) là công cụ xử lý/mod game Unity
 - `ca3caef` — Hotfix bug clone Safari (gửi file sang worker 1 lần + `slice(0)`).
 
 CI: job `unit` xanh lần đầu (run 43803496189: **1440 passed**, 126 deselected, 41,9 giây). Job `assets` chờ Release `fixtures-v1` — Release đã tạo (id 446604484); asset upload qua API GitHub bị 401 nên phải tải file asset lên qua giao diện web github.com.
+
+Đính chính 2026-11-17 (giữ nguyên ảnh chụp run 43803496189 ở trên): đầu file workflow ghi 1436 test cho job `unit` (1436+126=1562, khớp tổng patch02) — con số 1440 chênh 4 test, chưa đối chiếu được, giữ nguyên cả hai. Release `fixtures-v1` tới 2026-11-17 vẫn chưa có asset nào (API GitHub trả `assets: []`) nên job `assets` vẫn đỏ ở bước tải fixture; cần tải `pb3-fixtures-v1.zip` lên Release. Job `unit` tại head 3d0c80c (run #35/#46) đỏ exit 1 nhưng nguyên nhân [CHƯA KIỂM CHỨNG] — lệnh pytest tái hiện cục bộ đều xanh, cần đọc log từng bước trên giao diện web (xem mục CI trong `README.md`).
 
 Đang dở / đang chạy:
 
@@ -55,7 +57,7 @@ Lỗi đã biết (đừng chẩn đoán lại từ đầu):
 - Kiểm chứng độc lập: suite phải xanh + zip phải được kiểm chứng độc lập từ bản giải nén mới trước khi giao. Kết quả sandbox KHÔNG thay cho iSH. Một tài khoản chỉ tính xong khi Joseph kiểm chứng trên iSH.
 - Code Python 3.9 tương thích (không `match`, không `tomllib`), stdlib only, không `import UnityPy`/`lz4` trực tiếp (chỉ qua importlib). Patch/mod mặc định dry-run; ghi cần `--allow-write`.
 - Mọi text tiếng Việt phải có dấu đầy đủ. Mọi thao tác dài phải có progress bar thật (% + ETA từ thời gian thực, tăng từng 1%, không báo láo), đẹp kiểu PB3 (TTY-gated ANSI, vừa màn hình điện thoại 30–44 cột).
-- Unity: UnityFS tối đa **v8**, SerializedFile tối đa **v23**, không có v9 (không bịa). Không Zstd. **Không UnityPy trên web** (không cài được wheel etcpak) — inspect Unity trên web dùng parser thuần.
+- Unity: đọc UnityFS **v6–v9** (v9 chỉ đọc), SerializedFile **v15–v23**; ghi bundle tối đa v8, không ghi v9. Zstd chỉ đọc trên web (qua fzstd, C5), không ghi Zstd. (Quy tắc cũ "tối đa v8, không có v9, không Zstd" chỉ còn đúng cho đường GHI và iSH — xem §10, M4.) **Không UnityPy trên web** (không cài được wheel etcpak) — inspect Unity trên web dùng parser thuần.
 - Font: bộ kiểm tra đầy đủ là **142 mục (134 chữ cái + 8 dấu kết hợp)**. Font Be Vietnam Pro đi kèm đủ 134/134.
 - Test suite chạy offline hoàn toàn (chỉ tính năng Google Translate mới cần mạng).
 
@@ -90,14 +92,109 @@ Lỗi đã biết (đừng chẩn đoán lại từ đầu):
 
 1. Đọc file này + clone repo `MunKai0408/MeoRocky` + giải nén zip patch02 (hỏi Joseph lấy file zip nếu chưa có).
 2. Kiểm tra head `main`, trang live (curl), các CI run gần nhất, và thư mục `exp/` để biết coordinator cũ đã làm tới đâu.
-3. Đọc `exp/upgrade_results.md` và `exp/redesign_results.md` mới nhất.
+3. Đọc `exp/verify_redesign_results.md` (kết quả kiểm chứng redesign) và các báo cáo mới nhất trong `exp/`. (Hai file `upgrade_results.md`, `redesign_results.md` không có trong cây.)
 4. Tiếp tục từ todo dưới đây. Báo Joseph bằng tiếng Việt, ngắn gọn, nói rõ cái gì đã kiểm chứng và cái gì chưa.
 
 ## 9. Việc đang dở (todo tại thời điểm bàn giao)
 
-- [ ] Mục 4–9 kế hoạch gộp (worker pool → wasm texture) — kiểm tra trạng thái thực tế rồi làm tiếp.
+- [ ] P0-1 (E) Ép lại bản dịch (làm sau thời điểm bàn giao, trong cây làm việc, chưa đẩy): cần kiểm chứng flow trình duyệt trên Safari thật + thử iSH cho bundle/entry quá lớn theo bước trong `exp/analysis_rebuild_results.md`; phần sửa-lỗi còn lại do agent tiếp nối xử lý. (Cập nhật 2026-11-17: P0-1 đã xong trong cây làm việc; agent sửa-lỗi tiếp nối đã xử lý các mục nhóm 1–4 — xem §10 và báo cáo của agent đó. Kiểm chứng Safari/iSH vẫn chưa làm.)
+- [ ] Mục 4–9 kế hoạch gộp (worker pool → wasm texture) — kiểm tra trạng thái thực tế rồi làm tiếp. (Cập nhật 2026-11-17, đọc từ cây + `exp/`: mục 4 có pool worker chọn được 1–2 (C9, `worker-pool.js`, 16/16); mục 5 có streaming reader (`stream.js`, `DecompressionStream`) + đường rebuild streaming (P0-1, `sdk/rebuild.py`); mục 6 có SW precache v20 (119 URL, 0 mục chết); mục 7 có tab Font + script atlas trong `unity_editor/` (2 file TMP .cs); mục 8 có plan JSON + UI checkbox (mục 8, 16/16) + patch pack (C7, 13/13), REBUILD_ALL vẫn khóa ở M4 trên web; mục 9 chỉ là đánh giá, quyết định KHÔNG build decoder — asset nhị phân read-only, dùng iSH. Tất cả đều là sản phẩm sandbox; Safari thật/iSH vẫn chưa kiểm chứng.)
 - [ ] Joseph thử lại trên Safari thật sau đợt hotfix + redesign: nút Lưu/Chia sẻ có lưu được file không, bảng Danh sách còn vỡ chữ không, Inspect IPA chọn bundle, Giải nén `.tar.xz` về tên gốc, Google Translate trên mạng di động, trang `diagnostics.html`.
 - [ ] Joseph kiểm chứng iSH zip patch02: suite full + extract `game.ipa` + font scan (kỳ vọng đủ 142/142). Sau đó mới tính RELEASE.
 - [ ] Mục 2 Cloudflare proxy: chờ Joseph tạo tài khoản Cloudflare + Google API key.
 - [ ] Patch03 (sau này): port fix mojibake U+200E sang cây iSH.
 - [ ] Nếu Joseph mua domain `beartea.app` (đang trống, ~12–15 USD/năm): DNS CNAME → `munkai0408.github.io` + nhập domain ở Settings → Pages → Custom domain.
+
+## 10. Sổ đính chính (2026-11-17, agent sửa-lỗi tiếp nối sau P0-1)
+
+Nguyên tắc: báo cáo lịch sử trong `exp/` KHÔNG sửa nội dung; đính chính
+ghi ở đây + `README.md` + báo cáo của agent. "Tin phía X" nghĩa là phía
+đó thắng khi hai nguồn mâu thuẫn.
+
+### Ngưỡng gzip — đính chính quan trọng (M12/N3)
+
+- Ngưỡng gzip vỏ trang trong code là **102400B** (`exp/verify_item6.mjs`:
+  `shellGzip < 100 * 1024`). Nhãn "(gzip đạt)" trong 3 báo cáo (B)/(C)/(D)
+  là SAI: C7 101.817B đạt; C8 103.681B và C9 105.617B đều vượt ngưỡng.
+  Các báo cáo cũ không sửa; đọc "(gzip đạt)" ở (B)/(C)/(D) thì hiểu là sai.
+- Handover cũ nói ngưỡng "chưa chốt" là sai — ngưỡng đã chốt trong code.
+
+### Mâu thuẫn mới N1–N15 (audit 2026-11-17)
+
+- N1 (precache 13 wheel chết): đã xử lý ở P0-1 (precache 131→119, CACHE
+  v20). Kiểm lại 2026-11-17: 119 mục, 0 mục chết, 7/7 file pyodide có
+  trên đĩa.
+- N2 (C9 .md vs .json): tin bản .md cho thời điểm C9 (chuỗi C8→C9 liền
+  mạch); bản .json bị ghi đè bởi lần chạy harness sau đó [HYPOTHESIS về
+  nguyên nhân]. Cả hai bộ số đều vượt ngưỡng gzip.
+- N3: xem ngưỡng gzip ở trên.
+- N4 (timestamp C4 trước C3): tin thứ tự logic C3→C4 theo chuỗi
+  CACHE_VERSION; timestamp [CHƯA KIỂM CHỨNG], không dùng để dựng trình tự.
+- N5 (nhảy 1657→1692): đếm lại 2026-11-17: hai file test mới của (A) chứa
+  39 method (`test_langdetect` 24 + `test_translate_source` 15),
+  1657+39=1696 khớp tổng (A). Con số "1692" và "4 test mới" trong (A) §8
+  không khớp với đếm này; vì sao báo cáo ghi 1692/4 vẫn [CHƯA KIỂM
+  CHỨNG] — không bịa lời giải.
+- N6 (Poly Bridge 3 lệch 11): tin bảng Gộp cho số sau gộp (tự cộng khớp);
+  lệch 11 chưa giải thích được [HYPOTHESIS: 11 entry CSV bị loại/trùng].
+- N7 (Passpartout 3 định nghĩa đếm): dùng số bảng (en 2.710, zh 1.715)
+  cho mốc hồi quy; số 1.091/1.744 chỉ dùng khi ghi rõ định nghĩa đếm.
+- N8 (đường dẫn chết): đã sửa trong `README.md`/`HANDOVER.md` đợt này
+  (chú thích 9 đường dẫn; xem §2/§8 trên). File
+  `PB3_v3.1_10_Claude_Prompts.txt` không có trong cây này; tham chiếu
+  trong `pb3/handoff/decisions.md` giữ nguyên (không thêm mục quyết định
+  mới).
+- N9 (Unity v8 vs v6–v9): tin code + ghi chú tab (v6–v9, v9 chỉ đọc).
+  Đã sửa footer `index.html` + 2 chỗ trong `README.md` đợt này.
+- N10 (Pyodide ~13MB vs ~16,5MB): tin đĩa/README cho cây này (Pyodide
+  13.605.176B). Comment `sw.js` đã sửa 2026-11-17 theo số đo lại từ đĩa:
+  precache tổng 16.103.797B = 15,36 MiB.
+- N11 ("6 bước" vs "7 bước"): tin 7 bước (code + đa số tài liệu). "6
+  bước" còn lại trong bảng kiểm chứng lịch sử của `README.md`, có thể do
+  đếm gộp bước 6+7 [HYPOTHESIS]; bảng đó đã có ghi chú đính chính.
+- N12 (đụng tên C6/C7): hai hệ đánh số khác nhau; trích dẫn "C7" phải
+  ghi rõ tên file báo cáo (TMP fallback hay patch pack).
+- N13 (I2Languages 29 hay 30): [CHƯA KIỂM CHỨNG]; phía Gộp (30 khe, đọc
+  thẳng cấu trúc chunk) đáng tin hơn.
+- N14 (số file Pyodide 6/7/20): đáng tin nhất cho cây hiện tại là đếm
+  đĩa = 7 file; precache khớp đĩa sau P0-1; danh sách file trong
+  `README.md` đã bổ sung `pyodide.mjs` đợt này.
+- N15 (nhãn "UnityFS v5.x"): hiểu là player version (Unity 5.x), không
+  phải format version [HYPOTHESIS mạnh]; nhãn trong bảng (A) không sửa
+  (báo cáo lịch sử).
+
+### Mâu thuẫn M1–M25 còn lại (phần lịch sử-nội bộ; phần sửa trong tài liệu hiện hành xem README/§1–§9)
+
+- M3: phần lõi "HANDOVER lỗi thời" đúng; gán mục 6↔C3, 7↔C6, 8↔C7 là gán
+  chéo hai hệ đánh số (xem N12). Trạng thái mục 4–9 xem cập nhật §9.
+- M4: tin code + C5 cho đường ĐỌC (v9/Zstd chỉ đọc); tin HANDOVER/
+  decisions cho đường GHI và iSH. Đã sửa §4 đợt này; `decisions.md`
+  không thêm mục mới.
+- M5: 1562 chỉ đúng cho cây patch02. Số đo 2026-11-17: lệnh job `unit`
+  trên cây head 3d0c80c cho 1586 passed + 1 skipped + 132 deselected
+  (pytest 9.2.0); trên cây làm việc (thêm test P0-1 + sửa-lỗi) là 1631
+  passed + 132 deselected; full suite unittest trên cây làm việc: 1759
+  chạy = 1729 đạt / 25 lỗi / 3 fail / 2 bỏ qua (28 đỏ do 2 fixture
+  thiếu đã biết).
+- M6: xem đính chính §3 (giữ 1440, ghi 1436, chênh 4 chưa đối chiếu).
+- M11: mâu thuẫn nội bộ C3 (CACHE v10 vs v8→v9); tin chuỗi C4→C5→hiện
+  tại (v20).
+- M13: xem §1 (hai build 9 Kings khác nhau).
+- M14: tin (B) 25/25 (đã hiệu chỉnh) thay vì 24/24.
+- M16: tin (D) 1.719 OK là kết quả cuối; nguyên nhân lần chạy 1.694
+  FAILED là [HYPOTHESIS] của chính báo cáo; nên chạy lại trong môi
+  trường sạch.
+- M17: số precache C3/C4 (126) không cộng khớp; tin chuỗi C5 + đếm hiện
+  tại (119 sau P0-1).
+- M20: giữ [CHƯA KIỂM CHỨNG] — không kết luận cây iSH đầy đủ có trên
+  GitHub hay không. (Kiểm tra 2026-11-17 chỉ đối chiếu một số
+  file/thư mục lẻ với main.)
+- M22: BÁC BỎ — không phải mâu thuẫn thật: decisions #81 dùng v9 làm ví
+  dụ của thứ KHÔNG hỗ trợ, nhất quán với #77.
+- M23: NGOÀI cây làm việc (repo IPA-LOCALIZATION, chỉ tham chiếu) —
+  không sửa được từ đây; khi tích hợp I1–I3 phải đọc code JS trực tiếp.
+- M25: xem đính chính §3 (Release chưa có asset — API `assets: []` ngày
+  2026-11-17).
+- M1/M2/M7/M8/M9/M10/M18/M19/M21/M24: đã sửa trong tài liệu hiện hành
+  đợt này (README/HANDOVER/CURRENT_STATE/index.html); xem diff với head
+  3d0c80c.

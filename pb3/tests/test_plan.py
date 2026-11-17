@@ -330,5 +330,58 @@ class _patched_outdir:
         return False
 
 
+class TestKeyAnchoredApply(unittest.TestCase):
+    """P0-1: ap change theo KEY (span cua literal gia tri), khong phai
+    thay chuoi tran xuat hien dau tien. Bao phu cac truong hop du lieu
+    that gap o 9 Kings resources.assets (gia tri rong, key trung o
+    nhieu asset, gia tri trung nhau)."""
+
+    def _apply_script(self, script, translations):
+        sf = build_serialized_file(
+            version=17,
+            objects=[(1001, 0, text_asset_data("t.json", script))],
+            types=[(49, None)])
+        plan = pl.build_plan(sf, translations, source_bundle="t.assets",
+                             entry=None, mode="REBUILD_SECTION")
+        self.assertEqual(len(plan["entries"]), 1)
+        entry = plan["entries"][0]
+        patched, _mode = pl._apply_entry_changes(
+            "assets", sf, None, entry, u.UnityBackend("NATIVE"), Limits())
+        sf2 = u.parse_serialized(patched, Limits(), where="patched")
+        _pid, _name, out = sf2.find_text_asset(path_id=1001)
+        return out
+
+    def test_empty_before_value(self):
+        out = self._apply_script('{"Version": "", "name": "X"}',
+                                 {"Version": "[VI]"})
+        self.assertEqual(json.loads(out), {"Version": "[VI]", "name": "X"})
+        self.assertEqual(out, '{"Version": "[VI]", "name": "X"}')
+
+    def test_duplicate_values_across_keys(self):
+        out = self._apply_script('{"a": "Same", "b": "Same"}',
+                                 {"a": "A2", "b": "B2"})
+        self.assertEqual(json.loads(out), {"a": "A2", "b": "B2"})
+
+    def test_value_appearing_earlier_elsewhere(self):
+        # "Hi" xuat hien truoc trong value cua key khac — ban cu thay
+        # nham cho do; ban moi chi doi dung key dich.
+        out = self._apply_script('{"note": "Say Hi", "greeting": "Hi"}',
+                                 {"greeting": "Xin chao"})
+        self.assertEqual(json.loads(out),
+                         {"note": "Say Hi", "greeting": "Xin chao"})
+
+    def test_duplicate_json_key_last_wins(self):
+        out = self._apply_script('{"k": "first", "k": "second"}',
+                                 {"k": "NEW"})
+        self.assertEqual(json.loads(out), {"k": "NEW"})
+        self.assertIn('"first"', out)  # lan xuat hien dau giu nguyen
+
+    def test_indent_and_escapes_preserved(self):
+        script = '{\n    "a": "caf\\u00e9",\n    "b": "x"\n}'
+        out = self._apply_script(script, {"b": "y"})
+        self.assertEqual(out,
+                         '{\n    "a": "caf\\u00e9",\n    "b": "y"\n}')
+
+
 if __name__ == "__main__":
     unittest.main()

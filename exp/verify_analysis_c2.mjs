@@ -1,7 +1,7 @@
 // verify_analysis_c2.mjs — Kiểm chứng mục C2: trang/tab Chẩn đoán +
 // nút "Tự kiểm tra" trong app BearTea (repo MunKai0408/MeoRocky).
 //
-// Chạy: node verify_analysis_c2.mjs (từ /home/hatch/workspace/pb3_web/exp)
+// Chạy: node verify_analysis_c2.mjs (từ thư mục exp/ của repo)
 // Kết quả: analysis_c2_results.md + analysis_c2_results.json
 //
 //  N. gt.js trực tiếp trên Node, server giả (127.0.0.1):
@@ -39,10 +39,11 @@ import { execSync } from "node:child_process";
 import {
   translateOneWithFallbacks, setTranslateProxyUrl, setGoogleEndpoint,
   setMyMemoryEndpoint, setLibreTranslateEndpoint, getFallbackTrace,
-} from "../site/gt.js";
+} from "../gt.js";
 
-const SITE = "/home/hatch/workspace/pb3_web/site";
-const EXP = "/home/hatch/workspace/pb3_web/exp";
+const ROOT = decodeURIComponent(new URL("..", import.meta.url).pathname).replace(/\/$/, "");
+const SITE = ROOT;
+const EXP = ROOT + "/exp";
 const OUT = EXP + "/out/analysis_c2";
 const FX_ZIP = EXP + "/fixtures/extract_select_fixture.zip";
 const sec = (ms) => Math.round(ms / 100) / 10;

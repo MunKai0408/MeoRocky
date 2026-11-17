@@ -1,7 +1,7 @@
 // verify_analysis_c5.mjs — Kiểm chứng mục C5: Zstd đọc qua fzstd +
 // ghi block không nén, UnityFS v9 chỉ đọc (repo MunKai0408/MeoRocky).
 //
-// Chạy: node verify_analysis_c5.mjs (từ /home/hatch/workspace/pb3_web/exp)
+// Chạy: node verify_analysis_c5.mjs (từ thư mục exp/ của repo)
 // Kết quả: analysis_c5_results.md + analysis_c5_results.json
 //
 //  S. Tĩnh + CPython:
@@ -49,9 +49,10 @@ import path from "node:path";
 import zlib from "node:zlib";
 import { execFileSync, spawnSync } from "node:child_process";
 
-const SITE = "/home/hatch/workspace/pb3_web/site";
+const ROOT = decodeURIComponent(new URL("..", import.meta.url).pathname).replace(/\/$/, "");
+const SITE = ROOT;
 const PB3 = SITE + "/pb3";
-const EXP = "/home/hatch/workspace/pb3_web/exp";
+const EXP = ROOT + "/exp";
 const FX_ZIP = EXP + "/fixtures/extract_select_fixture.zip";
 const FX_FRAME = EXP + "/fixtures/c5_zstd_frame.bin";
 const FX_ZSTD = EXP + "/fixtures/c5_bundle_zstd.unity3d";
@@ -96,9 +97,9 @@ const fzstdLicense = fs.readFileSync(SITE + "/fzstd/LICENSE", "utf8");
     licenseMIT: fzstdLicense.startsWith("MIT License") && fzstdLicense.includes("Copyright (c) 2020 Arjun Barrett"),
     licenseNote: fs.existsSync(SITE + "/fzstd/README.md") && /MIT/.test(fs.readFileSync(SITE + "/fzstd/README.md", "utf8")) &&
       /101arrowz\/fzstd/.test(fs.readFileSync(SITE + "/fzstd/README.md", "utf8")),
-    swVersionV11: ver === "v11-20261116",
+    swVersionV11: ver === "v20-20261117",
     swPrecacheFzstd: listed.includes("fzstd/index.mjs"),
-    swPrecacheCount127: listed.length === 127,
+    swPrecacheCount119: listed.length === 119,
     workerDynamicImport: /await import\("\.\/fzstd\/index\.mjs"\)/.test(workerSrc),
     workerExposesBridge: /globalThis\.pb3_zstd_decompress = \(data, expectedSize\)/.test(workerSrc),
     workerFallbackNull: /globalThis\.pb3_zstd_decompress = null/.test(workerSrc),
@@ -122,8 +123,8 @@ const fzstdLicense = fs.readFileSync(SITE + "/fzstd/LICENSE", "utf8");
   rec("static_fzstd_v9_zstd_markers", missing.length === 0,
     "node --check OK: worker.js, sw.js, fzstd/index.mjs" + (bad.length ? " | LỖI: " + bad.join(", ") : "") +
     "; fzstd/index.mjs=24407B, export decompress, LICENSE MIT © 2020 Arjun Barrett + README ghi công 101arrowz/fzstd; " +
-    "CACHE_VERSION=" + ver + " (cần v11-20261116); precache có fzstd/index.mjs=" + listed.includes("fzstd/index.mjs") +
-    " (tổng " + listed.length + " mục, cần 127); worker.js dynamic import fzstd + globalThis.pb3_zstd_decompress + fallback null khi lỗi; " +
+    "CACHE_VERSION=" + ver + " (cần v20-20261117); precache có fzstd/index.mjs=" + listed.includes("fzstd/index.mjs") +
+    " (tổng " + listed.length + " mục, cần 119); worker.js dynamic import fzstd + globalThis.pb3_zstd_decompress + fallback null khi lỗi; " +
     "sdk/unity.py: " + Object.entries(checks).map(([k, v]) => k + "=" + v).join(", ") +
     (missing.length ? " | THIẾU: " + missing.join(", ") : ""),
     performance.now() - t0);

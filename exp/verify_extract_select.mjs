@@ -1,7 +1,7 @@
 // verify_extract_select.mjs — Kiểm chứng PHẦN B: chọn file + lọc locale
 // en/zh + báo nguồn gốc (repo MunKai0408/MeoRocky).
 //
-// Chạy: node verify_extract_select.mjs (từ /home/hatch/workspace/pb3_web/exp)
+// Chạy: node verify_extract_select.mjs (từ thư mục exp/ của repo)
 // Kết quả: extract_select_results.md + extract_select_results.json
 //
 // Bridge thật trên Pyodide Node (fixture extract_select_fixture.zip):
@@ -19,10 +19,11 @@
 //  B5. read_extracted: đọc English.json đã trích xuất; tên sai/traversal/
 //      file quá lớn -> lỗi rõ; file không phải JSON -> lỗi rõ.
 import fs from "node:fs";
-import { loadPyodide } from "../site/pyodide/pyodide.mjs";
+import { loadPyodide } from "../pyodide/pyodide.mjs";
 
-const SITE = "/home/hatch/workspace/pb3_web/site";
-const EXP = "/home/hatch/workspace/pb3_web/exp";
+const ROOT = decodeURIComponent(new URL("..", import.meta.url).pathname).replace(/\/$/, "");
+const SITE = ROOT;
+const EXP = ROOT + "/exp";
 const FX = EXP + "/fixtures/extract_select_fixture.zip";
 const BUNDLE = "Payload/9Kings.app/Data/Raw/aa/iOS/localization-locales_assets_all.bundle";
 const RES = "Payload/9Kings.app/Data/resources.assets";

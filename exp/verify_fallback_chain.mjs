@@ -1,7 +1,7 @@
 // verify_fallback_chain.mjs — Kiểm chứng mục C1: chuỗi fallback dịch
 // KHÔNG CẦN KEY (repo MunKai0408/MeoRocky).
 //
-// Chạy: node verify_fallback_chain.mjs (từ /home/hatch/workspace/pb3_web/exp)
+// Chạy: node verify_fallback_chain.mjs (từ thư mục exp/ của repo)
 // Kết quả: fallback_chain_results.md + fallback_chain_results.json
 //
 // Chuỗi fallback (gt.js): proxy (nếu có URL) → Google trực tiếp (gtx) →
@@ -39,16 +39,17 @@
 import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
-import { loadPyodide } from "../site/pyodide/pyodide.mjs";
+import { loadPyodide } from "../pyodide/pyodide.mjs";
 import {
   translateOneWithFallbacks, translateBatchWithFallbacks,
   setTranslateProxyUrl, setGoogleEndpoint, setMyMemoryEndpoint,
   setLibreTranslateEndpoint, setLibreTranslateApiKey, getFallbackTrace,
   libreTranslateOne,
-} from "../site/gt.js";
+} from "../gt.js";
 
-const SITE = "/home/hatch/workspace/pb3_web/site";
-const EXP = "/home/hatch/workspace/pb3_web/exp";
+const ROOT = decodeURIComponent(new URL("..", import.meta.url).pathname).replace(/\/$/, "");
+const SITE = ROOT;
+const EXP = ROOT + "/exp";
 const FX = EXP + "/fixtures/extract_select_fixture.zip";
 const sec = (ms) => Math.round(ms / 100) / 10;
 const results = {};

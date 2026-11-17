@@ -806,6 +806,131 @@ def parse_bundle(data, backend=None, limits=None, where="bundle"):
         payload=payload, source_hash=hashing.sha256_bytes(data), where=where)
 
 
+@dataclass
+class _BundleLayout:
+    """Layout UnityFS doc tu header + blocks-info (khong payload).
+
+    Dung chung cho duong doc streaming (stream_bundle_entries) va duong
+    ghi streaming (rebuild_bundle_streaming): 1 logic duy nhat cho
+    header/cac co ma hoa/blocks-info, tranh lech nhau giua doc va ghi.
+    """
+    version: int
+    unity_version: str
+    unity_revision: str
+    total_size: int
+    comp_info_size: int
+    uncomp_info_size: int
+    data_flags: int
+    new_flags: bool
+    compression: int
+    blocks_info_at_end: bool
+    header_end: int
+    block_data_start: int
+    block_data_end: Optional[int]
+    file_size: int
+    blocks: List[BundleBlock]
+    entries: List[BundleEntry]
+
+
+def _read_bundle_layout(fh, backend, lim, where="bundle"):
+    """Doc header + blocks-info cua UnityFS tu file-like seekable `fh`.
+
+    fh duoc seek ve 0 truoc khi doc; khi tra ve, vi tri con tro khong
+    dam bao (ben goi tu seek theo block_data_start/offset). Loi giong
+    het parse_bundle/stream_bundle_entries cu (E_UNSUPPORTED_FORMAT /
+    E_ENCRYPTED / E_CORRUPT). Khong giu payload trong RAM.
+    """
+    fh.seek(0)
+    head = fh.read(4096)
+    if len(head) < 8 or head[:7] != UNITYFS_MAGIC:
+        raise PB3Error("E_UNSUPPORTED_FORMAT", "không phải UnityFS (magic sai)",
+                       where=where)
+    r = _Reader(head, ">", where=where)
+    r.read(8)
+    version = r.u32()
+    if version not in SUPPORTED_BUNDLE_VERSIONS:
+        raise PB3Error("E_UNSUPPORTED_FORMAT",
+                       "UnityFS version %d chưa hỗ trợ (chỉ %s)"
+                       % (version, "/".join(map(str, SUPPORTED_BUNDLE_VERSIONS))),
+                       where=where)
+    unity_version = r.string_to_null()
+    unity_revision = r.string_to_null()
+    total_size, comp_info_size, uncomp_info_size, data_flags = r.unpack("QIII")
+    new_flags = _uses_new_flags(unity_revision)
+    encryption_flag = FLAG_ENCRYPTION_NEW if new_flags else FLAG_ENCRYPTION_OLD
+    if data_flags & encryption_flag:
+        raise PB3Error("E_ENCRYPTED", "bundle mã hóa (flag 0x%x)" % data_flags,
+                       where=where)
+    compression = data_flags & 0x3F
+    if compression == 4 or compression > COMPRESSION_ZSTD:
+        raise PB3Error("E_UNSUPPORTED_FORMAT",
+                       "compression %d (%s) chưa hỗ trợ"
+                       % (compression, COMPRESSION_NAMES.get(compression, "?")),
+                       where=where)
+    if version >= 7 or parse_unity_version(unity_revision) >= (2019, 4, 15):
+        r.align(16)
+    header_end = r.pos
+    blocks_info_at_end = bool(data_flags & FLAG_BLOCKS_INFO_AT_END)
+    fh.seek(0, 2)
+    file_size = fh.tell()
+    if comp_info_size > file_size or uncomp_info_size > lim.max_entry_bytes:
+        raise PB3Error("E_CORRUPT", "kích thước blocks info không hợp lệ", where=where)
+    if blocks_info_at_end:
+        info_start = file_size - comp_info_size
+        if info_start < header_end:
+            raise PB3Error("E_CORRUPT", "blocks info ở cuối vượt ra ngoài file",
+                           where=where)
+        fh.seek(info_start)
+        info_comp = fh.read(comp_info_size)
+        block_data_start = header_end
+        block_data_end = info_start
+    else:
+        if header_end + comp_info_size > len(head):
+            fh.seek(header_end)
+            info_comp = fh.read(comp_info_size)
+        else:
+            info_comp = head[header_end:header_end + comp_info_size]
+        block_data_start = header_end + comp_info_size
+        block_data_end = None  # không cần (đọc tuần tự tới hết block)
+    info_raw = backend.decompress(info_comp, uncomp_info_size, compression,
+                                  where=where + "::blocks-info")
+    ir = _Reader(info_raw, ">", where=where + "::blocks-info")
+    ir.read(16)
+    block_count = ir.i32()
+    if block_count < 0 or block_count > 100000:
+        raise PB3Error("E_CORRUPT", "số block %d không hợp lệ" % block_count,
+                       where=where)
+    blocks = []
+    for _ in range(block_count):
+        unc, comp_size, flags = ir.unpack("IIH")
+        # v9 (C5): mỗi BlockInfo thêm u64 offset sau cờ u16.
+        offset = ir.u64() if version >= 9 else None
+        blocks.append(BundleBlock(unc, comp_size, flags, offset))
+    entry_count = ir.i32()
+    if entry_count < 0:
+        raise PB3Error("E_CORRUPT", "số entry âm", where=where)
+    lim.check_entries(entry_count, where)
+    entries = []
+    for _ in range(entry_count):
+        offset, size, flags = ir.unpack("qqi")
+        name = ir.string_to_null()
+        entries.append(BundleEntry(name, offset, size, flags))
+    lim.check_total(sum(b.uncompressed_size for b in blocks), where)
+    total_payload = sum(b.uncompressed_size for b in blocks)
+    for e in entries:
+        if e.offset < 0 or e.size < 0 or e.offset + e.size > total_payload:
+            raise PB3Error("E_CORRUPT", "entry %r vượt quá payload" % e.name,
+                           where=where)
+    return _BundleLayout(
+        version=version, unity_version=unity_version,
+        unity_revision=unity_revision, total_size=total_size,
+        comp_info_size=comp_info_size, uncomp_info_size=uncomp_info_size,
+        data_flags=data_flags, new_flags=new_flags, compression=compression,
+        blocks_info_at_end=blocks_info_at_end, header_end=header_end,
+        block_data_start=block_data_start, block_data_end=block_data_end,
+        file_size=file_size, blocks=blocks, entries=entries)
+
+
 def stream_bundle_entries(stream_or_path, backend=None, limits=None, where="bundle"):
     """Yield (tên_entry, bytes_entry) từng entry của UnityFS, không giữ cả payload.
 
@@ -824,86 +949,15 @@ def stream_bundle_entries(stream_or_path, backend=None, limits=None, where="bund
     own = isinstance(stream_or_path, (str, bytes, os.PathLike))
     fh = open(stream_or_path, "rb") if own else stream_or_path
     try:
-        head = fh.read(4096)
-        if len(head) < 8 or head[:7] != UNITYFS_MAGIC:
-            raise PB3Error("E_UNSUPPORTED_FORMAT", "không phải UnityFS (magic sai)",
-                           where=where)
-        r = _Reader(head, ">", where=where)
-        r.read(8)
-        version = r.u32()
-        if version not in SUPPORTED_BUNDLE_VERSIONS:
-            raise PB3Error("E_UNSUPPORTED_FORMAT",
-                           "UnityFS version %d chưa hỗ trợ (chỉ %s)"
-                           % (version, "/".join(map(str, SUPPORTED_BUNDLE_VERSIONS))),
-                           where=where)
-        unity_version = r.string_to_null()
-        unity_revision = r.string_to_null()
-        total_size, comp_info_size, uncomp_info_size, data_flags = r.unpack("QIII")
-        new_flags = _uses_new_flags(unity_revision)
-        encryption_flag = FLAG_ENCRYPTION_NEW if new_flags else FLAG_ENCRYPTION_OLD
-        if data_flags & encryption_flag:
-            raise PB3Error("E_ENCRYPTED", "bundle mã hóa (flag 0x%x)" % data_flags,
-                           where=where)
-        compression = data_flags & 0x3F
-        if compression == 4 or compression > COMPRESSION_ZSTD:
-            raise PB3Error("E_UNSUPPORTED_FORMAT",
-                           "compression %d (%s) chưa hỗ trợ"
-                           % (compression, COMPRESSION_NAMES.get(compression, "?")),
-                           where=where)
-        if version >= 7 or parse_unity_version(unity_revision) >= (2019, 4, 15):
-            r.align(16)
-        header_end = r.pos
-        blocks_info_at_end = bool(data_flags & FLAG_BLOCKS_INFO_AT_END)
-        fh.seek(0, 2)
-        file_size = fh.tell()
-        if comp_info_size > file_size or uncomp_info_size > lim.max_entry_bytes:
-            raise PB3Error("E_CORRUPT", "kích thước blocks info không hợp lệ", where=where)
-        if blocks_info_at_end:
-            info_start = file_size - comp_info_size
-            if info_start < header_end:
-                raise PB3Error("E_CORRUPT", "blocks info ở cuối vượt ra ngoài file",
-                               where=where)
-            fh.seek(info_start)
-            info_comp = fh.read(comp_info_size)
-            block_data_start = header_end
-            block_data_end = info_start
-        else:
-            if header_end + comp_info_size > len(head):
-                fh.seek(header_end)
-                info_comp = fh.read(comp_info_size)
-            else:
-                info_comp = head[header_end:header_end + comp_info_size]
-            block_data_start = header_end + comp_info_size
-            block_data_end = None  # không cần (đọc tuần tự tới hết block)
-        info_raw = backend.decompress(info_comp, uncomp_info_size, compression,
-                                      where=where + "::blocks-info")
-        ir = _Reader(info_raw, ">", where=where + "::blocks-info")
-        ir.read(16)
-        block_count = ir.i32()
-        if block_count < 0 or block_count > 100000:
-            raise PB3Error("E_CORRUPT", "số block %d không hợp lệ" % block_count,
-                           where=where)
-        blocks = []
-        for _ in range(block_count):
-            unc, comp_size, flags = ir.unpack("IIH")
-            # v9 (C5): mỗi BlockInfo thêm u64 offset sau cờ u16.
-            offset = ir.u64() if version >= 9 else None
-            blocks.append(BundleBlock(unc, comp_size, flags, offset))
-        entry_count = ir.i32()
-        if entry_count < 0:
-            raise PB3Error("E_CORRUPT", "số entry âm", where=where)
-        lim.check_entries(entry_count, where)
-        entries = []
-        for _ in range(entry_count):
-            offset, size, flags = ir.unpack("qqi")
-            name = ir.string_to_null()
-            entries.append(BundleEntry(name, offset, size, flags))
-        lim.check_total(sum(b.uncompressed_size for b in blocks), where)
-        total_payload = sum(b.uncompressed_size for b in blocks)
-        for e in entries:
-            if e.offset < 0 or e.size < 0 or e.offset + e.size > total_payload:
-                raise PB3Error("E_CORRUPT", "entry %r vượt quá payload" % e.name,
-                               where=where)
+        layout = _read_bundle_layout(fh, backend, lim, where=where)
+        version = layout.version
+        data_flags = layout.data_flags
+        new_flags = layout.new_flags
+        blocks_info_at_end = layout.blocks_info_at_end
+        blocks = layout.blocks
+        entries = layout.entries
+        block_data_start = layout.block_data_start
+        block_data_end = layout.block_data_end
         # Giải nén từng block, giữ cửa sổ trượt; yield entry theo thứ tự offset.
         ordered = sorted(entries, key=lambda e: (e.offset, e.size))
         pos = block_data_start
@@ -1059,6 +1113,326 @@ def build_bundle(entries, *, version=7, unity_version=UNITY_VERSION,
     raw = bytearray(out.bytes())
     struct.pack_into(">Q", raw, header_pos, total)
     return bytes(raw)
+
+
+def rebuild_bundle_streaming(src_path, dst_path, replacements, backend=None,
+                             limits=None, progress_fn=None, on_entry=None):
+    """Dựng lại bundle UnityFS bằng streaming, không ôm cả payload trong RAM.
+
+    Pass 1 quét + định cỡ (hash sha256 từng entry khi stream qua, entry
+    thay thế lấy bytes đã patch sẵn trong `replacements`); pass 2 ghi
+    1 lần (block data ra file tạm rồi ráp file đích, seek-patch
+    blocks-info + total_size cuối); pass 3 đọc lại output bằng
+    stream_bundle_entries và kiểm tập entry + thứ tự + flags + hash
+    entry không đổi + hash entry đã patch. Sai -> E_VERIFY_FAILED và
+    xóa file đích dở.
+
+    `replacements`: {tên_entry: bytes_mới}. Entry không có trong
+    replacements được copy nguyên vẹn (giải nén rồi nén lại theo đúng
+    luật của build_bundle: LZ4/LZ4HC từng chunk 128KiB + fallback ghi
+    thô khi nén dài hơn; LZMA = MỘT LZMACompressor FORMAT_RAW/FILTER_LZMA1
+    duy nhất suốt payload, 1 block [HYPOTHESIS cho tới khi test
+    round-trip qua — payload LZMA > max_entry_bytes thì từ chối
+    E_TOO_LARGE vì block đơn đó không đọc lại được với giới hạn mặc
+    định]; Zstd -> ghi block không nén + warning, như apply_patch).
+    Chỉ bundle ĐỘC LẬP (đường dẫn file) mới dùng đường này; bundle
+    trong ZIP/IPA (bytes đã trong RAM) giữ đường RAM.
+    Giới hạn: entry đơn > max_memory_read_bytes (128MB) -> E_TOO_LARGE
+    (hướng iSH); bundle v9 / mã hóa / mã nén 4,>5 -> từ chối sớm ở
+    pass 1, không ghi gì. Verify ở đây YẾU HƠN diffverify toàn phần
+    ở 1 điểm: không kiểm byte-layout ngoài entry bằng snapshot (bù
+    bằng test parse_bundle trên fixture nhỏ + round-trip ở tầng plan).
+    `progress_fn(done, total)` đơn điệu theo byte payload
+    (total = payload cũ + payload mới); `on_entry(name, sha256, size,
+    replaced)` gọi mỗi entry ở pass 1. Tuyệt đối không ghi đè file
+    gốc: dst_path trùng src_path (theo realpath) thì từ chối trước
+    khi đọc/ghi gì.
+    Trả dict {size_before, size_after, warnings, entries, compression,
+    blocks}. Stdlib-only, Python 3.9.
+    """
+    import tempfile
+
+    src_real = os.path.realpath(str(src_path))
+    dst_real = os.path.realpath(str(dst_path))
+    if src_real == dst_real:
+        raise PB3Error("E_CONFIG_INVALID",
+                       "không ghi đè file gốc: đích trùng nguồn (%s)"
+                       % src_path, where=str(dst_path))
+    if os.path.exists(dst_path):
+        try:
+            if os.path.samefile(src_path, dst_path):
+                raise PB3Error("E_CONFIG_INVALID",
+                               "không ghi đè file gốc: đích trùng nguồn (%s)"
+                               % src_path, where=str(dst_path))
+        except OSError:
+            pass
+    backend = backend or UnityBackend("AUTO", limits)
+    lim = limits or backend.limits
+    replacements = dict(replacements or {})
+    warnings: List[str] = []
+    # ---- Pass 1: layout + quét entry (không giữ payload) ----
+    with open(src_path, "rb") as fh:
+        layout = _read_bundle_layout(fh, backend, lim, where="bundle")
+    if layout.version >= 9:
+        raise PB3Error(
+            "E_UNSUPPORTED_FORMAT",
+            "bundle UnityFS v9 chỉ đọc — chưa hỗ trợ ghi streaming "
+            "(ghi lại bundle v9 chưa được hỗ trợ)",
+            message_vi="Bundle UnityFS v9 chỉ đọc — không ghi được.",
+            where="bundle")
+    src_compression = COMPRESSION_NAMES.get(layout.compression, "?")
+    if layout.compression == COMPRESSION_ZSTD:
+        write_compression = "none"
+        warnings.append("bundle gốc nén Zstd: ghi lại bằng block không nén "
+                        "(không có encoder Zstd) nên file có thể to hơn.")
+    else:
+        write_compression = src_compression
+    comp_code = COMPRESSION_CODES[write_compression]
+    names = [e.name for e in layout.entries]
+    if len(set(names)) != len(names):
+        raise PB3Error("E_CORRUPT", "bundle có entry trùng tên — không ghi "
+                       "streaming được", where="bundle")
+    unknown = sorted(set(replacements) - set(names))
+    if unknown:
+        raise PB3Error("E_CONFIG_INVALID",
+                       "replacements có entry không có trong bundle: %s"
+                       % ", ".join(unknown), where="bundle")
+    for e in layout.entries:
+        lim.check_memory_read(e.size, "bundle::%s" % e.name)
+    orig_info = {}  # name -> (flags, size, sha256)
+    ordered = sorted(layout.entries, key=lambda e: (e.offset, e.size))
+    old_payload = sum(e.size for e in layout.entries)
+    new_sizes = {e.name: (len(replacements[e.name]) if e.name in replacements
+                          else e.size) for e in layout.entries}
+    new_payload = sum(new_sizes.values())
+    if write_compression == "lzma" and new_payload > lim.max_entry_bytes:
+        raise PB3Error(
+            "E_TOO_LARGE",
+            "payload LZMA %d byte > giới hạn block %d byte (LZMA ghi 1 block "
+            "duy nhất nên không đọc lại được với giới hạn mặc định); "
+            "dùng bản iSH với giới hạn cao hơn cho bundle này."
+            % (new_payload, lim.max_entry_bytes), where="bundle")
+    total_prog = old_payload + new_payload
+    done_prog = 0
+
+    def _prog(done):
+        if progress_fn is not None:
+            try:
+                progress_fn(int(done), int(total_prog))
+            except Exception:
+                pass
+
+    for name, data in stream_bundle_entries(src_path, backend, lim,
+                                            where="bundle"):
+        sha = hashlib.sha256(data).hexdigest()
+        ent = next(e for e in layout.entries if e.name == name)
+        orig_info[name] = (ent.flags, len(data), sha)
+        done_prog += len(data)
+        _prog(done_prog)
+        if on_entry is not None:
+            try:
+                on_entry(name, sha, len(data), name in replacements)
+            except Exception:
+                pass
+    if len(orig_info) != len(layout.entries):
+        raise PB3Error("E_CORRUPT", "quét pass 1 thiếu entry", where="bundle")
+    # Offset mới theo thứ tự payload; bảng entry giữ thứ tự khai gốc.
+    new_offsets = {}
+    pos = 0
+    for e in ordered:
+        new_offsets[e.name] = pos
+        pos += new_sizes[e.name]
+    size_before = os.path.getsize(src_path)
+    dst_dir = os.path.dirname(os.path.abspath(str(dst_path))) or "."
+    os.makedirs(dst_dir, exist_ok=True)
+    blocks_tmp = None
+    staging_tmp = None
+    try:
+        # ---- Pass 2a: nén block data ra file tạm ----
+        fd, blocks_path = tempfile.mkstemp(prefix=".rebuild-blocks-",
+                                           dir=dst_dir)
+        blocks_tmp = blocks_path
+        blocks: List[BundleBlock] = []
+        with os.fdopen(fd, "wb") as bf:
+            if write_compression == "lzma":
+                comp = lzma.LZMACompressor(
+                    format=lzma.FORMAT_RAW,
+                    filters=[{"id": lzma.FILTER_LZMA1, "dict_size": 0x800000,
+                              "lc": 3, "lp": 0, "pb": 2}])
+                bf.write(struct.pack("<BI", 0x5D, 0x800000))
+                written = 5
+                consumed = 0
+                for name, data in _stream_payload_entries(
+                        src_path, replacements, backend, lim, ordered):
+                    buf = bytes(data)
+                    consumed += len(buf)
+                    for i in range(0, len(buf), 1 << 20):
+                        out = comp.compress(buf[i:i + (1 << 20)])
+                        bf.write(out)
+                        written += len(out)
+                    _prog(old_payload + consumed)
+                tail = comp.flush()
+                bf.write(tail)
+                written += len(tail)
+                blocks.append(BundleBlock(new_payload, written, comp_code))
+                _prog(old_payload + new_payload)
+            elif write_compression in ("lz4", "lz4hc"):
+                buf = bytearray()
+
+                def _flush_chunk(chunk):
+                    comp = backend.compress(bytes(chunk), comp_code)
+                    if len(comp) >= len(chunk):
+                        bf.write(bytes(chunk))
+                        blocks.append(BundleBlock(len(chunk), len(chunk), 0))
+                    else:
+                        bf.write(comp)
+                        blocks.append(BundleBlock(len(chunk), len(comp),
+                                                  comp_code))
+
+                consumed = 0
+                for name, data in _stream_payload_entries(
+                        src_path, replacements, backend, lim, ordered):
+                    buf += data
+                    consumed += len(data)
+                    while len(buf) >= LZ4_CHUNK_SIZE:
+                        _flush_chunk(buf[:LZ4_CHUNK_SIZE])
+                        del buf[:LZ4_CHUNK_SIZE]
+                    _prog(old_payload + consumed)
+                if buf or not blocks:
+                    _flush_chunk(bytes(buf))
+                _prog(old_payload + new_payload)
+            else:  # none: block 32MiB (duoi gioi han entry 64MB khi doc lai)
+                step = 32 * 1024 * 1024
+                buf = bytearray()
+                consumed = 0
+                for name, data in _stream_payload_entries(
+                        src_path, replacements, backend, lim, ordered):
+                    buf += data
+                    consumed += len(data)
+                    while len(buf) >= step:
+                        bf.write(bytes(buf[:step]))
+                        blocks.append(BundleBlock(step, step, 64))
+                        del buf[:step]
+                    _prog(old_payload + consumed)
+                if buf or not blocks:
+                    bf.write(bytes(buf))
+                    blocks.append(BundleBlock(len(buf), len(buf), 64))
+                _prog(old_payload + new_payload)
+        # ---- Pass 2b: blocks-info + ráp file đích ----
+        info = _Writer(">")
+        info.write(b"\x00" * 16)
+        info.pack("i", len(blocks))
+        for b in blocks:
+            info.pack("IIH", b.uncompressed_size, b.compressed_size, b.flags)
+        info.pack("i", len(layout.entries))
+        for e in layout.entries:
+            info.pack("qqi", new_offsets[e.name], new_sizes[e.name], e.flags)
+            info.string_to_null(e.name)
+        info_raw = info.bytes()
+        info_comp = backend.compress(info_raw, comp_code)
+        new_flags = (layout.data_flags & ~0x3F) | comp_code
+        fd2, staging_path = tempfile.mkstemp(prefix=".rebuild-staging-",
+                                             dir=dst_dir)
+        staging_tmp = staging_path
+        with os.fdopen(fd2, "wb") as out:
+            head = _Writer(">")
+            head.write(b"UnityFS\x00")
+            head.pack("I", layout.version)
+            head.string_to_null(layout.unity_version)
+            head.string_to_null(layout.unity_revision)
+            header_pos = head.tell()
+            head.pack("QIII", 0, len(info_comp), len(info_raw), new_flags)
+            if layout.version >= 7 or parse_unity_version(
+                    layout.unity_revision) >= (2019, 4, 15):
+                head.align16()
+            out.write(head.bytes())
+            pad_block_data = bool(layout.new_flags
+                                  and (layout.data_flags & FLAG_PADDING_NEW))
+
+            def _pad16():
+                cur = out.tell()
+                pad = (-cur) % 16
+                if pad:
+                    out.write(b"\x00" * pad)
+
+            if layout.blocks_info_at_end:
+                if pad_block_data:
+                    _pad16()
+                _copy_file(blocks_path, out)
+                out.write(info_comp)
+            else:
+                out.write(info_comp)
+                if pad_block_data:
+                    _pad16()
+                _copy_file(blocks_path, out)
+            total = out.tell()
+            out.seek(header_pos)
+            out.write(struct.pack(">Q", total))
+            out.flush()
+        os.replace(staging_path, dst_path)
+        staging_tmp = None
+    finally:
+        for tmp in (blocks_tmp, staging_tmp):
+            if tmp:
+                try:
+                    os.unlink(tmp)
+                except OSError:
+                    pass
+    # ---- Pass 3: verify streaming ----
+    expected = []
+    for e in ordered:
+        if e.name in replacements:
+            sha = hashlib.sha256(replacements[e.name]).hexdigest()
+        else:
+            sha = orig_info[e.name][2]
+        expected.append((e.name, e.flags, new_sizes[e.name], sha))
+    got = []
+    for name, data in stream_bundle_entries(dst_path, backend, lim,
+                                            where="bundle::verify"):
+        got.append((name, None, len(data), hashlib.sha256(data).hexdigest()))
+    # Flags lay tu layout cua file dich (stream khong tra flags).
+    with open(dst_path, "rb") as fh:
+        out_layout = _read_bundle_layout(fh, backend, lim, where="bundle::verify")
+    out_flags = {e.name: e.flags for e in out_layout.entries}
+    got = [(n, out_flags.get(n), s, h) for (n, _f, s, h) in got]
+    if got != expected or out_layout.version != layout.version:
+        try:
+            os.unlink(dst_path)
+        except OSError:
+            pass
+        raise PB3Error(
+            "E_VERIFY_FAILED",
+            "xác minh sau khi ghi streaming không đạt: entry đọc lại khác "
+            "dự kiến (tập/thứ tự/flags/hash) — đã xóa file đích dở.",
+            where="bundle")
+    return {"size_before": int(size_before),
+            "size_after": int(os.path.getsize(dst_path)),
+            "warnings": warnings, "entries": names,
+            "compression": write_compression, "blocks": len(blocks)}
+
+
+def _stream_payload_entries(src_path, replacements, backend, lim, ordered):
+    """Yield (name, bytes) từng entry theo thứ tự payload, thay thế entry
+    có trong `replacements` bằng bytes đã patch sẵn. Entry gốc vẫn được
+    đọc qua stream (giới hạn 1 entry trong RAM tại 1 thời điểm)."""
+    wanted = [e.name for e in ordered]
+    seen = []
+    for name, data in stream_bundle_entries(src_path, backend, lim,
+                                            where="bundle"):
+        seen.append(name)
+        yield name, (replacements[name] if name in replacements else data)
+    if seen != wanted:
+        raise PB3Error("E_CORRUPT", "thứ tự entry ở pass 2 khác pass 1",
+                       where="bundle")
+
+
+def _copy_file(src, out_fh):
+    with open(src, "rb") as fh:
+        while True:
+            chunk = fh.read(1 << 20)
+            if not chunk:
+                break
+            out_fh.write(chunk)
 
 
 # ------------------------------------------------------------ SerializedFile

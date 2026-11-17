@@ -1,7 +1,7 @@
 // verify_translate_connect.mjs — Kiểm chứng PHẦN C: nối tab Dịch với
 // Trích xuất (repo MunKai0408/MeoRocky).
 //
-// Chạy: node verify_translate_connect.mjs (từ /home/hatch/workspace/pb3_web/exp)
+// Chạy: node verify_translate_connect.mjs (từ thư mục exp/ của repo)
 // Kết quả: translate_connect_results.md + translate_connect_results.json
 //
 //  A. Bridge thật trên Pyodide Node:
@@ -30,10 +30,11 @@
 import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
-import { loadPyodide } from "../site/pyodide/pyodide.mjs";
+import { loadPyodide } from "../pyodide/pyodide.mjs";
 
-const SITE = "/home/hatch/workspace/pb3_web/site";
-const EXP = "/home/hatch/workspace/pb3_web/exp";
+const ROOT = decodeURIComponent(new URL("..", import.meta.url).pathname).replace(/\/$/, "");
+const SITE = ROOT;
+const EXP = ROOT + "/exp";
 const FX = EXP + "/fixtures/extract_select_fixture.zip";
 const sec = (ms) => Math.round(ms / 100) / 10;
 const results = {};

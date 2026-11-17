@@ -515,6 +515,7 @@
     <button id="btn-translate-cancel" class="secondary" hidden>Hủy</button>
     <button id="btn-translate-download" class="secondary">Tải bản dịch (.json)</button>
     <button id="btn-translate-download-provenance" class="secondary">Tải provenance (.json)</button>
+    <button id="btn-translate-goto-rebuild" class="secondary">Ép lại vào file gốc (E)…</button>
     <p class="note">Nút “Tải provenance” tải file sidecar ghi rõ bản dịch này trích từ file game nào, bundle/assets nào — để bước “Ép lại vào file gốc” sau này ép đúng vị trí (kể cả khi ép nhiều file cùng lúc). Bản dịch chính vẫn giữ dạng phẳng sạch như file en.json mẫu.</p>
     <p id="translate-info" class="sub"></p>
     <textarea id="translate-output" placeholder="Bản dịch sẽ hiện ở đây…" readonly></textarea>
@@ -644,6 +645,35 @@
       <button id="btn-plan-patch-pack" class="secondary" disabled>Xuất patch pack (.zip)</button>
     </div>
     <div id="plan-result"></div>
+
+    <h3>Ép lại vào file gốc (E)</h3>
+    <p class="note">Ép bản dịch vào đúng đơn vị (bundle/.assets) theo provenance + key, 1 plan mỗi đơn vị. <b>(E) v1 chỉ ghi TextAsset JSON dạng dict</b> — key MonoBehaviour/StringTable sẽ liệt kê rõ là không ép được, không bỏ im lặng. Xem trước (dry-run) trước, rồi mới ghi. File gốc KHÔNG bị ghi đè; output là đơn vị nhỏ nhất đã patch, <b>không phải</b> IPA đóng gói lại; cần re-sign gói ngoài thì game mới nhận. Bundle .unity3d độc lập lớn ghi theo luồng (streaming); bundle v9 chỉ đọc, bundle mã hóa không giải mã.</p>
+    <div class="row">
+      <label style="flex:1;min-width:180px">Nguồn bản dịch:
+        <select id="rebuild-source">
+          <option value="session" selected>Bản dịch xong trong phiên (tab Dịch)</option>
+          <option value="modjson">File JSON đang mở (phần B bên trên)</option>
+          <option value="file">Nhập file .json từ máy</option>
+        </select>
+      </label>
+      <button id="btn-rebuild-import-json" class="secondary">Nhập file .json…</button>
+      <button id="btn-rebuild-import-sidecar" class="secondary">Nhập sidecar .provenance.json…</button>
+      <input type="file" id="rebuild-json-file" accept=".json,application/json" class="visually-hidden">
+      <input type="file" id="rebuild-sidecar-file" accept=".json,application/json" class="visually-hidden">
+    </div>
+    <p id="rebuild-source-info" class="sub">Chưa chọn nguồn bản dịch.</p>
+    <p id="rebuild-file-info" class="sub">Chưa chọn file gốc — chọn lại file game đã trích xuất ở trên.</p>
+    <div class="row">
+      <button id="btn-rebuild-reselect-file" class="secondary">Chọn lại file gốc…</button>
+      <button id="btn-rebuild-preview">Xem trước (dry-run)</button>
+      <button id="btn-rebuild-apply" disabled>Ép và ghi file</button>
+      <button id="btn-rebuild-reextract" class="secondary" disabled>Trích lại file vừa ép để kiểm</button>
+    </div>
+    <div class="row">
+      <button id="btn-rebuild-choose-all-kept" class="secondary" disabled>Chọn tất cả: bản giữ</button>
+      <button id="btn-rebuild-choose-all-dropped" class="secondary" disabled>Chọn tất cả: bản loại</button>
+    </div>
+    <div id="rebuild-result"></div>
   </div>
 
   <div id="tab-batch" class="card" hidden>
@@ -932,7 +962,7 @@
     trích xuất, dịch, mod, xuất file) chạy hoàn toàn trên trình duyệt của bạn.
     File game chỉ được đọc và xử lý trên thiết bị, không upload đi đâu
     (trừ khi bạn bật dịch Google ở tab Dịch).</p>
-    <p><b>PB3 v3.1.0</b> · 20 plugin · UnityFS v8, SerializedFile v23 ·
+    <p><b>PB3 v3.1.0</b> · 20 plugin · UnityFS v6–v9 (v9 chỉ đọc), SerializedFile v23 ·
     parser thuần (không dùng UnityPy trên web).</p>
     <p class="note">Việt Hoá Bởi Bear 🐻 — credit “Việt Hoá Bởi Bear” được gắn vào
     bản dịch khi bạn tick “Gắn credit” ở tab Dịch.</p>

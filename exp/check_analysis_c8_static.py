@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Kiem tra tinh muc C8: sdk/format_probe.py chi stdlib + core/sdk,
 Python 3.9 (khong match, khong X|Y, khong eval/exec, khong goi mang);
-manifest (files.json 93, tests.json 164); sw.js precache co
-sdk/format_probe.py va CACHE_VERSION v19-20261116; bridge co op
+manifest (files.json 94, tests.json 165); sw.js precache co
+sdk/format_probe.py va CACHE_VERSION v20-20261117; bridge co op
 format_probe; UI co nut probe + input file rieng + nut tai JSON;
 bang ENGINE_SUPPORT trung thuc (moi engine deu co unsupported khong
 rong; unknown co supported rong); tieng Viet moi du dau.
@@ -13,7 +13,7 @@ import json
 import sys
 from pathlib import Path
 
-SITE = Path(__file__).resolve().parent.parent / "site"
+SITE = Path(__file__).resolve().parent.parent  # P0-1: goc repo (Q2)
 sys.path.insert(0, str(SITE / "pb3"))
 fails = []
 
@@ -74,13 +74,13 @@ except Exception as e:  # noqa: BLE001
 
 # 4. Manifest.
 files = json.loads((SITE / "pb3" / "files.json").read_text())["files"]
-if len(files) != 93:
-    fails.append("files.json co %d file, ky vong 93" % len(files))
+if len(files) != 94:
+    fails.append("files.json co %d file, ky vong 94" % len(files))
 if "pb3/sdk/format_probe.py" not in files:
     fails.append("files.json thieu pb3/sdk/format_probe.py")
 tests = json.loads((SITE / "pb3" / "tests.json").read_text())["files"]
-if len(tests) != 164:
-    fails.append("tests.json co %d file, ky vong 164" % len(tests))
+if len(tests) != 165:
+    fails.append("tests.json co %d file, ky vong 165" % len(tests))
 if "pb3/tests/test_format_probe.py" not in tests:
     fails.append("tests.json thieu pb3/tests/test_format_probe.py")
 
@@ -88,8 +88,8 @@ if "pb3/tests/test_format_probe.py" not in tests:
 sw = (SITE / "sw.js").read_text(encoding="utf-8")
 if '"pb3/sdk/format_probe.py"' not in sw:
     fails.append("sw.js precache thieu pb3/sdk/format_probe.py")
-if 'CACHE_VERSION = "v19-20261116"' not in sw:
-    fails.append("sw.js CACHE_VERSION khong phai v19-20261116")
+if 'CACHE_VERSION = "v20-20261117"' not in sw:
+    fails.append("sw.js CACHE_VERSION khong phai v20-20261117")
 
 # 6. bridge co op format_probe + khong tra ok:false cho file la (probe
 # thanh cong thi ok True, engine unknown — kiem tra chuoi bao dam).

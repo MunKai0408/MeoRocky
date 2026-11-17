@@ -1,13 +1,13 @@
 // verify_analysis_font_unify.mjs — Harness PHẦN (D) FONT (Joseph 20:48 ý 8):
 // liệt kê font của game + gom về 1 font Be Vietnam Pro đủ dấu.
-// Chạy: node verify_analysis_font_unify.mjs (từ /home/hatch/workspace/pb3_web/exp)
+// Chạy: node verify_analysis_font_unify.mjs (từ thư mục exp/ của repo)
 //   ONLY=1,2,3,4,5 — chỉ chạy section đó.
 // Kết quả: analysis_font_unify_results.json (+ .md viết tay sau)
 //   + out/font_unify/*.png (ảnh UI 390px)
 //
 // Section:
 //  1. Unit Python (tests.test_font_unify, 13 test) + tĩnh:
-//     files.json=93 / tests.json=164 / sw.js CACHE_VERSION v19, node --check,
+//     files.json=94 / tests.json=165 / sw.js CACHE_VERSION v20, node --check,
 //     check_analysis_font_unify_static.py 0 fails.
 //  2. Fixture IPA tổng hợp (CPython bridge): 5 font (TTF thiếu 4, TTF đủ,
 //     OTF, TMP thiếu 42, Font nhúng) -> đúng hành động từng loại; TTF đã
@@ -29,8 +29,9 @@ import path from "node:path";
 import http from "node:http";
 import { execSync, spawnSync } from "node:child_process";
 
-const SITE = "/home/hatch/workspace/pb3_web/site";
-const EXP = "/home/hatch/workspace/pb3_web/exp";
+const ROOT = decodeURIComponent(new URL("..", import.meta.url).pathname).replace(/\/$/, "");
+const SITE = ROOT;
+const EXP = ROOT + "/exp";
 const OUT = EXP + "/out/font_unify";
 const FIXTURE = OUT + "/fixture.ipa";
 fs.mkdirSync(OUT, { recursive: true });
@@ -66,13 +67,13 @@ if (want(1)) {
   const testsJson = JSON.parse(fs.readFileSync(SITE + "/pb3/tests.json", "utf8"));
   const swJs = fs.readFileSync(SITE + "/sw.js", "utf8");
   rec("static_counts_and_cache",
-    filesJson.files.length === 93 && testsJson.files.length === 164 &&
+    filesJson.files.length === 94 && testsJson.files.length === 165 &&
     filesJson.files.includes("pb3/sdk/font_list.py") &&
     testsJson.files.includes("pb3/tests/test_font_unify.py") &&
-    swJs.includes('CACHE_VERSION = "v19-20261116"') && !swJs.includes("v18-20261116") &&
+    swJs.includes('CACHE_VERSION = "v20-20261117"') && !swJs.includes("v19-20261116") &&
     swJs.includes('"pb3/sdk/font_list.py"'),
-    "files.json=" + filesJson.files.length + " (kỳ vọng 93) · tests.json=" + testsJson.files.length +
-    " (kỳ vọng 164) · sw.js v19-20261116: " + swJs.includes('CACHE_VERSION = "v19-20261116"') +
+    "files.json=" + filesJson.files.length + " (kỳ vọng 94) · tests.json=" + testsJson.files.length +
+    " (kỳ vọng 165) · sw.js v20-20261117: " + swJs.includes('CACHE_VERSION = "v20-20261117"') +
     " · precache có font_list.py: " + swJs.includes('"pb3/sdk/font_list.py"'), performance.now() - t);
   t = performance.now();
   const c = sh("node --check " + SITE + "/app.js && node --check " + SITE + "/worker.js && node --check " + SITE + "/sw.js && python3 -m py_compile " + SITE + "/pb3/bridge.py " + SITE + "/pb3/sdk/font_list.py " + SITE + "/pb3/tests/test_font_unify.py", EXP);
@@ -89,7 +90,7 @@ if (want(1)) {
 // ================= 2. Fixture IPA tổng hợp =================
 if (want(2)) {
   let t = performance.now();
-  const r = sh("python3 exp/check_font_unify_fixture.py 2>&1 | tail -n 3", "/home/hatch/workspace/pb3_web");
+  const r = sh("python3 exp/check_font_unify_fixture.py 2>&1 | tail -n 3", ROOT);
   const fx = JSON.parse(fs.readFileSync(OUT + "/fixture.json", "utf8"));
   rec("fixture_list_5_fonts", r.status === 0 && fx.list_ok === true && fx.fonts === 5 &&
     JSON.stringify(fx.by_kind) === JSON.stringify({ ttf: 2, otf: 1, tmp_font_asset: 1, unity_font: 1 }) &&
@@ -123,7 +124,7 @@ if (want(2)) {
 // ================= 3. 5 game thật =================
 if (want(3)) {
   let t = performance.now();
-  const r = sh("python3 exp/font_unify_5games.py 2>&1 | tail -n 20", "/home/hatch/workspace/pb3_web");
+  const r = sh("python3 exp/font_unify_5games.py 2>&1 | tail -n 20", ROOT);
   const sum = JSON.parse(fs.readFileSync(OUT + "/summary.json", "utf8"));
   const g = sum.games;
   const games = ["9kings", "data", "ek2", "pb3", "passpartout"];

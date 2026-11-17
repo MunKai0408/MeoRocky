@@ -13,16 +13,17 @@
 //  E. Bảng vỡ chữ (Joseph 11:37): word-break: break-all trên mọi ô làm "Loại" thành
 //     "L o ạ i" — chỉ ngắt ở cột đường dẫn, cột ngắn nowrap, bảng cuộn ngang;
 //     kiểm chứng render thật ở 390px bằng Chromium headless.
-// Chạy: node verify_hotfix_safari2.mjs (từ /home/hatch/workspace/pb3_web/exp)
+// Chạy: node verify_hotfix_safari2.mjs (từ thư mục exp/ của repo)
 // Kết quả: verify_hotfix_safari2_results.json/.md + hotfix_table_390.png
 import fs from "node:fs";
 import vm from "node:vm";
-import { loadPyodide } from "../site/pyodide/pyodide.mjs";
+import { loadPyodide } from "../pyodide/pyodide.mjs";
 import { chromium } from "playwright-core";
 
-const SITE = "/home/hatch/workspace/pb3_web/site";
-const PB3 = "/home/hatch/workspace/pb3_fix/pb3";
-const EXP = "/home/hatch/workspace/pb3_web/exp";
+const ROOT = decodeURIComponent(new URL("..", import.meta.url).pathname).replace(/\/$/, "");
+const SITE = ROOT;
+const PB3 = SITE + "/pb3";
+const EXP = ROOT + "/exp";
 const sec = (ms) => Math.round(ms / 100) / 10;
 const results = {};
 let failures = 0;

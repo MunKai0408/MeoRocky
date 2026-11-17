@@ -631,6 +631,24 @@ class TestRebuildZip(TmpCase):
             rebuild_zip(self.src, self.dst, write_mode="NOPE")
         self.assertEqual(cm.exception.code, "E_PLUGIN_INVALID")
 
+    def test_dest_same_as_source_refused(self):
+        # Hoi quy chot dest != source (sua-loi): truoc day rebuild_zip
+        # (src, src) ghi de nguon thanh cong.
+        before = self.src.read_bytes()
+        with self.assertRaises(PB3Error) as cm:
+            rebuild_zip(self.src, self.src, {"b.txt": b"NEW!"})
+        self.assertEqual(cm.exception.code, "E_CONFIG_INVALID")
+        self.assertEqual(self.src.read_bytes(), before)
+        # Cung file qua dang viet tuong doi khac.
+        with self.assertRaises(PB3Error) as cm:
+            rebuild_zip(self.src, self.tmp / "." / "src.zip",
+                        {"b.txt": b"NEW!"})
+        self.assertEqual(cm.exception.code, "E_CONFIG_INVALID")
+        self.assertEqual(self.src.read_bytes(), before)
+        # Nguon dang bytes thi dich la duong dan binh thuong, van ghi duoc.
+        rep = rebuild_zip(before, self.dst, {"b.txt": b"NEW!"})
+        self.assertEqual(rep.replaced, ["b.txt"])
+
 
 class TestZipPlugin(unittest.TestCase):
     def _ctx(self, files):

@@ -1,5 +1,10 @@
 # CURRENT_STATE - PB3 v3.1 (cập nhật: 2026-11-16, đợt vá patch02 sandbox DONE — RELEASE BLOCKED chờ kiểm chứng iSH)
 
+> **Ghi chú 2026-11-17:** file này mô tả trạng thái tới đợt vá patch02
+> (sandbox 1562/1562, RELEASE BLOCKED chờ kiểm chứng iSH). Bảng lịch sử
+> bên dưới giữ nguyên; các đợt sau patch02 (bản web, CI, P0-1) xem
+> `HANDOVER.md` ở gốc repo và `exp/`.
+
 Nguồn sự thật duy nhất về tiến độ. Bản thực thi chuẩn: `/root/pb3` trong iSH (xem `handoff/decisions.md` #40).
 
 | Gói | Trạng thái | Ghi chú |
@@ -130,7 +135,7 @@ Nguồn sự thật duy nhất về tiến độ. Bản thực thi chuẩn: `/ro
 - **iSH: NOT RUN.** Chờ Joseph giải nén zip 05b đè lên `/root/pb3` rồi chạy full suite (kỳ vọng 665 test, 661 passed, 4 skipped) + Unity CLI trên fixture v8/v23 + `unity inspect workspace/input/game.ipa` (kỳ vọng mới: CHẮC CHẮN với plan đầy đủ thay vì E_UNSUPPORTED_FORMAT). Chỉ inspect IPA thật, không patch. Xem `handoff/account_05b.md` §5.
 
 ## Việc kế tiếp
-1. Gói 05b sandbox DONE (2026-11-15, 665/665 OK + UnityPy đọc đúng fixture/output; xem `handoff/account_05b.md`). Chờ Joseph kiểm chứng iSH (full suite + Unity CLI v8/v23 + inspect IPA thật). Sau đó tài khoản mới đọc prompt Claude 06 trong `PB3_v3.1_10_Claude_Prompts.txt` rồi làm Claude 06.
+1. Gói 05b sandbox DONE (2026-11-15, 665/665 OK + UnityPy đọc đúng fixture/output; xem `handoff/account_05b.md`). Chờ Joseph kiểm chứng iSH (full suite + Unity CLI v8/v23 + inspect IPA thật). [Đính chính 2026-11-17: Claude 06 đã xong sau đó (xem bảng trên: SANDBOX DONE 2026-11-16) nên hướng dẫn "làm Claude 06" cũ là tàn dư chưa cập nhật; file prompt `PB3_v3.1_10_Claude_Prompts.txt` không có trong cây repo web này.]
 2. Đã dọn trên iSH 18:31: `rm -rf plugins_user/thu_nghiem tests/fixtures/thu_nghiem` chạy sạch. Còn lại: dòng `disabled` của thu_nghiem trong `config/local.toml` trên iSH (chưa có bằng chứng đã xóa; chỉ là mục thừa, không ảnh hưởng).
 
 ## Quy hoạch bộ test (sandbox Python 3.13.18) - 2026-11-15

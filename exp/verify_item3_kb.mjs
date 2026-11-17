@@ -1,7 +1,7 @@
 // verify_item3_kb.mjs — Kiểm chứng MỤC 3: KB → IndexedDB + autosave +
 // persist + PWA + nhắc export (repo MunKai0408/MeoRocky).
 //
-// Chạy: node verify_item3_kb.mjs (từ /home/hatch/workspace/pb3_web/exp)
+// Chạy: node verify_item3_kb.mjs (từ thư mục exp/ của repo)
 // Kết quả: item3_results.md + item3_results.json
 //
 // 4 phần:
@@ -26,11 +26,12 @@ import http from "node:http";
 import path from "node:path";
 import vm from "node:vm";
 import { execFileSync } from "node:child_process";
-import { loadPyodide } from "../site/pyodide/pyodide.mjs";
+import { loadPyodide } from "../pyodide/pyodide.mjs";
 
-const SITE = "/home/hatch/workspace/pb3_web/site";
-const EXP = "/home/hatch/workspace/pb3_web/exp";
-const PB3 = "/home/hatch/workspace/pb3_fix/pb3";
+const ROOT = decodeURIComponent(new URL("..", import.meta.url).pathname).replace(/\/$/, "");
+const SITE = ROOT;
+const EXP = ROOT + "/exp";
+const PB3 = SITE + "/pb3";
 const GAME1 = PB3 + "/tests/fixtures/extract/game1.zip";
 const sec = (ms) => Math.round(ms / 100) / 10;
 const results = {};
