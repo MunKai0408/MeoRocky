@@ -4,7 +4,11 @@
 #   wrangler kv namespace create TRANSLATE_CACHE
 #   wrangler kv namespace create TRANSLATE_USAGE
 #   -> chép 2 id thật vào 2 chỗ REPLACE_WITH_KV_NAMESPACE_ID bên dưới
-#      (cả id và preview_id), rồi:
+#      (cả id và preview_id), rồi deploy:
+#   wrangler deploy
+#   -> đường Workers AI (miễn phí, không cần thẻ) chạy ngay với cấu hình
+#      mặc định TRANSLATE_PROVIDER = "auto" (không có key Google thì dùng
+#      Workers AI). Muốn thêm đường Google thì:
 #   wrangler secret put GOOGLE_API_KEY
 #   wrangler deploy
 #
@@ -25,7 +29,21 @@ binding = "TRANSLATE_USAGE"
 id = "REPLACE_WITH_KV_NAMESPACE_ID"
 preview_id = "REPLACE_WITH_KV_NAMESPACE_ID"
 
+# Workers AI: model dịch m2m100-1.2b (100 ngôn ngữ, có vi) qua binding AI.
+# Chỉ cần tài khoản Cloudflare miễn phí (email, không cần thẻ).
+[ai]
+binding = "AI"
+
 [vars]
+# Chọn provider dịch: "auto" (mặc định) | "google" | "workers-ai".
+# auto = dùng Google khi secret GOOGLE_API_KEY đã đặt, nếu không thì dùng
+# Workers AI khi có binding AI, nếu không có cả hai thì trả not_configured.
+TRANSLATE_PROVIDER = "auto"
+# Workers AI: worker tự dừng TRƯỚC khi chạm 10.000 neurons/ngày miễn phí
+# của tài khoản (ngưỡng 9.000 neurons ước tính — xem worker.js: số này là
+# ƯỚC TÍNH từ giá công khai, không phải số đo thật của Cloudflare; hết
+# ngưỡng worker trả quota_exceeded, không bao giờ phát sinh phí).
+AI_DAILY_NEURON_GUARD = 9000
 # Hạn mức CỨNG: tối đa 500.000 ký tự/tháng = đúng phần miễn phí của Google
 # Cloud Translation. Hết hạn mức worker trả quota_exceeded, client tự rơi
 # về MyMemory + từ điển offline — KHÔNG BAO GIỜ tự phát sinh phí.

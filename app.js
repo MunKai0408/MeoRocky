@@ -1410,7 +1410,7 @@ function showTab(name) {
   // file và danh sách chưa có); mở tab Dịch thì đồng bộ banner rỗng.
   // Mở tab Chẩn đoán thì làm mới trạng thái ứng dụng (mục C2).
   if (name === "extract") maybeRefreshExtractFileList();
-  if (name === "translate") { syncTranslateEmptyBanner(); refreshTranslateResumeBar(); }
+  if (name === "translate") { syncTranslateEmptyBanner(); refreshTranslateResumeBar(); refreshTranslateWorkerStatus(); }
   if (name === "diagnose") refreshAppDiag();
 }
 for (const t of tabs) {
@@ -1936,7 +1936,75 @@ $("translate-proxy").addEventListener("change", (ev) => {
   $("translate-info").textContent = url
     ? "Đã lưu URL proxy dịch — các lần dịch Google tiếp theo sẽ đi qua proxy (cache + hạn mức cứng 500.000 ký tự/tháng, hết hạn mức tự rơi về MyMemory + từ điển offline)."
     : "Đã xóa URL proxy — dịch Google sẽ gọi trực tiếp như trước.";
+  refreshTranslateWorkerStatus();
 });
+// ---- Trạng thái Cloudflare Worker (T1) ----
+// Hiển thị ở tab Dịch: "Worker: đang dùng / chưa triển khai / lỗi".
+// Chỉ là thông tin — worker vắng mặt/lỗi KHÔNG chặn luồng dịch (dịch vẫn
+// chạy qua Google trực tiếp → MyMemory → từ điển offline như trước).
+function proxyStatusText(st) {
+  if (!st) return "Worker: không kiểm tra được — dịch vẫn chạy bình thường qua Google trực tiếp → MyMemory → từ điển offline.";
+  switch (st.state) {
+    case "ok": {
+      // Cho biết provider đang dùng (T1 Workers AI): google / workers-ai /
+      // null (worker cũ không trả provider).
+      const prov = st.provider === "workers-ai"
+        ? " — provider Workers AI (miễn phí, không cần thẻ)"
+        : st.provider === "google"
+        ? " — provider Google"
+        : "";
+      const ai = st.provider === "workers-ai" && st.ai_daily_used != null
+        ? " · hôm nay đã dùng ~" + Math.round(st.ai_daily_used).toLocaleString("en-US") +
+          " neurons (giới hạn " +
+          (st.ai_daily_limit != null ? st.ai_daily_limit.toLocaleString("en-US") : "10.000") + "/ngày)"
+        : "";
+      return "Worker: đang dùng" + prov +
+        (st.monthly_limit != null ? " (hạn mức tháng " + st.monthly_limit.toLocaleString("en-US") + " ký tự)" : "") + ai +
+        ". Dịch sẽ đi qua worker (cache + hạn mức cứng, hết hạn mức tự rơi về MyMemory + từ điển offline).";
+    }
+    case "not_set":
+      return "Worker: chưa triển khai — chưa dán URL proxy. Dịch vẫn chạy qua Google trực tiếp → MyMemory → từ điển offline. Muốn dùng worker thì làm theo docs/API_KEY_SETUP.md rồi dán URL vào ô trên.";
+    case "not_configured":
+      return "Worker: đã triển khai nhưng chưa cấu hình — chưa có GOOGLE_API_KEY và chưa bật Workers AI (binding AI). Dịch sẽ bỏ qua worker, dùng Google trực tiếp. Đặt key bằng lệnh wrangler secret put GOOGLE_API_KEY hoặc deploy lại với [ai] binding (xem docs/API_KEY_SETUP.md).";
+    case "kv_missing":
+      return "Worker: đã triển khai nhưng chưa gắn KV (TRANSLATE_CACHE / TRANSLATE_USAGE) — dịch sẽ bỏ qua worker, dùng Google trực tiếp. Tạo KV rồi deploy lại (xem docs/API_KEY_SETUP.md).";
+    case "error":
+      return "Worker: lỗi" + (st.code ? " (" + st.code + ")" : (st.status != null ? " (HTTP " + st.status + ")" : "")) +
+        " — dịch sẽ bỏ qua worker, dùng Google trực tiếp → MyMemory → từ điển offline.";
+    case "unreachable":
+      return "Worker: không gọi được (" + (st.reason === "timeout" ? "quá thời gian chờ 8 giây" : "mất mạng hoặc sai URL") +
+        ") — kiểm tra lại URL rồi bấm lại. Dịch vẫn chạy bình thường qua Google trực tiếp → MyMemory → từ điển offline.";
+    default:
+      return "Worker: trạng thái không rõ — dịch vẫn chạy bình thường qua Google trực tiếp → MyMemory → từ điển offline.";
+  }
+}
+async function checkTranslateWorkerStatus() {
+  const box = $("translate-worker-status");
+  if (!box) return;
+  box.textContent = "Worker: đang kiểm tra…";
+  let st = null;
+  try {
+    const msg = await callWorkerRaw("check_translate_proxy", {});
+    st = JSON.parse(msg.result);
+  } catch (e) {
+    box.textContent = "Worker: không kiểm tra được (" + (e && e.message ? e.message : e) +
+      ") — dịch vẫn chạy bình thường qua Google trực tiếp → MyMemory → từ điển offline.";
+    return;
+  }
+  box.textContent = proxyStatusText(st);
+}
+$("btn-translate-worker-check").addEventListener("click", checkTranslateWorkerStatus);
+// Mở tab Dịch thì làm mới trạng thái worker: chưa có URL thì hiện ngay
+// "chưa triển khai" (không tốn request mạng); có URL thì kiểm tra thật
+// (1 lần GET, không chặn gì khác).
+function refreshTranslateWorkerStatus() {
+  const box = $("translate-worker-status");
+  if (!box) return;
+  let url = "";
+  try { url = (localStorage.getItem("pb3_translate_proxy") || "").trim(); } catch (e) { /* localStorage không có */ }
+  if (!url) { box.textContent = proxyStatusText({ state: "not_set" }); return; }
+  checkTranslateWorkerStatus();
+}
 // ---- LibreTranslate (mục C1, tùy chọn, mặc định tắt) ----
 // Bản public libretranslate.com cần API key nên KHÔNG tự dùng: chỉ bật
 // khi người dùng tự dán endpoint (+ key nếu instance của họ yêu cầu) —

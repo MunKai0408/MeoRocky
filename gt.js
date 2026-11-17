@@ -154,10 +154,76 @@ function consumeUserAbort() {
 // URL worker do người dùng dán ở tab Dịch (app.js lưu localStorage
 // "pb3_translate_proxy"). Để trống = gọi trực tiếp Google như trước.
 let proxyUrl = "";
+// Chuẩn hoá URL proxy do người dùng dán: bỏ khoảng trắng + "/" cuối, thêm
+// "https://" khi gõ trơn hostname (vd beartea-...workers.dev). (T1: trước
+// đây URL không scheme làm fetch lỗi lặng lẽ ở cả đường dịch lẫn kiểm tra
+// trạng thái — fetch coi nó là đường dẫn tương đối trên trang.)
+export function normalizeProxyUrl(url) {
+  const u = typeof url === "string" ? url.trim().replace(/\/+$/, "") : "";
+  if (!u) return "";
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(u)) return u;
+  return "https://" + u;
+}
 export function setTranslateProxyUrl(url) {
-  proxyUrl = typeof url === "string" ? url.trim().replace(/\/+$/, "") : "";
+  proxyUrl = normalizeProxyUrl(url);
 }
 export function getTranslateProxyUrl() { return proxyUrl; }
+
+// ---- Kiểm tra trạng thái Cloudflare Worker (T1) ----
+// GET <proxy-url>/ (không tốn ký tự, không cần key): worker đã deploy trả
+// {ok:true, service:"beartea-translate-proxy", monthly_limit, version};
+// chưa cấu hình key/KV thì trả {ok:false, code:"not_configured" /
+// "kv_not_configured"} (HTTP 503). Hàm này KHÔNG ném lỗi — luôn trả object
+// trạng thái để app.js hiển thị ở tab Dịch. Worker vắng mặt/lỗi KHÔNG chặn
+// luồng dịch: dịch vẫn chạy qua Google trực tiếp → MyMemory → từ điển
+// offline như trước.
+const PROXY_CHECK_TIMEOUT_MS = 8000;
+export async function checkProxyStatus(url) {
+  const target = normalizeProxyUrl(url || proxyUrl);
+  if (!target) return { state: "not_set" };
+  let res;
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), PROXY_CHECK_TIMEOUT_MS);
+    try {
+      res = await fetch(target, { method: "GET" });
+    } finally {
+      clearTimeout(timer);
+    }
+  } catch (e) {
+    if (e && e.name === "AbortError") {
+      return { state: "unreachable", reason: "timeout" };
+    }
+    return { state: "unreachable", reason: "network" };
+  }
+  let data = null;
+  try {
+    data = await res.json();
+  } catch (e) { /* body không phải JSON */ }
+  if (data && data.ok === true && data.service === "beartea-translate-proxy") {
+    // Worker mới trả kèm config ("ok" | "not_configured" |
+    // "kv_not_configured") ở GET / (T1); worker cũ không có trường này thì
+    // coi như đã cấu hình (tương thích ngược). Worker v3 trả thêm
+    // provider ("google" | "workers-ai" | null) để tab Dịch cho biết đường
+    // dịch đang dùng (T1 Workers AI); worker cũ không có thì provider=null.
+    if (data.config === "not_configured") return { state: "not_configured" };
+    if (data.config === "kv_not_configured") return { state: "kv_missing" };
+    return {
+      state: "ok",
+      provider: typeof data.provider === "string" ? data.provider : null,
+      ai_daily_used: typeof data.ai_daily_used === "number" ? data.ai_daily_used : null,
+      ai_daily_limit: typeof data.ai_daily_limit === "number" ? data.ai_daily_limit : null,
+      monthly_limit: typeof data.monthly_limit === "number" ? data.monthly_limit : null,
+      version: typeof data.version === "number" ? data.version : null,
+    };
+  }
+  if (data && data.ok === false && typeof data.code === "string") {
+    if (data.code === "not_configured") return { state: "not_configured" };
+    if (data.code === "kv_not_configured") return { state: "kv_missing" };
+    return { state: "error", code: data.code, error: data.error || null };
+  }
+  return { state: "error", status: res.status };
+}
 
 // MyMemory: dịch miễn phí, không key (giới hạn ~500 ký tự/request ẩn danh,
 // chất lượng thấp hơn Google). Chỉ là tầng fallback giữa Google và từ điển
