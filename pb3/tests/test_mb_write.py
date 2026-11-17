@@ -371,15 +371,33 @@ class TestMbPatch(unittest.TestCase):
         self.assertEqual(val["m_Items"][0]["m_Text"], "mot")
         self.assertEqual(val["m_Items"][1]["m_Text"], "two")
 
-    def test_apply_patch_rejects_patch_inplace(self):
-        # MB v1 chi REBUILD_SECTION — PATCH_INPLACE bi tu choi ro rang.
+    def test_apply_patch_inplace_accepted(self):
+        # mb-write-rest: PATCH_INPLACE duoc ho tro cho MB — dich ngan
+        # hon thi noi tai cho (cung do dai file), gia tri dung.
+        sf = _mb_sf()
+        orig = sf.raw
+        res = u.apply_monobehaviour_patch(u.MbPatchRequest(
+            data=orig, kind="assets", path_id=MB_PID,
+            changes=[{"field_path": "m_Title",
+                      "before": "Hello World", "after": "x"}],
+            write_mode="PATCH_INPLACE", backend=BE, limits=LIM))
+        self.assertTrue(res.verified)
+        self.assertEqual(res.write_mode_used, "PATCH_INPLACE")
+        self.assertEqual(len(res.output_bytes), len(orig))
+        sf2 = u.parse_serialized(res.output_bytes, LIM, where="after")
+        val = u.read_monobehaviour_object(sf2, MB_PID)
+        self.assertEqual(val["m_Title"], "x")
+        self.assertEqual(val["m_Name"], "TestBehaviour")
+
+    def test_apply_patch_rejects_rebuild_all(self):
+        # REBUILD_ALL van bi tu choi ro rang cho MonoBehaviour.
         sf = _mb_sf()
         with self.assertRaises(PB3Error) as cm:
             u.apply_monobehaviour_patch(u.MbPatchRequest(
                 data=sf.raw, kind="assets", path_id=MB_PID,
                 changes=[{"field_path": "m_Title",
                           "before": "Hello World", "after": "x"}],
-                write_mode="PATCH_INPLACE", backend=BE, limits=LIM))
+                write_mode="REBUILD_ALL", backend=BE, limits=LIM))
         self.assertEqual(cm.exception.code, "E_WRITE_DISABLED")
 
     def test_apply_patch_ls_assets(self):

@@ -79,7 +79,8 @@ _PLACEHOLDER_RE = re.compile(
     r"<[A-Za-z][^>]*>|\\[nrt\\'\"]")
 
 _REASON_VI = {
-    "monobehaviour": "MonoBehaviour generic (scan path) / bảng ngôn ngữ CÓ type tree — chưa có đường ghi",
+    "monobehaviour": "key MonoBehaviour có trong game nhưng chưa ép được (ánh xạ vị trí mơ hồ hoặc mô phỏng ghi lỗi — xem skipped trong plan)",
+    "string_table_other_unit": "StringTable ở đơn vị khác trong IPA (key có trong SharedTableData nhưng bảng không nằm trong file đang chọn — ép với file IPA đầy đủ)",
     "not_found": "không tìm thấy trong đơn vị nào",
     "not_json_dict": "TextAsset không phải JSON dạng dict",
     "non_string_value": "giá trị gốc không phải chuỗi",

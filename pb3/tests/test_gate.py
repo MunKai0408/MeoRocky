@@ -491,9 +491,33 @@ class TestGateMonoBehaviour(unittest.TestCase):
         self.assertTrue(terms)
         return sorted(terms)[0]
 
+    def _mb_sf_ambiguous(self):
+        # 2 object cung ten "MyMB", moi object 1 chuoi o 1 ngon ngu khac
+        # nhau: key "MyMB.s1" anh xa 2 vi tri khac nhau -> mo ho, khong
+        # co duong ghi (fail-closed) — de cong van bat unmatched.
+        def _aligned(text):
+            raw = text.encode("utf-8")
+            return struct.pack("<i", len(raw)) + raw + b"\x00" * ((-len(raw)) % 4)
+
+        mb_en = b"\x00" * 28 + _aligned("MyMB") + _aligned(
+            "Press start to play the game now")
+        mb_vi = (b"\x00" * 28 + _aligned("MyMB")
+                 + _aligned("Tôi yêu tiếng Việt rất nhiều"))
+        return build_serialized_file(
+            version=17,
+            objects=[(1001, 0, text_asset_data(
+                "en.json", json.dumps({"other": "zzz"},
+                                      ensure_ascii=False))),
+                     (2001, 1, mb_en),
+                     (2002, 1, mb_vi)],
+            types=[(49, None), (114, b"\x00" * 16)])
+
     def test_mb_unmatched_fails_with_reason(self):
-        sf_bytes = self._mb_sf()
+        # mb-write-rest: key generic MO HO (>1 vi tri) van khong ep
+        # duoc -> cong FAIL voi reason monobehaviour.
+        sf_bytes = self._mb_sf_ambiguous()
         key = self._mb_key(sf_bytes)
+        self.assertEqual(key, "MyMB.s1")
         src = {"other": "zzz", key: key}
         tr = {"other": "zzz đã dịch", key: "[VI] " + key}
         res = _run(sf_bytes, tr, source_texts=src,
@@ -503,8 +527,23 @@ class TestGateMonoBehaviour(unittest.TestCase):
         self.assertEqual(dv["unmatched_by_reason"].get("monobehaviour"), 1)
         self.assertIn("MonoBehaviour", json.dumps(res, ensure_ascii=False))
 
-    def test_mb_unmatched_allowed_passes(self):
+    def test_mb_generic_pressable_passes(self):
+        # mb-write-rest: key generic KHONG mo ho gio ep duoc qua scan-path
+        # -> khong con unmatched -> cong PASS.
         sf_bytes = self._mb_sf()
+        key = self._mb_key(sf_bytes)
+        src = {"other": "zzz", key: key}
+        tr = {"other": "zzz đã dịch", key: "[VI] " + key}
+        res = _run(sf_bytes, tr, source_texts=src,
+                   source_name="t.assets")
+        self.assertEqual(res["verdict"], "PASS")
+        dv = _check(res, "diffverify")
+        self.assertEqual(dv["unmatched_by_reason"], {})
+
+    def test_mb_unmatched_allowed_passes(self):
+        # Key mo ho khong ep duoc nhung nam trong allowlist -> PASS va
+        # allowlist duoc tinh la da dung 1 lan.
+        sf_bytes = self._mb_sf_ambiguous()
         key = self._mb_key(sf_bytes)
         src = {"other": "zzz", key: key}
         tr = {"other": "zzz đã dịch", key: "[VI] " + key}

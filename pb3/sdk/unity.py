@@ -2379,15 +2379,66 @@ def language_source_from_fields(val):
 
 
 
-def scan_monobehaviour_strings(data, endian="<"):
-    """Quét chuỗi trong 1 object MonoBehaviour KHÔNG có type tree.
+def _ls_field_name(d, *names):
+    """(tên field thật đã dùng, giá trị) — tên đầu tiên trong names có trong d."""
+    for n in names:
+        if isinstance(d, dict) and n in d:
+            return n, d[n]
+    return None, None
 
-    Trả (m_Name|None, [chuỗi đã xác minh]). Mỗi chuỗi phải là aligned_string
-    thật: i32 độ dài L ở vị trí căn 4 ngay trước chuỗi, L byte là text UTF-8
-    in được, đệm sau (nếu có) toàn 0. Tìm ứng viên bằng regex chạy bằng C
-    trên bytes rồi chỉ xác minh những ứng viên đó — chạy 59MB trong ~0,2s,
-    không quét từng offset bằng Python. Chuỗi chứa \n (regex cắt làm đôi)
-    vẫn nhận được bằng cách lấy đúng L byte từ đầu chuỗi."""
+
+def language_source_tt_targets(val, source_locale="en"):
+    """Target ghi cho bảng ngôn ngữ I2 CÓ type tree.
+
+    Trả [(term, field_path, before)] hoặc None khi không dò được tên field
+    thật (fail-closed — caller giữ hành vi cũ: ghi note + bỏ qua object).
+    field_path dạng "mSource.mTerms[i].Languages[j]" (tiền tố rỗng nếu bảng
+    ở gốc dict), dùng đúng tên field trong dict đã parse để
+    write_monobehaviour_object_bytes + _verify_mb_values đi theo được.
+    source_locale: cột ngôn ngữ gốc để ghi (mặc định "en"). Chỉ dùng khi
+    language_source_from_fields đã validate cấu trúc bảng."""
+    ls = language_source_from_fields(val)
+    if ls is None:
+        return None
+    src = val.get("mSource") if isinstance(val.get("mSource"), dict) else val
+    prefix = "mSource." if src is not val else ""
+    langs_key, _langs = _ls_field_name(src, "mLanguages", "Languages")
+    terms_key, terms_raw = _ls_field_name(src, "mTerms", "Terms")
+    if langs_key is None or terms_key is None or not isinstance(terms_raw, list):
+        return None
+    col = None
+    for idx, lang in enumerate(ls["languages"]):
+        if lang.get("code") == source_locale:
+            col = idx
+            break
+    if col is None:
+        return None
+    out = []
+    for i, entry in enumerate(terms_raw):
+        if not isinstance(entry, dict):
+            return None
+        _tk, term = _ls_field_name(entry, "Term", "m_Term", "term")
+        values_key, values = _ls_field_name(entry, "Languages", "m_Languages",
+                                            "languages")
+        if not isinstance(term, str) or not isinstance(values, list) \
+                or col >= len(values) or not isinstance(values[col], str):
+            return None
+        out.append((term, "%s%s[%d].%s[%d]" % (prefix, terms_key, i, values_key, col),
+                    values[col]))
+    return out
+
+
+def _scan_monobehaviour_slots(data, endian="<"):
+    """Quét chuỗi trong 1 object MonoBehaviour KHÔNG có type tree, trả slot.
+
+    Trả [(len_pos, str_start, slot_end, value)] theo thứ tự quét (thứ tự
+    byte tăng dần, ổn định cho cùng 1 object): mỗi slot là 1 aligned_string
+    đã xác minh (i32 độ dài L ở vị trí căn 4 ngay trước chuỗi, L byte là
+    text UTF-8 in được, đệm sau (nếu có) toàn 0). slot_end = cuối chuỗi +
+    đệm căn 4 (vị trí slot tiếp theo có thể bắt đầu). `scan_monobehaviour_strings`
+    dùng hàm này (chỉ lấy value) nên thứ tự/số lượng khớp nhau tuyệt đối —
+    writer scan-path (write_scanned_monobehaviour_bytes) và extraction dùng
+    chung 1 thứ tự slot, không lệch chỉ số."""
     data = bytes(data)
     n = len(data)
     name = read_monobehaviour_name(data, endian)
@@ -2408,29 +2459,131 @@ def scan_monobehaviour_strings(data, endian="<"):
             continue
         if size <= 0 or size > 65536 or lp + 4 + size > n:
             continue
+        pad = (-(lp + 4 + size)) % 4
+        se = lp + 4 + size + pad
         if size == len(run):
             s = _mb_text_ok(run)
             if s is None:
                 continue
-            pad = (-(lp + 4 + size)) % 4
-            if pad and any(data[lp + 4 + size:lp + 4 + size + pad]):
+            if pad and any(data[lp + 4 + size:se]):
                 continue
-            out.append(s)
+            out.append((lp, s0, se, s))
         elif size > len(run):
             # Chuỗi chứa \n (regex cắt) hoặc ký tự regex không nhận: lấy đúng size byte.
             s = _mb_text_ok(data[s0:s0 + size])
             if s is None:
                 continue
-            pad = (-(lp + 4 + size)) % 4
             if pad and any(data[s0 + size:s0 + size + pad]):
                 continue
-            out.append(s)
-        else:  # size < len(run): run gộp nhiều chuỗi (không có byte 0 ngăn) — lấy đúng size byte đầu.
+            out.append((lp, s0, se, s))
+        else:  # size < len(run): run gộp nhiều chuỗi — lấy đúng size byte đầu.
             s = _mb_text_ok(run[:size])
             if s is None:
                 continue
-            out.append(s)
+            out.append((lp, s0, se, s))
     return name, out
+
+
+def scan_monobehaviour_strings(data, endian="<"):
+    """Quét chuỗi trong 1 object MonoBehaviour KHÔNG có type tree.
+
+    Trả (m_Name|None, [chuỗi đã xác minh]). Mỗi chuỗi phải là aligned_string
+    thật: i32 độ dài L ở vị trí căn 4 ngay trước chuỗi, L byte là text UTF-8
+    in được, đệm sau (nếu có) toàn 0. Tìm ứng viên bằng regex chạy bằng C
+    trên bytes rồi chỉ xác minh những ứng viên đó — chạy 59MB trong ~0,2s,
+    không quét từng offset bằng Python. Chuỗi chứa \\n (regex cắt làm đôi)
+    vẫn nhận được bằng cách lấy đúng L byte từ đầu chuỗi."""
+    name, slots = _scan_monobehaviour_slots(data, endian)
+    return name, [s for (_lp, _ss, _se, s) in slots]
+
+
+def write_scanned_monobehaviour_bytes(raw, changes, endian="<"):
+    """Ghi lại chuỗi quét được trong 1 MonoBehaviour KHÔNG có type tree.
+
+    changes: [{field_path, before, after}] với field_path dạng "scan[i]"
+    (i = chỉ số slot theo thứ tự của _scan_monobehaviour_slots — cùng thứ tự
+    extraction dùng để đặt tên key generic "<Tên>.s<i+1>"). Chỉ thay đúng
+    slot đã chỉ định bằng segment-splice (giữ nguyên mọi byte khác).
+    Chuỗi mới phải là str, không chứa NUL, mã UTF-8 <= 65536 byte (giới hạn
+    của bộ quét); before phải khớp giá trị hiện tại của slot (không khớp ->
+    từ chối, không đoán). Trả bytes mới; verify bằng cách quét lại: số slot
+    không đổi, slot đổi == after, mọi slot khác giống hệt. Không khớp ->
+    PB3Error. Chuỗi mới ngắn hơn 3 ký tự sẽ bị bộ quét bỏ qua nên verify
+    thất bại — đó là giới hạn có chủ ý (fail-closed), không tự bịa slot."""
+    data = bytes(raw)
+    _name, slots = _scan_monobehaviour_slots(data, endian)
+    by_index = {i: (lp, ss, se, v) for i, (lp, ss, se, v) in enumerate(slots)}
+    repl = {}  # len_pos -> bytes mới của cả slot (i32 + chuỗi + đệm)
+    for ch in changes or []:
+        fp = ch.get("field_path") or ""
+        m = re.match(r"^scan\[(\d+)\]$", fp)
+        if not m:
+            raise PB3Error("E_CONFIG_INVALID",
+                           "field_path scan-path phải dạng scan[i], nhận %r"
+                           % fp, where="scanned_monobehaviour")
+        i = int(m.group(1))
+        if i not in by_index:
+            raise PB3Error("E_CONFIG_INVALID",
+                           "scan[%d] ngoài object (%d slot quét được)"
+                           % (i, len(slots)), where="scanned_monobehaviour")
+        lp, _ss, _se, cur = by_index[i]
+        if ch.get("before") is not None and ch["before"] != cur:
+            raise PB3Error("E_CONFIG_INVALID",
+                           "scan[%d] hiện là %r, khác before %r (dữ liệu đã "
+                           "đổi so với lúc lập plan)" % (i, cur, ch["before"]),
+                           where="scanned_monobehaviour")
+        new = ch.get("after")
+        if not isinstance(new, str) or "\x00" in new:
+            raise PB3Error("E_CONFIG_INVALID",
+                           "giá trị mới cho scan[%d] phải là chuỗi không chứa NUL"
+                           % i, where="scanned_monobehaviour")
+        raw_b = new.encode("utf-8")
+        if len(raw_b) > 65536:
+            raise PB3Error("E_CONFIG_INVALID",
+                           "giá trị mới cho scan[%d] dài %d byte, vượt giới hạn "
+                           "quét 65536" % (i, len(raw_b)),
+                           where="scanned_monobehaviour")
+        w = _Writer(endian)
+        w.aligned_string(new)
+        repl[lp] = w.bytes()
+    if not repl:
+        return data
+    out = bytearray()
+    pos = 0
+    for (lp, _ss, se, _v) in slots:
+        if lp not in repl:
+            continue
+        out += data[pos:lp]
+        out += repl[lp]
+        pos = se
+    out += data[pos:]
+    new_data = bytes(out)
+    # Verify: quét lại + đối chiếu toàn bộ slot.
+    _n2, slots2 = _scan_monobehaviour_slots(new_data, endian)
+    if len(slots2) != len(slots):
+        raise PB3Error("E_VERIFY_FAILED",
+                       "quét lại sau khi ghi được %d slot, khác %d slot gốc "
+                       "(giá trị mới có thể quá ngắn < 3 ký tự nên bộ quét "
+                       "không nhận diện được, hoặc đã tạo slot giả)"
+                       % (len(slots2), len(slots)),
+                       where="scanned_monobehaviour")
+    for ch in changes or []:
+        i = int(re.match(r"^scan\[(\d+)\]$", ch["field_path"]).group(1))
+        if slots2[i][3] != ch["after"]:
+            raise PB3Error("E_VERIFY_FAILED",
+                           "scan[%d] sau khi ghi là %r, khác %r"
+                           % (i, slots2[i][3], ch["after"]),
+                           where="scanned_monobehaviour")
+    for i, (_lp, _ss, _se, v) in enumerate(slots):
+        if i in {int(re.match(r"^scan\[(\d+)\]$", ch["field_path"]).group(1))
+                 for ch in changes}:
+            continue
+        if slots2[i][3] != v:
+            raise PB3Error("E_VERIFY_FAILED",
+                           "scan[%d] không đổi bị đổi %r -> %r sau khi ghi"
+                           % (i, v, slots2[i][3]),
+                           where="scanned_monobehaviour")
+    return new_data
 
 
 def _flatten_typetree_strings(value, prefix, out):
@@ -2688,22 +2841,31 @@ def write_monobehaviour_object_bytes(sf, path_id, changes):
     return head + raw[end:], applied
 
 
-def monobehaviour_write_targets(sf, source_locale="en", shared_index=None):
+def monobehaviour_write_targets(sf, source_locale="en", shared_index=None,
+                                generic_fn=None):
     """Liệt kê chuỗi ghi được trong mọi MonoBehaviour của 1 SerializedFile.
 
     Trả list {path_id, kind, name, key, field_path, before, element?}:
     - language_source (không type tree, byte-walk): mỗi term -> values[cột
       của source_locale]; key = tên term; field_path "terms[i].values[j]".
       Không có cột source_locale -> bỏ qua object kèm lý do trong notes.
+    - language_source_tt (có type tree): bảng I2 — mỗi term -> cột của
+      source_locale; key = tên term; field_path dùng đúng tên field thật
+      (vd "mSource.mTerms[i].Languages[j]"); không dò được tên field thật
+      thì bỏ qua object kèm lý do trong notes (fail-closed).
     - string_table (có type tree): mỗi entry -> m_Localized; key =
       "Collection/Key" (tra ngược từ shared_index {collection: {key: m_Id}});
       field_path "m_TableData[i].m_Localized". Entry thiếu trong shared_index
       thì bỏ qua (không đặt được tên key).
-    - generic (có type tree): mọi lá chuỗi theo _flatten_typetree_strings
-      (key = field_path); chỉ để dùng trực tiếp — build_plan v1 KHÔNG lập
-      entry generic (key không khớp output trích xuất đã gộp).
-    - SharedTableData / Locale / language_source CÓ type tree: bỏ qua ở v1
-      (xem NOTES.md) — target không liệt kê, plan phân loại monobehaviour.
+    - generic: mọi chuỗi của object không phải nguồn ngôn ngữ, ánh xạ đúng
+      key trích xuất qua generic_fn (mặc định None = bỏ qua generic).
+      Hàm generic sống ở sdk.extraction (generic_write_targets) vì nó dùng
+      _mb_generic_kv của extraction; unity KHÔNG import extraction (tránh
+      import vòng unity <-> extraction — extraction đã import unity) nên
+      bên gọi nào cần target generic phải truyền generic_fn vào.
+      field_path "scan[j]" nếu không type tree, field_path thật nếu có;
+      key mơ hồ >1 vị trí thì bỏ qua, không đoán.
+    - SharedTableData / Locale: bỏ qua (key, không phải text dịch).
     shared_index: {collection: {key: m_Id}} (từ mọi SharedTableData trong
     source); thiếu thì StringTable vẫn liệt kê nhưng key là None (plan bỏ qua).
     Trả (targets, notes) với notes = [lý do bỏ qua]."""
@@ -2752,16 +2914,20 @@ def monobehaviour_write_targets(sf, source_locale="en", shared_index=None):
                 continue  # Locale: không phải text dịch
             ls = language_source_from_fields(val)
             if ls is not None:
-                notes.append("MonoBehaviour path_id=%d: bảng ngôn ngữ CÓ type "
-                             "tree — đường ghi typetree cho bảng này chưa hỗ trợ "
-                             "ở v1 (chỉ hỗ trợ byte-walk)" % o.path_id)
+                tt_targets = language_source_tt_targets(val, source_locale)
+                if tt_targets is None:
+                    notes.append("MonoBehaviour path_id=%d: bảng ngôn ngữ CÓ "
+                                 "type tree — không dò được tên field thật nên "
+                                 "không ghi (fail-closed)" % o.path_id)
+                    continue
+                for term, fp, before in tt_targets:
+                    targets.append({"path_id": o.path_id,
+                                    "kind": "language_source_tt",
+                                    "name": name or "", "key": term,
+                                    "field_path": fp, "before": before})
                 continue
-            fields = {}
-            _flatten_typetree_strings(val, "", fields)
-            for fp, s in fields.items():
-                targets.append({"path_id": o.path_id, "kind": "generic",
-                                "name": name or "", "key": fp,
-                                "field_path": fp, "before": s})
+            # Generic có type tree: target lấy từ generic_fn ở cuối
+            # (key khớp output trích xuất, không phải field_path thô).
         else:
             try:
                 raw = sf.object_bytes(o.path_id)
@@ -2789,6 +2955,11 @@ def monobehaviour_write_targets(sf, source_locale="en", shared_index=None):
                                 "name": name, "key": term.get("term"),
                                 "field_path": "terms[%d].values[%d]" % (i, col),
                                 "before": vals[col]})
+    # Generic (cả có/không type tree): key khớp output trích xuất; hàm
+    # generic sống ở sdk.extraction, bên gọi truyền qua generic_fn.
+    # Object nguồn ngôn ngữ đã có target riêng ở trên.
+    if generic_fn is not None:
+        targets.extend(generic_fn(sf))
     return targets, notes
 
 
@@ -4053,6 +4224,62 @@ def apply_patch(req):
                        report=report, verified=True, verify_details=verify_details)
 
 
+def write_monobehaviour_new_bytes(sf, pid, changes):
+    """Tính object bytes mới cho 1 MonoBehaviour sau khi áp dụng changes.
+
+    Dùng CHUNG cho plan mô phỏng (after_sha) + apply (ghi thật) để hai bên
+    luôn đồng ý. Có type tree -> write_monobehaviour_object_bytes (cả ST,
+    I2-tt, generic-tt); không type tree -> scan writer nếu changes toàn
+    scan[i], byte-walk I2 nếu toàn terms[i].values[j]; trộn 2 loại trong 1
+    object -> E_CONFIG_INVALID (không thể xảy ra: 1 object hoặc là bảng I2
+    hoặc là generic). Trả (new_obj_bytes, applied)."""
+    o = sf.get_object(pid)
+    old = sf.object_bytes(pid)
+    if sf.types[o.type_id].node is not None:
+        return write_monobehaviour_object_bytes(sf, pid, changes)
+    fps = [(ch.get("field_path") or "") for ch in changes or []]
+    if not fps:
+        raise PB3Error("E_CONFIG_INVALID",
+                       "patch MonoBehaviour cần changes không rỗng",
+                       where=sf.where + "::%d" % pid)
+    all_scan = all(re.match(r"^scan\[\d+\]$", fp) for fp in fps)
+    all_ls = all(_MB_PATH_RE.match(fp) for fp in fps)
+    if all_scan:
+        new_obj = write_scanned_monobehaviour_bytes(old, changes, sf.endian)
+    elif all_ls:
+        new_obj = write_language_source_bytes(old, changes, sf.endian)
+    else:
+        raise PB3Error("E_CONFIG_INVALID",
+                       "changes cho MonoBehaviour không type tree phải toàn "
+                       "scan[i] hoặc toàn terms[i].values[j], nhận %r"
+                       % (fps,), where=sf.where + "::%d" % pid)
+    applied = [{"field_path": ch.get("field_path"), "before": ch.get("before"),
+                "after": ch.get("after")} for ch in changes]
+    return new_obj, applied
+
+
+def _patch_monobehaviour_inplace(sf_bytes, sf, path_id, new_obj_data):
+    """PATCH_INPLACE cho MonoBehaviour: thay đúng object bytes trong file
+    gốc; bắt buộc độ dài không đổi (đệm NUL cuối object do phía gọi thực
+    hiện). Header 28 byte đầu (m_GameObject/m_Enabled/m_Script) phải giữ
+    nguyên — writer không động vào; lệch thì từ chối thay vì ghi sai."""
+    o = sf.get_object(path_id)
+    old_obj = sf.object_bytes(path_id)
+    if len(new_obj_data) != len(old_obj):
+        raise PB3Error("E_WRITE_DISABLED",
+                       "PATCH_INPLACE cần độ dài không đổi (%d != %d)"
+                       % (len(new_obj_data), len(old_obj)),
+                       where=sf.where + "::%d" % path_id)
+    if new_obj_data[:_MB_HEADER_SIZE] != old_obj[:_MB_HEADER_SIZE]:
+        raise PB3Error("E_CORRUPT",
+                       "object mới đổi header MonoBehaviour (28 byte đầu)",
+                       where=sf.where + "::%d" % path_id)
+    obj_start = sf.data_offset + o.byte_start
+    out = bytearray(sf_bytes)
+    out[obj_start:obj_start + len(new_obj_data)] = new_obj_data
+    return bytes(out)
+
+
 @dataclass
 class MbPatchRequest:
     """Yêu cầu patch 1 MonoBehaviour (language_source / string_table / generic).
@@ -4062,11 +4289,15 @@ class MbPatchRequest:
     path_id: path_id của MonoBehaviour cần ghi.
     changes: [{field_path, before, after, element?}] — field_path theo
       monobehaviour_write_targets ("terms[i].values[j]" cho bảng I2,
-      "m_TableData[i].m_Localized" cho StringTable, "a.b[2].c" cho generic;
+      "m_TableData[i].m_Localized" cho StringTable, "a.b[2].c" cho generic
+      có type tree, "scan[i]" cho generic không type tree;
       "arr[+]" kèm "element" để chèn phần tử mảng mới).
-    write_mode: chỉ "REBUILD_SECTION" ở v1 (PATCH_INPLACE chưa hỗ trợ cho
-      MonoBehaviour — object đổi độ dài khi chuỗi đổi; REBUILD_SECTION
-      dựng lại data section, giữ nguyên metadata ngoài object table).
+    write_mode: "REBUILD_SECTION" (mặc định) hoặc "PATCH_INPLACE" (object
+      mới <= object cũ thì đệm NUL cuối object rồi nối tại chỗ, giữ nguyên
+      độ dài + offset; dài hơn thì leo thang REBUILD_SECTION nếu
+      allow_escalate, không thì từ chối).
+    allow_escalate: True (mặc định, như PatchRequest) — PATCH_INPLACE
+      không chứa được thì leo REBUILD_SECTION thay vì lỗi.
     backend/limits/temp_dir/from_container/apply/verify: như PatchRequest."""
     data: bytes
     kind: str
@@ -4074,6 +4305,7 @@ class MbPatchRequest:
     path_id: int = 0
     changes: Optional[List[dict]] = None
     write_mode: str = "REBUILD_SECTION"
+    allow_escalate: bool = True
     backend: Optional[UnityBackend] = None
     limits: Optional[Limits] = None
     temp_dir: Optional[str] = None
@@ -4173,7 +4405,26 @@ def _verify_mb_values(sf, path_id, changes):
         return ok, details
     info = parse_language_source_bytes(raw, sf.endian)
     if info is None:
-        return False, ["object %d: bảng I2 sau khi ghi parse lại lỗi" % path_id]
+        # Không phải bảng I2 -> generic scan-path: quét lại, đối chiếu từng slot.
+        _n, slots = _scan_monobehaviour_slots(raw, sf.endian)
+        for ch in changes or []:
+            fp = ch.get("field_path") or ""
+            m = re.match(r"^scan\[(\d+)\]$", fp)
+            if not m:
+                ok = False
+                details.append("field_path %r không đúng dạng scan[i]" % fp)
+                continue
+            i = int(m.group(1))
+            if i >= len(slots):
+                ok = False
+                details.append("field_path %r ngoài object sau khi ghi" % fp)
+                continue
+            cur = slots[i][3]
+            if cur != ch.get("after"):
+                ok = False
+                details.append("scan[%d] sau khi ghi là %r, khác %r"
+                               % (i, cur, ch.get("after")))
+        return ok, details
     for ch in changes or []:
         fp = ch.get("field_path") or ""
         m = _MB_PATH_RE.match(fp)
@@ -4197,7 +4448,8 @@ def _verify_mb_values(sf, path_id, changes):
 
 
 def _mb_object_kind(sf, path_id):
-    """Phân loại MonoBehaviour: language_source / string_table / generic."""
+    """Phân loại MonoBehaviour: language_source / language_source_tt /
+    string_table / generic."""
     o = sf.get_object(path_id)
     typ = sf.types[o.type_id]
     raw = sf.object_bytes(path_id)
@@ -4211,24 +4463,29 @@ def _mb_object_kind(sf, path_id):
         return "generic"
     if "m_TableData" in val and "m_LocaleId" in val:
         return "string_table"
+    if language_source_from_fields(val) is not None:
+        return "language_source_tt"
     return "generic"
 
 
 def apply_monobehaviour_patch(req):
-    """Patch 1 MonoBehaviour bằng REBUILD_SECTION; trả PatchResult (đã verify).
+    """Patch 1 MonoBehaviour bằng REBUILD_SECTION hoặc PATCH_INPLACE; trả
+    PatchResult (đã verify).
 
     Đơn vị đầu ra nhỏ nhất như apply_patch: assets độc lập -> chính file
     đó; trong bundle -> chỉ bundle đó (KHÔNG đóng gói lại IPA ngoài).
-    V1 chỉ hỗ trợ REBUILD_SECTION; PATCH_INPLACE/REBUILD_ALL bị từ chối
-    với lý do rõ ràng. Verify 2 lớp: cấu trúc (_verify_assets: chỉ đúng
-    object đổi, metadata giữ nguyên, thứ tự giữ nguyên) + giá trị từng
-    change (_verify_mb_values: đọc lại object, đối chiếu từng field).
+    PATCH_INPLACE: object mới <= object cũ thì đệm NUL cuối object rồi nối
+    tại chỗ (giữ nguyên độ dài + offset + object table); dài hơn thì leo
+    thang REBUILD_SECTION nếu allow_escalate, không thì từ chối. REBUILD_ALL
+    bị từ chối với lý do rõ ràng. Verify 2 lớp: cấu trúc (_verify_assets:
+    chỉ đúng object đổi, metadata giữ nguyên, thứ tự giữ nguyên) + giá trị
+    từng change (_verify_mb_values: đọc lại object, đối chiếu từng field).
     Không đạt -> E_VERIFY_FAILED, bản ứng viên giữ tại temp_dir nếu có."""
-    if req.write_mode != "REBUILD_SECTION":
+    if req.write_mode not in ("REBUILD_SECTION", "PATCH_INPLACE"):
         raise PB3Error("E_WRITE_DISABLED",
-                       "MonoBehaviour v1 chỉ hỗ trợ REBUILD_SECTION "
-                       "(nhận %s); PATCH_INPLACE/REBUILD_ALL chưa hỗ trợ "
-                       "cho MonoBehaviour" % req.write_mode,
+                       "MonoBehaviour chỉ hỗ trợ REBUILD_SECTION/PATCH_INPLACE "
+                       "(nhận %s); REBUILD_ALL chưa hỗ trợ cho MonoBehaviour"
+                       % req.write_mode,
                        where=req.entry or req.kind)
     backend = req.backend or UnityBackend("AUTO", req.limits)
     lim = req.limits or backend.limits
@@ -4271,16 +4528,48 @@ def apply_monobehaviour_patch(req):
     old_obj_data = sf.object_bytes(pid)
     name = read_monobehaviour_name(old_obj_data, sf.endian) or ""
     kind = _mb_object_kind(sf, pid)
-    if sf.types[o.type_id].node is not None:
-        new_obj_data, applied = write_monobehaviour_object_bytes(sf, pid, changes)
-    else:
-        new_obj_data = write_language_source_bytes(old_obj_data, changes, sf.endian)
-        applied = [{"field_path": ch.get("field_path"), "before": ch.get("before"),
-                    "after": ch.get("after")} for ch in changes]
+    new_obj_data, applied = write_monobehaviour_new_bytes(sf, pid, changes)
     pad_note = []
-    mode = "REBUILD_SECTION"
+    mode = req.write_mode
+    if mode == "PATCH_INPLACE" and len(new_obj_data) > len(old_obj_data):
+        if req.allow_escalate:
+            mode = "REBUILD_SECTION"
+            pad_note.append("object mới dài hơn %d byte: PATCH_INPLACE không "
+                            "chứa được, chuyển REBUILD_SECTION."
+                            % (len(new_obj_data) - len(old_obj_data)))
+        else:
+            raise PB3Error("E_WRITE_DISABLED",
+                           "object mới dài hơn %d byte; PATCH_INPLACE từ chối "
+                           "(không cắt cụt). Bật REBUILD_SECTION."
+                           % (len(new_obj_data) - len(old_obj_data)),
+                           where=req.entry or req.kind)
+    if mode == "PATCH_INPLACE":
+        pad = len(old_obj_data) - len(new_obj_data)
+        padded = new_obj_data + b"\x00" * pad
+        if (kind == "language_source"
+                and parse_language_source_bytes(padded, sf.endian) is None):
+            # Bảng I2 byte-walk giới hạn trailing <= 65536: đệm quá lớn thì
+            # parse lại sẽ lỗi — leo thang thay vì để verify thất bại.
+            if req.allow_escalate:
+                mode = "REBUILD_SECTION"
+                pad_note.append("đệm NUL %d byte làm bảng I2 vượt giới hạn "
+                                "trailing: chuyển REBUILD_SECTION." % pad)
+            else:
+                raise PB3Error("E_WRITE_DISABLED",
+                               "PATCH_INPLACE cần đệm %d byte, vượt giới hạn "
+                               "trailing của bảng I2; bật REBUILD_SECTION."
+                               % pad, where=req.entry or req.kind)
+        if mode == "PATCH_INPLACE":
+            if pad:
+                pad_note.append("object mới ngắn hơn %d byte: đệm NUL cuối "
+                                "object (giữ nguyên độ dài + offset)" % pad)
+            new_obj_data = padded
     if req.apply:
-        new_assets = _rebuild_assets_section(sf, pid, {pid: new_obj_data})
+        if mode == "PATCH_INPLACE":
+            new_assets = _patch_monobehaviour_inplace(assets_bytes, sf, pid,
+                                                      new_obj_data)
+        else:
+            new_assets = _rebuild_assets_section(sf, pid, {pid: new_obj_data})
     else:
         new_assets = assets_bytes
     if unit == "bundle":
