@@ -301,6 +301,9 @@ diff -rq -x __pycache__ -x logs -x reports -x workspace -x .pytest_cache <pristi
   (11 file text, từ head `9c66fc53`, sync-base đã kiểm khớp), PR #3, ĐÃ GỘP vào main
   (`fead921f06a63d07ece4ad1f567906e9c9337dbb`) 2026-11-17. Nhánh `auto/p0-3` giữ nguyên,
   không xóa. Dữ liệu trích từ game (deliver_p03_locales/) KHÔNG commit vào repo.
+- Sửa khẩn cache: đẩy thẳng main (sửa nhỏ, khẩn, đã kiểm xanh), commit
+  `88e077ef46bb60eaa9a5afdff590343ffaef35bb` (23 file, từ head `c642b4ad`)
+  2026-11-17. Không qua nhánh/PR vì cần lên live ngay để SW mới kích hoạt.
 
 ## Backlog còn lại (thứ tự)
 
