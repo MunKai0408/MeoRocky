@@ -3151,7 +3151,11 @@ state.rebuild = null;           // {translations, provenance, preview, applied, 
 state.rebuildFile = null;       // {translations, provenance, name} khi nhập file từ máy
 function rebuildFreshState() {
   return { translations: null, provenance: null, preview: null,
-           applied: false, fileKey: null };
+           applied: false, fileKey: null,
+           // M2: ket qua cua lan ap THAT gan nhat (rebuildRun(false)) —
+           // rieng voi preview (dry-run) vi preview khong co file da ghi
+           // (output=null); buoc 5 dung appliedResult.units de dong goi.
+           appliedResult: null };
 }
 function rebuildResetState() {
   // Reset khi đổi/bỏ file: chỉ hủy kết quả xem trước của file cũ
@@ -3174,9 +3178,11 @@ function rebuildResetState() {
   if (info && !keepInfo) info.textContent = "Chưa chọn nguồn bản dịch.";
   for (const id of ["btn-rebuild-apply", "btn-rebuild-reextract",
                     "btn-rebuild-choose-all-kept",
-                    "btn-rebuild-choose-all-dropped"]) {
+                    "btn-rebuild-choose-all-dropped", "btn-repack-ipa"]) {
     const b = $(id); if (b) b.disabled = true;
   }
+  const rp = $("repack-result");
+  if (rp) rp.innerHTML = "";
   refreshRebuildFileInfo();
   // P0-2: đổi/bỏ file thì verdict cổng cũ hết hạn (cổng gắn với đúng
   // file + bản dịch đã kiểm) — hủy verdict, nút Ghi tắt tới khi kiểm lại.
@@ -3376,7 +3382,9 @@ async function rebuildRun(dryRun) {
       refreshRebuildApplyEnabled();
     } else {
       st.applied = true;
+      st.appliedResult = parsed; // M2: ket qua ap that (co output) cho buoc 5.
       const rb2 = $("btn-rebuild-reextract"); if (rb2) rb2.disabled = false;
+      refreshRepackEnabled();
     }
     rebuildRenderResult(parsed);
   } catch (e) {
@@ -3447,6 +3455,65 @@ $("btn-rebuild-reextract").addEventListener("click", async () => {
     showError("Đã nạp file vừa ép (" + ld.name + ") — bấm “Trích xuất text” để kiểm vòng tròn.");
   } catch (e) { showError("Nạp lại file vừa ép lỗi: " + e.message); }
 });
+
+// ---- Bước 5 — Đóng gói lại IPA (M2) ----
+// Nút chỉ bật khi: đã ép xong bước 4 (applied) + kết quả áp thật có ít
+// nhất 1 đơn vị đã ghi file (output) + file gốc đang chọn đúng là file
+// đã ép (fileKey) + là .ipa. Mọi đầu vào từ file game/bản dịch đều qua
+// esc() khi hiển thị; kết quả kiểm tra (checks) hiện đủ 6 mục PASS/FAIL
+// trước khi file được tải về (download tự chạy qua runOp fileOut=true
+// chỉ khi bridge đã verify đạt — FAIL thì bridge đã xóa file lỗi và
+// ném E_VERIFY_FAILED nên không có gì để tải).
+function refreshRepackEnabled() {
+  const b = $("btn-repack-ipa"); if (!b) return;
+  const st = state.rebuild;
+  const units = st && st.appliedResult && st.appliedResult.units;
+  const isIpa = state.file && /\.ipa$/i.test(state.file.name || "");
+  b.disabled = !(st && st.applied && units && units.length > 0 &&
+    units.every((u) => u && typeof u.output === "string" && u.output) &&
+    st.fileKey === rebuildFileKey() && isIpa);
+}
+async function repackRun() {
+  const st = state.rebuild;
+  const r = $("repack-result");
+  if (!st || !st.applied || !st.appliedResult ||
+      !Array.isArray(st.appliedResult.units) ||
+      !st.appliedResult.units.length) {
+    showError("Chưa ép xong bước 4 — bấm “Ép và ghi file” trước, rồi mới đóng gói lại IPA.");
+    return;
+  }
+  if (st.fileKey !== rebuildFileKey()) {
+    showError("File gốc đã đổi sau khi ép — chọn lại đúng file đã ép rồi bấm “Ép và ghi file” lại trước khi đóng gói.");
+    return;
+  }
+  if (!state.file || !/\.ipa$/i.test(state.file.name || "")) {
+    showError("File gốc đang chọn không phải .ipa — chỉ đóng gói lại IPA.");
+    return;
+  }
+  if (r) r.innerHTML = "";
+  try {
+    const { parsed } = await runOp("Đóng gói lại IPA (M2)", "repack_ipa",
+      [inputPath(), JSON.stringify(st.appliedResult.units)],
+      inputFileArgs(), true);
+    const checks = parsed.checks || [];
+    const ok = checks.length > 0 && checks.every((c) => c.passed);
+    const rows = checks.map((c) => "<li>" + (c.passed ? "✅" : "❌") +
+      " <b>" + esc(c.name) + "</b>: " + esc(c.detail || "") + "</li>").join("");
+    if (r) r.innerHTML = "<p>" + (ok
+      ? "✅ Đóng gói lại IPA xong — kiểm tra đạt tất cả mục, file đã sẵn sàng để lưu."
+      : "❌ Đóng gói lại IPA KHÔNG ĐẠT kiểm tra — file lỗi đã bị xóa, không cho tải về.") + "</p>" +
+      "<p>File: <b>" + esc(parsed.filename || "") + "</b> (" +
+      fmtBytes(parsed.size_after || 0) + ", gốc " +
+      fmtBytes(parsed.size_before || 0) + ") · thay " +
+      (parsed.replaced ? parsed.replaced.length : 0) + " file · " +
+      (parsed.entries || 0) + " entry.</p>" +
+      "<ul>" + rows + "</ul>" +
+      (parsed.note ? "<p class=\"note\">" + esc(parsed.note) + "</p>" : "");
+  } catch (e) {
+    showError("Đóng gói lại IPA lỗi: " + rebuildErrorText(e.message));
+  }
+}
+$("btn-repack-ipa").addEventListener("click", () => repackRun());
 rebuildResetState();
 
 // ---- Cổng kiểm tra trước khi giao (bước 6) — P0-2 ----

@@ -533,7 +533,7 @@
 
   <div id="tab-mod" class="card" hidden>
     <h2>Mod — patch TextAsset (menu [1] bản iSH)</h2>
-    <p class="note">Ép bản dịch vào file game theo 4 bước bên dưới: chọn bản dịch → xem trước → cổng kiểm tra → ép và ghi file. File gốc không bao giờ bị ghi đè; output là đơn vị nhỏ nhất đã patch, <b>không phải</b> IPA đóng gói lại.</p>
+    <p class="note">Ép bản dịch vào file game theo 5 bước bên dưới: chọn bản dịch → xem trước → cổng kiểm tra → ép và ghi file → đóng gói lại IPA. File gốc không bao giờ bị ghi đè; output là đơn vị nhỏ nhất đã patch, <b>không phải</b> IPA đóng gói lại.</p>
 
     <h3>Bước 1 — Ép lại vào file gốc (E)</h3>
     <p class="note">Ép bản dịch vào đúng đơn vị (bundle/.assets) theo provenance + key, 1 plan mỗi đơn vị. <b>(E) ghi được TextAsset JSON dạng dict + MonoBehaviour/StringTable</b> — key MonoBehaviour generic (scan path) và bảng ngôn ngữ CÓ type tree vẫn chưa ghi được, sẽ liệt kê rõ là không ép được, không bỏ im lặng. Xem trước (dry-run) trước, rồi mới ghi. Nút ghi chỉ bật sau khi đã xem trước VÀ cổng kiểm tra (bước 6) bên dưới ĐẠT cho đúng file + bản dịch này. File gốc KHÔNG bị ghi đè; output là đơn vị nhỏ nhất đã patch, <b>không phải</b> IPA đóng gói lại; cần re-sign gói ngoài thì game mới nhận. Bundle .unity3d độc lập lớn ghi theo luồng (streaming); bundle v9 chỉ đọc, bundle mã hóa không giải mã.</p>
@@ -616,6 +616,13 @@
       <button id="btn-rebuild-apply" disabled>Ép và ghi file</button>
       <button id="btn-rebuild-reextract" class="secondary" disabled>Trích lại file vừa ép để kiểm</button>
     </div>
+
+    <h3>Bước 5 — Đóng gói lại IPA</h3>
+    <p class="note">Đóng gói các đơn vị đã ép ở bước 4 trở lại file IPA gốc thành file IPA mới (tên <b>-mod.ipa</b>) để cài chơi được — chỉ bật sau khi đã “Ép và ghi file” thành công và file gốc là IPA. Trước khi cho tải về, tool kiểm tra lại: zip toàn vẹn, đúng cấu trúc Payload, Info.plist nguyên vẹn, file đã vá đúng vị trí + nội dung mới, các file khác giữ nguyên từng byte. Chữ ký cũ giữ nguyên nên đã hết hiệu lực — cần ký lại bằng chứng chỉ của bạn trước khi cài.</p>
+    <div class="row">
+      <button id="btn-repack-ipa" disabled>Đóng gói lại IPA</button>
+    </div>
+    <div id="repack-result"></div>
 
     <details id="mod-advanced">
       <summary>Nâng cao</summary>
