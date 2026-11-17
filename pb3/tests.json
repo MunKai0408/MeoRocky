@@ -148,6 +148,7 @@
   "pb3/tests/test_progress_steady.py",
   "pb3/tests/test_rebuild.py",
   "pb3/tests/test_registry.py",
+  "pb3/tests/test_repack_ipa.py",
   "pb3/tests/test_rules_ish_only.py",
   "pb3/tests/test_rules_where.py",
   "pb3/tests/test_runner.py",

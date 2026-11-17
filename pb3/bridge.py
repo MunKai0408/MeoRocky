@@ -1986,6 +1986,46 @@ def rebuild_apply(path, translations_json, provenance_json=None,
         return _err(e)
 
 
+def repack_ipa(path, units_json):
+    """(M2) Dong goi lai IPA [buoc 5] — tu ket qua (E) da ap that.
+
+    units_json: JSON list [{unit: vpath, output: ten file da ghi}] lay
+    tu `units` trong ket qua cua rebuild_apply (dry_run=False). Doc
+    tung don vi da patch trong /tmp/rebuild_out, thay vao dung zip
+    entry trong file IPA goc (sdk/repack.py), kiem tra lai toan bo
+    (zip toan ven, thu tu entry, cau truc Payload, Info.plist nguyen
+    ven, entry da thay khop sha, entry khac giu nguyen) roi moi tra
+    `dest` de worker gui file ve tai (nhu moi op co output). File goc
+    KHONG bi ghi de; output ten "<game>-mod.ipa". Khong can verdict
+    cong o day: noi dung da va da qua cong PASS luc ap (E); buoc nay
+    chi kiem tra tinh toan ven cua viec dong goi lai.
+    Loi toan cuc tra _err; kiem tra sau dong goi FAIL thi file loi da
+    bi xoa va tra E_VERIFY_FAILED.
+    """
+    try:
+        from sdk import repack as _repack
+
+        _check_size(path)
+        try:
+            units = json.loads(units_json)
+        except ValueError:
+            raise ValueError("units_json khong phai JSON hop le "
+                             "(can list [{unit, output}] tu ket qua "
+                             "ap (E)).")
+        data = open(path, "rb").read()
+        orig_sha = hashlib.sha256(data).hexdigest()
+        res = _repack.repack_from_rebuild_units(
+            path, units, limits=None)
+        # File goc khong doi: xac minh sha sau khi chay (nhu rebuild_apply).
+        if hashlib.sha256(open(path, "rb").read()).hexdigest() != orig_sha:
+            raise ValueError("file goc da doi trong luc dong goi — "
+                             "tu choi ket qua.")
+        res["source_sha256"] = orig_sha
+        return json.dumps(res, ensure_ascii=False)
+    except Exception as e:  # noqa: BLE001
+        return _err(e)
+
+
 def delivery_gate(path, translations_json, source_json=None,
                   provenance_json=None, pressed_path=None,
                   allowlist_json=None, font_path=None, choices_json=None,

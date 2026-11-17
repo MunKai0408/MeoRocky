@@ -18,8 +18,10 @@ KHONG tuyen bo du tieu chi vong tron cho nhom key nay.
 
 KHOA REBUILD_ALL: giu nguyen — sdk/unity.py MATURITY="M2", apply_patch
 tu choi REBUILD_ALL du confirm=True. (E) chi dung REBUILD_SECTION.
-KHONG dong goi lai IPA (decision #70): output = don vi nho nhat da patch
+KHONG dong goi lai IPA o day (decision #70): output = don vi nho nhat da patch
 (bundle/.assets), nhieu don vi thi ZIP lai (mau plan._write_outputs).
+Dong goi lai IPA la buoc 5 RIENG (M2, sdk/repack.py) dung ket qua cua
+(E) — khong doi hanh vi mac dinh cua (E).
 KHONG expose sdk/containers.py rebuild_zip vao bridge.
 
 Chi thu vien chuan, Python >= 3.9. Khong goi mang. Dry-run mac dinh o
@@ -757,6 +759,10 @@ def apply_rebuild(source_bytes, *, source_name, translations,
             "mode": mode, "streaming": False,
             "size_before": int(size_before), "size_after": int(len(cur)),
             "warnings": unit_warnings, "unchanged": 0,
+            # M2: ten file da ghi cho don vi nay (gan sau khi ghi o duoi;
+            # None khi dry-run vi chua ghi file nao) — buoc 5 dung de doi
+            # chieu don vi -> file -> zip entry trong IPA goc.
+            "output": None,
         })
         patched.append(((kind, label,
                          "%s|%s" % (vpath, plan["id"])), cur))
@@ -807,6 +813,10 @@ def apply_rebuild(source_bytes, *, source_name, translations,
     if not dry_run and patched:
         outputs, dest, zpath = _write_rebuild_outputs(
             source_name, patched, out_dir, zip_path, src_path=src_path)
+        # M2: gan ten file da ghi cho tung don vi (cung thu tu voi
+        # `patched`/`units_out` — cung vong lap o tren).
+        for u, name in zip(units_out, outputs):
+            u["output"] = name
     return {
         "ok": True, "dry_run": bool(dry_run),
         "units": units_out,
@@ -830,7 +840,8 @@ def apply_rebuild(source_bytes, *, source_name, translations,
         "warnings": warnings, "scan_all": grouped["scan_all"],
         "note": "Output la don vi nho nhat da patch (bundle/.assets), "
                 "KHONG phai IPA dong goi lai. Thay file nay vao game va "
-                "can re-sign goi ngoai thi game moi nhan.",
+                "can re-sign goi ngoai thi game moi nhan. Muon IPA cai "
+                "duoc, dung buoc 5 'Dong goi lai IPA' trong tab Mod.",
     }
 
 
@@ -1028,6 +1039,9 @@ def _apply_streaming(source_bytes, *, source_name, grouped, dry_run, be, lim,
             "size_before": int(size_before),
             "size_after": size_after,
             "warnings": unit_warnings, "unchanged": 0,
+            # M2: ten file da ghi (None khi dry-run) — xem ghi chu o
+            # duong RAM tren.
+            "output": outputs[0] if outputs else None,
         })
     return _streaming_result(
         source_name, grouped, units_out, refused, outputs, dest, zpath,
@@ -1077,7 +1091,8 @@ def _streaming_result(source_name, grouped, units_out, refused, outputs,
         "warnings": warnings, "scan_all": grouped["scan_all"],
         "note": "Output la don vi nho nhat da patch (bundle/.assets), "
                 "KHONG phai IPA dong goi lai. Thay file nay vao game va "
-                "can re-sign goi ngoai thi game moi nhan.",
+                "can re-sign goi ngoai thi game moi nhan. Muon IPA cai "
+                "duoc, dung buoc 5 'Dong goi lai IPA' trong tab Mod.",
     }
 
 
