@@ -655,9 +655,17 @@ def _gt_error_text(exc):
 # Gộp tối đa 100 chuỗi + 5000 ký tự/batch (khớp giới hạn proxy Cloudflare
 # + giữ q joined-text vừa phải cho gtx). Batch lỗi liên tiếp 2 lần thì
 # tắt batch, về dịch từng chuỗi cho phần còn lại.
+# Split-on-failure (tăng tốc dịch): batch lỗi do mất marker thì chia đôi
+# đệ quy thay vì rớt về dịch đơn cả batch — đo thật: 1 batch 100 chuỗi rớt
+# marker = 52s thay vì 2,3s. Batch <= 10 chuỗi thì không chia nữa, về đơn.
 BATCH_MAX_STRINGS = 100
 BATCH_MAX_CHARS = 5000
 _BATCH_FAIL_LATCH = 2
+_BATCH_SPLIT_MIN = 10
+# Số chuỗi tối đa gom cho 1 lần dịch lại ở bước sửa placeholder (PR #9):
+# sửa đơn từng dòng tốn ~0,5s/dòng (đo thật: 28 dòng lệch = ~14s); gom
+# batch <=25 qua _gt_batch thì ~1 request cho 25 dòng.
+_REPAIR_BATCH_STRINGS = 25
 
 _HIGH_PRIO_TOKENS = ("menu", "ui", "button", "btn", "title", "item",
                      "name", "label", "tab", "setting", "option",
@@ -683,6 +691,28 @@ def _priority_of(key, text):
     if any(tok in low_key for tok in _HIGH_PRIO_TOKENS):
         return 0
     return 1
+
+
+def _batch_split_retryable(exc):
+    """Batch lỗi này có nên chia đôi thử lại không (mất marker)?
+
+    Chỉ chia khi lỗi là bad_response/mất marker — gt.js gắn cờ
+    splitRetryable=true vào lỗi batch_failed khi bước google lỗi kind
+    bad_response. 429/quota/cancelled thì chia cũng lỗi như cũ nên không
+    chia. Thuộc tính JS có thể không qua được ranh giới Pyodide nên
+    fallback: nhận diện qua chuỗi "thiếu marker" trong message (gt.js
+    ghi đúng chuỗi này khi tách marker lỗi).
+    """
+    try:
+        flag = getattr(exc, "splitRetryable", None)
+    except Exception:
+        flag = None
+    if isinstance(flag, bool):
+        return flag
+    try:
+        return "thiếu marker" in str(exc)
+    except Exception:
+        return False
 
 
 def _gt_kind(exc):
@@ -751,12 +781,16 @@ async def translate_json_google(json_text, to="vi", credit=True, src="en"):
     (nếu có URL) thì batch thật bằng q mảng của Translation v2. Trước khi
     gửi: khử trùng lặp (dòng đã che giống nhau chỉ dịch 1 lần) + tra từ
     điển offline TRƯỚC (glossary-first) + sắp theo ưu tiên (menu/UI/tên
-    item trước, log/mô tả dài sau). Batch lỗi thì dịch lại từng chuỗi cho
-    batch đó (qua `js.pb3_google_translate`); batch lỗi liên tiếp 2 lần
-    thì tắt batch cho phần còn lại. Không còn sleep 0,4s cố định — tốc độ
-    gọi Google do token bucket bên gt.js giới hạn (2 dồn, nạp 1/500ms) +
-    backoff khi 429. Đoạn nào Google lỗi thì dùng từ điển offline cho đoạn
-    đó rồi dịch tiếp, không crash; lỗi đầu tiên ghi vào network_error.
+    item trước, log/mô tả dài sau). Batch lỗi do mất marker thì chia đôi
+    đệ quy thử lại qua batch (split-on-failure) thay vì rớt cả batch về
+    dịch đơn; chỉ khi chia cũng thất bại hoàn toàn mới dịch đơn lại các
+    chuỗi chưa xong. Batch lỗi liên tiếp 2 lần (không cứu được chuỗi nào)
+    thì tắt batch cho phần còn lại. Bước sửa placeholder (PR #9) dịch lại
+    theo batch <=25 dòng lệch thay vì từng dòng. Không còn sleep 0,4s cố
+    định — tốc độ gọi Google do token bucket bên gt.js giới hạn (2 dồn,
+    nạp 1/500ms) + backoff khi 429 + cooldown 30s khi 429 liên tiếp. Đoạn
+    nào Google lỗi thì dùng từ điển offline cho đoạn đó rồi dịch tiếp,
+    không crash; lỗi đầu tiên ghi vào network_error.
     Proxy báo hết hạn mức tháng (quota) thì dừng gọi Google luôn. Chỉ
     dịch VALUE, giữ KEY; placeholder ({0}, %s), thẻ, xuống dòng được
     che/khôi phục như bản iSH; credit 'Việt Hoá Bởi Bear' gắn như
@@ -972,31 +1006,69 @@ async def translate_json_google(json_text, to="vi", credit=True, src="en"):
         # dừng gọi Google cho phần còn lại, dùng thẳng từ điển offline —
         # khỏi bắt người dùng chờ mỗi chuỗi thử lại 3 lần vô ích.
         consec_failures = 0
+        _split_error = [None]
+
+        async def _translate_batch_split(texts, uids):
+            """Dịch 1 batch qua _gt_batch; lỗi marker thì chia đôi đệ quy.
+
+            Trả danh sách uid CHƯA dịch được qua batch (rỗng = xong hết).
+            Uid nào dịch xong qua batch thì ghi uniq_val/uniq_origin ngay
+            (kể cả khi chỉ 1 nửa batch thành công) — chỉ phần chưa xong
+            mới rơi về dịch đơn. Batch trả sai số chuỗi cũng tính là batch
+            hỏng (như mất marker) và được chia. Lỗi cancelled/quota thì
+            ném lên để caller xử lý như cũ (không chia). Lỗi đầu tiên ghi
+            vào _split_error để caller báo network_error.
+            """
+            nonlocal batch_requests, batch_mode, google_count
+            if _gt_batch is None:
+                return list(uids)
+            if _is_cancelled():
+                raise Exception("(cancelled): người dùng đã hủy dịch.")
+            splittable = False
+            try:
+                raw = await _gt_batch(texts, src, to)
+                items, mode = _coerce_batch_result(raw)
+                if items is None or len(items) != len(uids):
+                    splittable = True
+                    raise ValueError(
+                        "batch trả %s chuỗi, cần %d"
+                        % (len(items) if items is not None else "?",
+                           len(uids)))
+                for uid, val in zip(uids, items):
+                    uniq_val[uid] = val
+                    uniq_origin[uid] = "google"
+                    google_count += len(uniques[uid]["keys"])
+                batch_requests += 1
+                batch_mode = mode
+                return []
+            except Exception as exc:  # noqa: BLE001
+                kind = _gt_kind(exc)
+                if kind in ("cancelled", "quota"):
+                    raise
+                if _split_error[0] is None:
+                    _split_error[0] = exc
+                if (splittable or _batch_split_retryable(exc)) \
+                        and len(uids) > _BATCH_SPLIT_MIN:
+                    mid = len(uids) // 2
+                    left = await _translate_batch_split(
+                        texts[:mid], uids[:mid])
+                    right = await _translate_batch_split(
+                        texts[mid:], uids[mid:])
+                    return left + right
+                return list(uids)
+
         for batch in batches:
             if _is_cancelled():
                 cancelled = True
                 break
             texts = [uniques[uid]["masked"] for uid in batch]
             got_batch = False
+            failed_uids = list(batch)
             if _gt_batch is not None and not quota_hit:
+                _split_error[0] = None
                 try:
-                    raw = await _gt_batch(texts, src, to)
-                    items, mode = _coerce_batch_result(raw)
-                    if items is None or len(items) != len(batch):
-                        raise ValueError(
-                            "batch trả %s chuỗi, cần %d"
-                            % (len(items) if items is not None else "?",
-                               len(batch)))
-                    for uid, val in zip(batch, items):
-                        uniq_val[uid] = val
-                        uniq_origin[uid] = "google"
-                        google_count += len(uniques[uid]["keys"])
-                    batch_requests += 1
-                    batch_mode = mode
-                    batch_failures = 0
-                    consec_failures = 0
-                    got_batch = True
-                except Exception as exc:  # noqa: BLE001 - rơi về từng chuỗi
+                    failed_uids = await _translate_batch_split(texts, batch)
+                except Exception as exc:  # noqa: BLE001 - cancelled/quota
                     kind = _gt_kind(exc)
                     if kind == "cancelled":
                         cancelled = True
@@ -1018,15 +1090,49 @@ async def translate_json_google(json_text, to="vi", credit=True, src="en"):
                                 "Batch dịch lỗi liên tiếp %d lần — tắt batch, "
                                 "dịch từng chuỗi cho phần còn lại."
                                 % _BATCH_FAIL_LATCH)
+                    # Chỉ dịch đơn lại các uid chưa có giá trị (uid nào
+                    # chia đôi đã xong thì giữ bản batch).
+                    failed_uids = [uid for uid in batch
+                                   if uniq_val[uid] is None]
+                else:
+                    if not failed_uids:
+                        batch_failures = 0
+                        consec_failures = 0
+                        got_batch = True
+                    else:
+                        if network_error is None and _split_error[0] is not None:
+                            network_error = _gt_error_text(_split_error[0])
+                        # Tiến độ cho các uid chia đôi đã cứu được (nếu
+                        # có); vòng đơn bên dưới đếm nốt phần còn lại.
+                        done_segments += sum(
+                            len(uniques[uid]["keys"]) for uid in batch
+                            if uniq_val[uid] is not None)
+                        if len(failed_uids) == len(batch):
+                            # Không cứu được chuỗi nào qua batch — tính
+                            # như batch lỗi (đếm latch như trước).
+                            batch_failures += 1
+                            if batch_failures >= _BATCH_FAIL_LATCH:
+                                _gt_batch = None
+                                warnings.append(
+                                    "Batch dịch lỗi liên tiếp %d lần — tắt "
+                                    "batch, dịch từng chuỗi cho phần còn lại."
+                                    % _BATCH_FAIL_LATCH)
+                        else:
+                            # Chia đôi cứu được 1 phần — batch vẫn chạy,
+                            # không đếm latch (lỗi nằm ở vài chuỗi xấu,
+                            # không phải batch hỏng toàn cục).
+                            batch_failures = 0
+                            consec_failures = 0
             if got_batch:
                 done_segments += sum(len(uniques[uid]["keys"])
                                      for uid in batch)
                 _emit("translate", done_segments, total)
                 continue
-            # --- Rơi về từng chuỗi cho batch này (batch lỗi / không có
-            # hàm batch / hết quota thì _gt đã None -> chỉ còn glossary).
+            # --- Rơi về từng chuỗi cho các uid chưa xong (batch lỗi /
+            # không có hàm batch / hết quota thì _gt đã None -> chỉ còn
+            # glossary). Uid nào chia đôi đã dịch xong thì không dịch lại.
             stop_here = False
-            for uid in batch:
+            for uid in failed_uids:
                 if _is_cancelled():
                     cancelled = True
                     stop_here = True
@@ -1114,19 +1220,55 @@ async def translate_json_google(json_text, to="vi", credit=True, src="en"):
                     continue
                 _by_masked.setdefault(_masked, []).append(
                     (_key, _line_no, _tokens))
-            for _masked in list(_by_masked):
+            # Dịch lại theo BATCH (<=25 masked/batch) thay vì 1 lần _gt mỗi
+            # dòng — đo thật: 28 dòng lệch tốn ~14s khi dịch đơn, gom batch
+            # chỉ ~1-2 request. Tiêu chuẩn khớp giữ nguyên
+            # (placeholders_match_strict); dòng nào batch sửa vẫn lệch thì
+            # dịch đơn lại 1 lần như trước (dịch đơn thường giữ token tốt
+            # hơn batch gộp); vẫn lệch thì giữ bản cũ + cảnh báo như trước.
+            _masked_list = list(_by_masked)
+            for _i in range(0, len(_masked_list), _REPAIR_BATCH_STRINGS):
                 if _is_cancelled():
                     break
-                try:
-                    _retry = str(await _gt(_masked, src, to))
-                    single_requests += 1
-                except Exception:
-                    continue
-                for _key, _line_no, _tokens in _by_masked[_masked]:
-                    _src_line = pending[_key][1][_line_no]
-                    if placeholders_match_strict(
-                            _src_line, unmask_line(_retry, _tokens)):
-                        seg_out[(_key, _line_no)] = (_retry, "google")
+                _chunk = _masked_list[_i:_i + _REPAIR_BATCH_STRINGS]
+                _retries = {}
+                if _gt_batch is not None:
+                    try:
+                        _raw = await _gt_batch(_chunk, src, to)
+                        _items, _mode = _coerce_batch_result(_raw)
+                        if _items is not None and len(_items) == len(_chunk):
+                            batch_requests += 1
+                            for _m, _v in zip(_chunk, _items):
+                                _retries[_m] = _v
+                    except Exception:
+                        _retries = {}
+                _need_single = []
+                for _masked in _chunk:
+                    _retry = _retries.get(_masked)
+                    _all_fixed = _retry is not None
+                    if _retry is not None:
+                        for _key, _line_no, _tokens in _by_masked[_masked]:
+                            _src_line = pending[_key][1][_line_no]
+                            if placeholders_match_strict(
+                                    _src_line, unmask_line(_retry, _tokens)):
+                                seg_out[(_key, _line_no)] = (_retry, "google")
+                            else:
+                                _all_fixed = False
+                    if not _all_fixed:
+                        _need_single.append(_masked)
+                for _masked in _need_single:
+                    if _is_cancelled():
+                        break
+                    try:
+                        _retry = str(await _gt(_masked, src, to))
+                        single_requests += 1
+                    except Exception:
+                        continue
+                    for _key, _line_no, _tokens in _by_masked[_masked]:
+                        _src_line = pending[_key][1][_line_no]
+                        if placeholders_match_strict(
+                                _src_line, unmask_line(_retry, _tokens)):
+                            seg_out[(_key, _line_no)] = (_retry, "google")
 
         incomplete_keys = []
         for key, (value, lines, segs) in pending.items():

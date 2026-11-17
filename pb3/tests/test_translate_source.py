@@ -161,6 +161,9 @@ class TranslateFilterCase(unittest.TestCase):
     def test_google_batch_dropped_tokens_recovered_by_single_retry(self):
         # Batch gộp (gtx) hay làm rơi token; dịch đơn lại từng dòng lệch
         # phải khôi phục đủ placeholder, cổng kiểm tra phải PASS.
+        # (feat/translate-speed: bước sửa thử BATCH trước — fake này làm
+        # rơi token ở mọi lần batch nên batch sửa cũng rơi, rồi mới rớt
+        # về đơn: batch_calls = 1 (dịch) + 1 (sửa batch) = 2.)
         fake = _FakeJsDroppingBatch()
         sys.modules["js"] = fake
         try:
@@ -171,7 +174,7 @@ class TranslateFilterCase(unittest.TestCase):
                 json.dumps(kv, ensure_ascii=False), "vi", False, "en")))
         finally:
             sys.modules.pop("js", None)
-        self.assertEqual(fake.batch_calls, 1)
+        self.assertEqual(fake.batch_calls, 2)
         self.assertGreater(fake.single_calls, 0)
         self.assertEqual(res["warnings"], [])
         from sdk.gate import check_placeholders
