@@ -43,7 +43,7 @@ rec("no_http_fetch_during_load", httpFetchCount === 0, `http fetch trong lúc lo
     pyodide.FS.mkdirTree(target.slice(0, target.lastIndexOf("/")));
     pyodide.FS.writeFile(target, new Uint8Array(buf));
   }
-  rec("write_site_files", man.files.length === 94, `${man.files.length} file pb3/ ghi vào /pb3web`, performance.now() - t0); // 94 = 93 + 1 (P0-1 thêm sdk/rebuild.py, 2026-11-17)
+  rec("write_site_files", man.files.length === 95, `${man.files.length} file pb3/ ghi vào /pb3web`, performance.now() - t0); // 95 = 94 + 1 (P0-2 thêm sdk/gate.py, 2026-11-17)
 }
 
 pyodide.runPython("import sys; sys.path.insert(0, '/pb3web')\nimport bridge");

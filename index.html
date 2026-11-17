@@ -647,7 +647,7 @@
     <div id="plan-result"></div>
 
     <h3>Ép lại vào file gốc (E)</h3>
-    <p class="note">Ép bản dịch vào đúng đơn vị (bundle/.assets) theo provenance + key, 1 plan mỗi đơn vị. <b>(E) v1 chỉ ghi TextAsset JSON dạng dict</b> — key MonoBehaviour/StringTable sẽ liệt kê rõ là không ép được, không bỏ im lặng. Xem trước (dry-run) trước, rồi mới ghi. File gốc KHÔNG bị ghi đè; output là đơn vị nhỏ nhất đã patch, <b>không phải</b> IPA đóng gói lại; cần re-sign gói ngoài thì game mới nhận. Bundle .unity3d độc lập lớn ghi theo luồng (streaming); bundle v9 chỉ đọc, bundle mã hóa không giải mã.</p>
+    <p class="note">Ép bản dịch vào đúng đơn vị (bundle/.assets) theo provenance + key, 1 plan mỗi đơn vị. <b>(E) v1 chỉ ghi TextAsset JSON dạng dict</b> — key MonoBehaviour/StringTable sẽ liệt kê rõ là không ép được, không bỏ im lặng. Xem trước (dry-run) trước, rồi mới ghi. Nút ghi chỉ bật sau khi đã xem trước VÀ cổng kiểm tra (bước 6) bên dưới ĐẠT cho đúng file + bản dịch này. File gốc KHÔNG bị ghi đè; output là đơn vị nhỏ nhất đã patch, <b>không phải</b> IPA đóng gói lại; cần re-sign gói ngoài thì game mới nhận. Bundle .unity3d độc lập lớn ghi theo luồng (streaming); bundle v9 chỉ đọc, bundle mã hóa không giải mã.</p>
     <div class="row">
       <label style="flex:1;min-width:180px">Nguồn bản dịch:
         <select id="rebuild-source">
@@ -674,6 +674,48 @@
       <button id="btn-rebuild-choose-all-dropped" class="secondary" disabled>Chọn tất cả: bản loại</button>
     </div>
     <div id="rebuild-result"></div>
+
+    <h3>Cổng kiểm tra trước khi giao (bước 6)</h3>
+    <p class="note">Một cổng kiểm tra duy nhất trước khi giao file: đối chiếu bản dịch với bản gốc (đủ key, không trống), giữ nguyên placeholder/thẻ/xuống dòng, trích lại file đã ép phải khớp bản dịch, font hiển thị phải đủ chữ tiếng Việt đang dùng, và hash/cấu trúc phải khớp kế hoạch ép. Chỉ có 1 kết quả <b>ĐẠT / CHƯA ĐẠT</b> — <b>CHƯA ĐẠT thì nút “Ép và ghi file” ở mục (E) vẫn tắt, không giao file</b>; không có đường giao khi cảnh báo. Cổng chỉ đọc, không ghi file nào. Bản gốc lấy từ file JSON đang mở ở phần B bên trên (lấy từ file trích xuất), hoặc nhập file .json bản gốc từ máy.</p>
+    <div class="row">
+      <label style="flex:1;min-width:180px">Bản gốc (JSON đã trích xuất):
+        <select id="gate-source-mode">
+          <option value="modjson" selected>File JSON đang mở (phần B bên trên)</option>
+          <option value="file">Nhập file .json bản gốc từ máy</option>
+        </select>
+      </label>
+      <button id="btn-gate-import-source" class="secondary">Nhập file .json bản gốc…</button>
+      <input type="file" id="gate-source-file" accept=".json,application/json" class="visually-hidden">
+    </div>
+    <p id="gate-source-info" class="sub">Chưa có bản gốc — lấy file trích xuất ở phần B, hoặc nhập file .json bản gốc.</p>
+    <div class="row">
+      <button id="btn-gate-import-pressed" class="secondary">Nhập file đã ép…</button>
+      <input type="file" id="gate-pressed-file" class="visually-hidden">
+      <button id="btn-gate-clear-pressed" class="secondary">Bỏ file đã ép</button>
+      <span id="gate-pressed-info" class="sub">Chưa chọn file đã ép — cổng sẽ mô phỏng ép trong RAM rồi kiểm (kiểm trước khi ghi).</span>
+    </div>
+    <div class="row">
+      <label style="flex:1;min-width:180px">Font sẽ hiển thị:
+        <select id="gate-font-mode">
+          <option value="scan" selected>Quét font trong file gốc</option>
+          <option value="donor">Font đi kèm Be Vietnam Pro (đủ 142/142)</option>
+          <option value="file">File font do tôi chọn</option>
+        </select>
+      </label>
+      <button id="btn-gate-import-font" class="secondary">Nhập file font…</button>
+      <input type="file" id="gate-font-file" class="visually-hidden">
+    </div>
+    <p id="gate-font-info" class="sub">Chưa chọn file font — đang quét font trong file gốc.</p>
+    <label>Danh sách cho phép (JSON, tùy chọn — key nào được miễn kiểm phải ghi rõ ở đây):
+      <textarea id="gate-allowlist" placeholder='{"allowed_empty": [], "allowed_missing": [], "allowed_extra": [], "allowed_unpressed": [], "allowed_placeholders": []}'></textarea>
+    </label>
+    <div class="row">
+      <label><input type="checkbox" id="gate-partial"> Bản dịch từng phần: key không có trong bản dịch được giữ nguyên tiếng gốc, không tính là thiếu</label>
+    </div>
+    <div class="row">
+      <button id="btn-gate-run">Kiểm tra trước khi giao</button>
+    </div>
+    <div id="gate-result"></div>
   </div>
 
   <div id="tab-batch" class="card" hidden>

@@ -1304,6 +1304,7 @@ function setCurrentGameFile(obj) {
   state.lastMod = null;       // file mới -> kết quả Mod cũ hết hạn (mục C7)
   { const ppb = $("btn-mod-patch-pack"); if (ppb) ppb.disabled = true; }
   if (typeof rebuildResetState === "function") rebuildResetState();
+
   $("file-info").textContent = obj.name + " · " + fmtBytes(obj.size);
   $("file-info").hidden = false;
   $("btn-clear-file").hidden = false;
@@ -3092,6 +3093,9 @@ function rebuildResetState() {
     const b = $(id); if (b) b.disabled = true;
   }
   refreshRebuildFileInfo();
+  // P0-2: đổi/bỏ file thì verdict cổng cũ hết hạn (cổng gắn với đúng
+  // file + bản dịch đã kiểm) — hủy verdict, nút Ghi tắt tới khi kiểm lại.
+  if (typeof gateInvalidate === "function") gateInvalidate();
 }
 function rebuildFileKey() {
   return state.file ? (state.file.name + "|" + state.file.size + "|" +
@@ -3262,6 +3266,13 @@ async function rebuildRun(dryRun) {
   }
   if (!dryRun) {
     if (!st.preview) { showError("Chưa xem trước — bấm “Xem trước (dry-run)” trước khi ghi."); return; }
+    // P0-2: cổng kiểm tra (bước 6) phải ĐẠT cho đúng file + bản dịch +
+    // lựa chọn xung đột hiện tại thì mới ghi; FAIL hoặc chưa kiểm thì
+    // chặn (không có đường giao khi cảnh báo).
+    if (!state.gate || state.gate.verdict !== "PASS" || state.gate.key !== gateKey()) {
+      showError("Chưa qua cổng kiểm tra (bước 6) — chạy “Kiểm tra trước khi giao” ở mục bên dưới và phải ĐẠT thì mới ghi được file.");
+      return;
+    }
     if (!confirm("Ghi bản dịch vào file đã chọn? File gốc KHÔNG bị ghi đè; output chỉ là bundle/.assets, không phải IPA đóng gói lại; cần re-sign gói ngoài thì game mới nhận.")) return;
   }
   if (!(await rebuildConfirmLargeFile())) { showError("Đã huỷ — dùng bản iSH cho file này nếu cần."); return; }
@@ -3271,11 +3282,13 @@ async function rebuildRun(dryRun) {
     const { parsed } = await runOp(label, "rebuild_apply",
       [inputPath(), JSON.stringify(src.translations),
        src.provenance ? JSON.stringify(src.provenance) : null,
-       choices ? JSON.stringify(choices) : null, dryRun, !dryRun],
+       choices ? JSON.stringify(choices) : null, dryRun, !dryRun,
+       dryRun ? null : JSON.stringify(state.gate.result)],
       inputFileArgs(), !dryRun);
     if (dryRun) {
       st.preview = parsed;
-      const b = $("btn-rebuild-apply"); if (b) b.disabled = false;
+      // P0-2: nút Ghi chỉ bật khi đã xem trước VÀ cổng ĐẠT.
+      refreshRebuildApplyEnabled();
     } else {
       st.applied = true;
       const rb2 = $("btn-rebuild-reextract"); if (rb2) rb2.disabled = false;
@@ -3291,6 +3304,7 @@ $("rebuild-source").addEventListener("change", () => {
   const src = rebuildSourceData();
   $("rebuild-source-info").textContent = src.error ? src.error : ("Nguồn: " + src.label + " · " + Object.keys(src.translations).length + " key.");
   refreshRebuildFileInfo();
+  if (typeof gateInvalidate === "function") gateInvalidate();
 });
 $("btn-rebuild-import-json").addEventListener("click", () => { $("rebuild-json-file").click(); });
 $("rebuild-json-file").addEventListener("change", async (ev) => {
@@ -3305,6 +3319,7 @@ $("rebuild-json-file").addEventListener("change", async (ev) => {
     $("rebuild-source").value = "file";
     $("rebuild-source-info").textContent = "Nguồn: file đã nhập (" + f.name + ") · " + Object.keys(obj).length + " key" + (state.rebuildFile.provenance ? " · đã có sidecar." : " · chưa có sidecar — sẽ quét tất cả đơn vị.");
     clearError();
+    if (typeof gateInvalidate === "function") gateInvalidate();
   } catch (e) { showError("Nhập file .json lỗi: " + e.message); }
 });
 $("btn-rebuild-import-sidecar").addEventListener("click", () => { $("rebuild-sidecar-file").click(); });
@@ -3320,6 +3335,7 @@ $("rebuild-sidecar-file").addEventListener("change", async (ev) => {
     $("rebuild-source").value = "file";
     $("rebuild-source-info").textContent = "Đã nhận sidecar " + obj.format + " (" + f.name + ")." + (state.rebuildFile.translations ? " · " + Object.keys(state.rebuildFile.translations).length + " key." : " Hãy nhập thêm file .json chính.");
     clearError();
+    if (typeof gateInvalidate === "function") gateInvalidate();
   } catch (e) { showError("Nhập sidecar lỗi: " + e.message); }
 });
 $("btn-rebuild-preview").addEventListener("click", () => rebuildRun(true));
@@ -3347,6 +3363,261 @@ $("btn-rebuild-reextract").addEventListener("click", async () => {
   } catch (e) { showError("Nạp lại file vừa ép lỗi: " + e.message); }
 });
 rebuildResetState();
+
+// ---- Cổng kiểm tra trước khi giao (bước 6) — P0-2 ----
+// Một điểm vào duy nhất (bridge op delivery_gate + UI này): nhận file
+// gốc (+ file đã ép nếu có) + bản dịch (chung nguồn với (E)) + bản gốc
+// đã trích xuất + provenance, trả 1 verdict PASS/FAIL duy nhất. FAIL
+// thì CHẶN giao: nút "Ép và ghi file" của (E) chỉ bật khi đã xem trước
+// VÀ cổng ĐẠT cho đúng file + bản dịch + lựa chọn xung đột hiện tại
+// (khóa bằng gateKey()); rebuildRun(false) kiểm lại trước khi ghi và
+// truyền verdict sang bridge để bridge đối chiếu sha. Không có đường
+// giao khi cảnh báo. Mọi dữ liệu từ file game/bản dịch đều qua esc().
+// state.gate = {verdict, key, result}; đổi bất kỳ đầu vào nào cũng hủy
+// verdict cũ (gateInvalidate) và tắt nút Ghi tới khi kiểm lại.
+state.gate = null;
+state.gateSource = null;       // {entries, name} khi nhập file bản gốc
+state.gatePressed = null;      // {name, data, size, lastModified}
+state.gateFont = null;         // {name, data, size, lastModified}
+function gateSimpleHash(str) {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < str.length; i++) {
+    h ^= str.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return ("0000000" + h.toString(16)).slice(-8);
+}
+function gateSourceData() {
+  const sel = $("gate-source-mode");
+  const mode = sel ? sel.value : "modjson";
+  if (mode === "file") {
+    const gs = state.gateSource;
+    if (!gs || !gs.entries) return { source: null, label: "chưa nhập file bản gốc" };
+    return { source: gs.entries, label: "file bản gốc đã nhập (" + gs.name + ")" };
+  }
+  const m = state.modJson;
+  if (!m || !m.entries) return { source: null, label: "chưa mở file JSON nào ở phần B" };
+  return { source: m.entries, label: "file JSON đang mở (" + m.name + ")" };
+}
+function gateKey() {
+  // Khóa verdict vào đúng đầu vào đã kiểm; lệch bất kỳ thứ gì thì
+  // verdict cũ không còn hiệu lực (nút Ghi tắt, phải kiểm lại).
+  const src = rebuildSourceData();
+  const gs = gateSourceData();
+  const allow = ($("gate-allowlist") && $("gate-allowlist").value) || "";
+  const partial = !!($("gate-partial") && $("gate-partial").checked);
+  const fontSel = $("gate-font-mode");
+  const fontMode = fontSel ? fontSel.value : "scan";
+  const parts = [
+    rebuildFileKey() || "",
+    src.error ? ("ERR:" + src.error) : JSON.stringify(src.translations || {}),
+    src.provenance ? JSON.stringify(src.provenance) : "",
+    gs.source ? JSON.stringify(gs.source) : "",
+    JSON.stringify(rebuildConflictChoices() || {}),
+    state.gatePressed ? (state.gatePressed.name + "|" + state.gatePressed.size) : "",
+    fontMode,
+    state.gateFont ? (state.gateFont.name + "|" + state.gateFont.size) : "",
+    allow, partial ? "partial" : "full",
+  ];
+  return gateSimpleHash(parts.join("\n"));
+}
+function refreshRebuildApplyEnabled() {
+  const b = $("btn-rebuild-apply");
+  if (!b) return;
+  const st = state.rebuild;
+  const ok = !!(st && st.preview && state.gate && state.gate.verdict === "PASS" &&
+    state.gate.key === gateKey());
+  b.disabled = !ok;
+}
+function gateInvalidate() {
+  state.gate = null;
+  const r = $("gate-result");
+  if (r) r.innerHTML = "";
+  refreshRebuildApplyEnabled();
+}
+function gateRenderResult(parsed) {
+  const t = parsed.totals || {};
+  const pass = parsed.verdict === "PASS";
+  let html = "<p>Kết quả cổng kiểm tra (bước 6): <b>" +
+    (pass ? "ĐẠT — được giao file" : "CHƯA ĐẠT — chưa được giao file") +
+    "</b> · chế độ " + esc(parsed.mode === "pressed" ? "kiểm file đã ép" : "kiểm trước khi ghi") +
+    " · " + (t.changed || 0) + "/" + (t.keys || 0) + " key đã đổi · " +
+    (t.units || 0) + " đơn vị · " + (t.unmatched || 0) + " key chưa ép · " +
+    (t.refused || 0) + " đơn vị bị từ chối</p>";
+  if ((parsed.checks || []).length) {
+    html += "<table><tr><th>Kiểm tra</th><th>Kết quả</th><th>Chi tiết</th></tr>";
+    for (const c of parsed.checks) {
+      html += "<tr><td>" + esc(c.name) + "</td><td><b>" + (c.status === "pass" ? "Đạt" : "Chưa đạt") +
+        "</b></td><td>" + esc(c.summary_vi || "") + "</td></tr>";
+    }
+    html += "</table>";
+  }
+  if ((parsed.errors || []).length) {
+    html += "<p>Lỗi cần sửa (" + parsed.errors.length + "):</p><ul>";
+    for (const e of parsed.errors) html += "<li>" + esc(e) + "</li>";
+    html += "</ul>";
+  }
+  if ((parsed.warnings || []).length) {
+    html += "<p class=\"note\">Cảnh báo: " + esc(parsed.warnings.join("; ")) + "</p>";
+  }
+  const fonts = parsed.fonts || [];
+  if (fonts.length) {
+    html += "<p>Font (" + fonts.length + "):</p><table><tr><th>Font</th><th>Loại</th><th>Độ phủ /142</th><th>Chữ đang dùng còn thiếu</th></tr>";
+    for (const f of fonts) {
+      html += "<tr><td>" + esc(f.name) + (f.supplied ? " (đã chỉ định)" : "") + "</td><td>" + esc(f.kind) +
+        "</td><td>" + (f.covered == null ? "chưa kiểm được" : (f.covered + "/142")) +
+        "</td><td>" + esc((f.missing_used_chars || []).join(" ") || "—") + "</td></tr>";
+    }
+    html += "</table>";
+  }
+  const unmatched = parsed.unmatched || [];
+  if (unmatched.length || (parsed.unmatched_total || 0) > 0) {
+    const REASONS = { monobehaviour: "MonoBehaviour/StringTable — chưa ép được",
+      not_found: "không tìm thấy trong đơn vị nào", not_json_dict: "TextAsset không phải JSON dạng dict",
+      non_string_value: "giá trị gốc không phải chuỗi" };
+    html += "<p>Key chưa ép (" + (parsed.unmatched_total || unmatched.length) +
+      (parsed.unmatched_truncated ? ", chỉ hiện " + unmatched.length + " key đầu" : "") + "):</p>" +
+      "<table><tr><th>Key</th><th>Lý do</th><th>Đơn vị</th></tr>";
+    for (const m of unmatched.slice(0, 50)) {
+      html += "<tr><td>" + esc(m.key) + "</td><td>" + esc(REASONS[m.reason] || m.reason) +
+        "</td><td>" + esc(m.unit || "") + "</td></tr>";
+    }
+    html += "</table>";
+  }
+  const allow = parsed.allowlist_used || {};
+  const allowCounts = allow.counts || {};
+  const allowTotal = Object.values(allowCounts).reduce((a, b) => a + (b || 0), 0);
+  if (allowTotal > 0 || parsed.partial) {
+    html += "<p class=\"note\">Danh sách cho phép đã dùng: " + esc(JSON.stringify(allowCounts)) +
+      (parsed.partial ? " · chế độ bản dịch từng phần." : "") + "</p>";
+  }
+  html += "<p class=\"note\">" + esc(parsed.note || "") + "</p>";
+  $("gate-result").innerHTML = html;
+}
+async function gateRun() {
+  if (!state.file) { showError("Chưa chọn file. Hãy chọn file ở trên trước."); return; }
+  const src = rebuildSourceData();
+  if (src.error) { showError(src.error); return; }
+  const gs = gateSourceData();
+  const fontSel = $("gate-font-mode");
+  const fontMode = fontSel ? fontSel.value : "scan";
+  let fontPath = null;
+  if (fontMode === "donor") fontPath = "/pb3web/fonts/BeVietnamPro-Regular.ttf";
+  else if (fontMode === "file") {
+    if (!state.gateFont) { showError("Chưa nhập file font — bấm “Nhập file font…” hoặc chọn chế độ font khác."); return; }
+    fontPath = "/tmp/input/gate-font__" + state.gateFont.name;
+  }
+  let allowlist = null;
+  const allowText = ($("gate-allowlist") && $("gate-allowlist").value || "").trim();
+  if (allowText) {
+    try {
+      allowlist = JSON.parse(allowText);
+      if (!allowlist || typeof allowlist !== "object" || Array.isArray(allowlist)) throw new Error("phải là JSON object.");
+    } catch (e) { showError("Danh sách cho phép không phải JSON object hợp lệ: " + e.message); return; }
+  }
+  const partial = !!($("gate-partial") && $("gate-partial").checked);
+  const choices = rebuildConflictChoices();
+  const key = gateKey();
+  // File gửi kèm: file gốc (nếu worker chưa có) + file đã ép/font phụ
+  // (tên có tiền tố gate- để không đè file gốc trong /tmp/input).
+  const extras = [];
+  if (state.gatePressed) extras.push({ name: "gate-pressed__" + state.gatePressed.name, data: state.gatePressed.data });
+  if (state.gateFont) extras.push({ name: "gate-font__" + state.gateFont.name, data: state.gateFont.data });
+  const fileKey = rebuildFileKey();
+  const files = (fileKey && state.fileSentFor === fileKey)
+    ? extras : inputFileArgs().concat(extras);
+  const pressedPath = state.gatePressed ? ("/tmp/input/gate-pressed__" + state.gatePressed.name) : null;
+  try {
+    const { parsed } = await runOp("Kiểm tra trước khi giao", "delivery_gate",
+      [inputPath(), JSON.stringify(src.translations),
+       gs.source ? JSON.stringify(gs.source) : null,
+       src.provenance ? JSON.stringify(src.provenance) : null,
+       pressedPath, allowlist ? JSON.stringify(allowlist) : null,
+       fontPath, Object.keys(choices).length ? JSON.stringify(choices) : null,
+       partial],
+      files);
+    state.gate = { verdict: parsed.verdict, key: key, result: parsed };
+    gateRenderResult(parsed);
+    refreshRebuildApplyEnabled();
+    if (parsed.verdict !== "PASS") {
+      showError("Cổng kiểm tra CHƯA ĐẠT — chưa được giao file. Xem lỗi ở kết quả bên dưới, sửa rồi kiểm lại.");
+    }
+  } catch (e) {
+    state.gate = null;
+    refreshRebuildApplyEnabled();
+    showError("Kiểm tra trước khi giao lỗi: " + rebuildErrorText(e.message));
+  }
+}
+function refreshGateSourceInfo() {
+  const el = $("gate-source-info");
+  if (!el) return;
+  const gs = gateSourceData();
+  el.textContent = gs.source
+    ? ("Bản gốc: " + gs.label + " · " + Object.keys(gs.source).length + " key.")
+    : ("Chưa có bản gốc (" + gs.label + ") — cổng sẽ CHƯA ĐẠT ở 2 kiểm tra đầu. Lấy file trích xuất ở phần B, hoặc nhập file .json bản gốc.");
+}
+$("gate-source-mode").addEventListener("change", () => { refreshGateSourceInfo(); gateInvalidate(); });
+$("btn-gate-import-source").addEventListener("click", () => { $("gate-source-file").click(); });
+$("gate-source-file").addEventListener("change", async (ev) => {
+  const f = ev.target.files && ev.target.files[0];
+  ev.target.value = "";
+  if (!f) return;
+  try {
+    const obj = JSON.parse(await f.text());
+    if (!obj || typeof obj !== "object" || Array.isArray(obj)) throw new Error("file phải là JSON object key → giá trị.");
+    for (const [k, v] of Object.entries(obj)) if (typeof v !== "string") throw new Error("giá trị của key " + JSON.stringify(k) + " không phải chuỗi.");
+    state.gateSource = { entries: obj, name: f.name };
+    $("gate-source-mode").value = "file";
+    refreshGateSourceInfo();
+    clearError();
+    gateInvalidate();
+  } catch (e) { showError("Nhập file .json bản gốc lỗi: " + e.message); }
+});
+$("btn-gate-import-pressed").addEventListener("click", () => { $("gate-pressed-file").click(); });
+$("gate-pressed-file").addEventListener("change", async (ev) => {
+  const f = ev.target.files && ev.target.files[0];
+  ev.target.value = "";
+  if (!f) return;
+  try {
+    const data = await f.arrayBuffer();
+    state.gatePressed = { name: f.name, data: data, size: f.size, lastModified: f.lastModified || 0 };
+    $("gate-pressed-info").textContent = "File đã ép: " + f.name + " (" + fmtBytes(f.size) + ") — cổng sẽ kiểm file này thay vì mô phỏng.";
+    clearError();
+    gateInvalidate();
+  } catch (e) { showError("Đọc file đã ép lỗi: " + e.message); }
+});
+$("btn-gate-clear-pressed").addEventListener("click", () => {
+  state.gatePressed = null;
+  $("gate-pressed-info").textContent = "Chưa chọn file đã ép — cổng sẽ mô phỏng ép trong RAM rồi kiểm (kiểm trước khi ghi).";
+  gateInvalidate();
+});
+$("gate-font-mode").addEventListener("change", () => {
+  const mode = $("gate-font-mode").value;
+  $("gate-font-info").textContent = mode === "donor"
+    ? "Dùng font đi kèm Be Vietnam Pro (đủ 142/142) làm font hiển thị."
+    : mode === "file"
+      ? (state.gateFont ? ("File font: " + state.gateFont.name) : "Chưa chọn file font — bấm “Nhập file font…”.")
+      : "Chưa chọn file font — đang quét font trong file gốc.";
+  gateInvalidate();
+});
+$("btn-gate-import-font").addEventListener("click", () => { $("gate-font-file").click(); });
+$("gate-font-file").addEventListener("change", async (ev) => {
+  const f = ev.target.files && ev.target.files[0];
+  ev.target.value = "";
+  if (!f) return;
+  try {
+    const data = await f.arrayBuffer();
+    state.gateFont = { name: f.name, data: data, size: f.size, lastModified: f.lastModified || 0 };
+    $("gate-font-mode").value = "file";
+    $("gate-font-info").textContent = "File font: " + f.name + " (" + fmtBytes(f.size) + ") — cổng kiểm độ phủ theo font này.";
+    clearError();
+    gateInvalidate();
+  } catch (e) { showError("Đọc file font lỗi: " + e.message); }
+});
+$("gate-allowlist").addEventListener("change", () => gateInvalidate());
+$("gate-partial").addEventListener("change", () => gateInvalidate());
+$("btn-gate-run").addEventListener("click", () => gateRun());
+refreshGateSourceInfo();
 
 // ---- Batch: pool worker + checkpoint từng game vào IndexedDB + watchdog hợp tác (Mục 4) ----
 // Kiến trúc:

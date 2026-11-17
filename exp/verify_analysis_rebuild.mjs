@@ -8,7 +8,7 @@
 //
 //  A. Tĩnh: node --check; py_compile; check_analysis_rebuild_static.py
 //     (rebuild.py stdlib-only + Python 3.9, không UnityPy/lz4, không
-//     expose rebuild_zip, manifest 94/165, precache 119 + v20, bridge có
+//     expose rebuild_zip, manifest 95/166, precache 120 + v21, bridge có
 //     op rebuild_apply, plan.py progress_fn, unity.py streaming + khóa
 //     REBUILD_ALL, UI đủ id (E), 2 chỗ innerHTML f.source đã esc).
 //  B. Unit test Python: tests.test_rebuild (32) + test_plan + test_unity.
@@ -26,8 +26,8 @@
 //     C5 từ chối: bundle v9, bundle gắn cờ mã hóa, (Zstd -> none + warning
 //        chỉ kiểm ở unit test nếu thiếu gói zstandard để sinh fixture).
 //  D. Trình duyệt THẬT (Playwright chromium headless shell, 390px, serve
-//     site qua HTTP local): D1 flow (E) preview/apply; D2 reselect file
-//     khác tên -> cảnh báo; D3 file >400MB -> confirm streaming. Nếu thiếu
+//     site qua HTTP local): D1 flow (E) preview -> cổng (P0-2) ĐẠT -> apply;
+//     D2 reselect file khác tên -> cảnh báo; D3 file >400MB -> confirm streaming. Nếu thiếu
 //     Playwright/Chromium thì D = [CHƯA KIỂM CHỨNG], ghi rõ, không bịa PASS.
 //  S. Vỏ trang sau P0-1 (ghi số thật; ngưỡng gzip ĐÃ chốt 102400B).
 import fs from "node:fs";
@@ -46,9 +46,16 @@ const BUNDLE = "Payload/9Kings.app/Data/Raw/aa/iOS/localization-locales_assets_a
 const CAB = "CAB-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const VPATH = BUNDLE + "::" + CAB;
 const VI = {
-  hello: "Xin chào", play: "Chơi", quit: "Thoát",
+  hello: "Xin chào", play: "Chơi", quit: "Thoát", title: "9 vị vua",
   start: "Bắt đầu chơi", options: "Tùy chọn", exit: "Thoát game",
   greeting: "Chào mừng, anh hùng!", farewell: "Tạm biệt!",
+};
+// Bản gốc 9 key của fixture (en/menu/dialog) — P0-2: cổng cần nguồn để
+// so placeholder/newline; driver D1 nhập làm nguồn cổng (chế độ file).
+const EN_SOURCE = {
+  hello: "Hello", play: "Play", quit: "Quit", title: "9 Kings",
+  start: "Start Game", options: "Options", exit: "Exit",
+  greeting: "Welcome, hero!", farewell: "Goodbye!",
 };
 const VENV_PY = "python3";
 const GZIP_THRESHOLD = 102400; // 100*1024, đã chốt ở verify_item6.mjs:86,95
@@ -94,9 +101,9 @@ fs.mkdirSync(TMP, { recursive: true });
     const j = JSON.parse(r.stdout || "{}");
     if (j.fails && j.fails.length) { ok = false; detail = j.fails.join(" | "); }
     else detail = "rebuild.py stdlib-only + Python 3.9 + không UnityPy/lz4 + " +
-      "không expose rebuild_zip + chốt dest!=source + files.json=94 / " +
-      "tests.json=165 + sw.js precache 119 mục có sdk/rebuild.py, không " +
-      "wheel chết, CACHE_VERSION v20-20261117 + bridge rebuild_apply + " +
+      "không expose rebuild_zip + chốt dest!=source + files.json=95 / " +
+      "tests.json=166 + sw.js precache 120 mục có sdk/rebuild.py, không " +
+      "wheel chết, CACHE_VERSION v21-20261117 + bridge rebuild_apply + " +
       "plan.py progress_fn + unity.py streaming + khóa REBUILD_ALL + UI " +
       "đủ id (E) + 2 chỗ innerHTML f.source đã esc + render (E) esc";
   } catch (e) { ok = false; detail = "không đọc được JSON: " + (r.stdout || "") + (r.stderr || ""); }
@@ -392,8 +399,9 @@ try {
   const dialogs = [];
   page.on("dialog", async (d) => { dialogs.push(d.message()); await d.accept(); });
   fs.writeFileSync(TMP + "/vi.json", JSON.stringify(VI, null, 2));
+  fs.writeFileSync(TMP + "/en_source.json", JSON.stringify(EN_SOURCE, null, 2));
 
-  { // D1. Flow (E): chọn fixture -> boot -> tab Mod -> nhập JSON -> preview -> apply
+  { // D1. Flow (E): chọn fixture -> boot -> tab Mod -> nhập JSON -> preview -> cổng ĐẠT -> apply
     const t0 = performance.now();
     await page.goto("http://127.0.0.1:" + PORT + "/index.html");
     await page.setInputFiles("#file-input", FX);
@@ -416,6 +424,22 @@ try {
       () => { const el = document.getElementById("rebuild-result"); return el && el.textContent.includes("XEM TRƯỚC"); },
       null, { timeout: 120000 });
     const previewTxt = await elText("rebuild-result");
+    // P0-2: nút Ghi vẫn TẮT sau preview khi chưa có verdict cổng; chạy
+    // cổng (nguồn = file en_source.json, font = Be Vietnam Pro đi kèm)
+    // rồi nút mới bật khi cổng ĐẠT.
+    const applyDisabledAfterPreview = await page.evaluate(() => document.getElementById("btn-rebuild-apply").disabled);
+    await page.selectOption("#gate-source-mode", "file");
+    await page.setInputFiles("#gate-source-file", TMP + "/en_source.json");
+    await page.waitForFunction(
+      () => { const el = document.getElementById("gate-source-info"); return el && el.textContent.includes("en_source.json"); },
+      null, { timeout: 30000 });
+    await page.selectOption("#gate-font-mode", "donor");
+    await page.click("#btn-gate-run");
+    await page.waitForFunction(
+      () => { const el = document.getElementById("gate-result"); return el && el.textContent.includes("ĐẠT — được giao file"); },
+      null, { timeout: 120000 });
+    const gateTxt = await elText("gate-result");
+    const gatePass = gateTxt.includes("ĐẠT — được giao file");
     const applyEnabled = await page.evaluate(() => !document.getElementById("btn-rebuild-apply").disabled);
     const dlPromise = page.waitForEvent("download", { timeout: 120000 }).catch(() => null);
     await page.click("#btn-rebuild-apply");
@@ -430,10 +454,12 @@ try {
       await dl.saveAs(savePath);
       dlOk = fs.statSync(savePath).size > 0;
     }
-    rec("browser_rebuild_preview_apply", applyDisabledBefore === true && applyEnabled &&
+    rec("browser_rebuild_preview_apply", applyDisabledBefore === true && applyDisabledAfterPreview === true && gatePass && applyEnabled &&
       previewTxt.includes("XEM TRƯỚC") && /đơn vị/.test(previewTxt) &&
       applyTxt.includes("ĐÃ GHI") && dlOk,
-      "nút Ghi tắt trước preview=" + applyDisabledBefore + ", bật sau preview=" + applyEnabled +
+      "nút Ghi tắt trước preview=" + applyDisabledBefore + ", vẫn tắt sau preview chưa qua cổng=" + applyDisabledAfterPreview +
+      ", cổng ĐẠT=" + gatePass + " (font donor, nguồn en_source.json), bật sau cổng ĐẠT=" + applyEnabled +
+      "; cổng: " + JSON.stringify(gateTxt.slice(0, 200)) +
       "; preview: " + JSON.stringify(previewTxt.slice(0, 200)) +
       "; apply: " + JSON.stringify(applyTxt.slice(0, 200)) + "; download nhận được=" + dlOk,
       performance.now() - t0);

@@ -1,0 +1,71 @@
+{
+  "total": 13,
+  "failures": [],
+  "results": {
+    "static_node_py_check": {
+      "ok": true,
+      "detail": "node --check OK: app.js, sw.js, verify_delivery_gate.mjs; py_compile OK: bridge.py, sdk/gate.py, sdk/rebuild.py, sdk/plan.py, tests/test_gate.py",
+      "seconds": 0.4
+    },
+    "static_gate_checks": {
+      "ok": true,
+      "detail": "gate.py stdlib-only + Python 3.9 + không UnityPy/lz4/mạng + không ghi file + đủ 5 kiểm tra (translation_complete, placeholders, diffverify, fonts, integrity) + manifest 95/166 + sw.js precache 120 mục có sdk/gate.py, không mục chết, CACHE_VERSION v21-20261117 + bridge delivery_gate + rebuild_apply bắt verdict + UI đủ id cổng + nút Ghi bị khóa bởi verdict + render cổng esc",
+      "seconds": 0.1
+    },
+    "python_unit_gate_rebuild_plan": {
+      "ok": true,
+      "detail": "unittest tests.test_gate + tests.test_rebuild + tests.test_plan: Ran 103 tests, OK (exit=0)",
+      "seconds": 4.6
+    },
+    "C1_gate_prewrite_pass": {
+      "ok": true,
+      "detail": "delivery_gate pre-write: verdict=PASS, delivery_allowed=true, mode=pre_write, checks=[\"translation_complete\",\"placeholders\",\"diffverify\",\"fonts\",\"integrity\"] (tất cả pass=true), totals={\"keys\":9,\"source_keys\":9,\"source_provided\":true,\"changed\":9,\"units\":1,\"entries\":3,\"unmatched\":0,\"unchanged\":0,\"refused\":0,\"conflicts\":0,\"verified_keys\":9}, source_sha256 khớp=true, sha file gốc sau kiểm khớp trước=true, errors=[]",
+      "seconds": 0.6
+    },
+    "C2_gate_fail_cases": {
+      "ok": true,
+      "detail": "thiếu key title: verdict=FAIL, translation_complete=fail, lỗi nhắc title=true; gãy placeholder {0}: verdict=FAIL, placeholders=fail; không nguồn: verdict=FAIL, translation_complete=fail; font ASCII: verdict=FAIL, fonts=fail, fonts detail=[{\"name\":\"ascii.ttf\",\"kind\":\"ttf\",\"family\":\"GameFont\",\"source\":\"font do người dùng chỉ định\",\"status\":\"partial\",\"covered\":7,\"total\":142,\"missing_total\":135,\"missing_chars\":[\"À\",\"Á\",\"Â\",\"Ã\",\"È\",\"É\",\"Ê\",\"Ì\",\"Í\",\"Ò\",\"Ó\",\"Ô\",\"Õ\",\"Ù\",\"Ú\",\"Ý\",\"à\",\"á\",\"ã\",\"è\",\"é\",\"ì\",\"í\",\"ò\",\"ó\",\"õ\",\"ù\",\"ú\",\"ý\",\"Ă\",\"Đ\",\"Ĩ\",\"ĩ\",\"Ũ\",\"ũ\",\"Ơ\",\"Ư\",\"̀\",\"́\",\"̂\",\"̃\",\"̆\",\"̉\",\"̛\",\"̣\",\"Ạ\",\"ạ\",\"Ả\",\"ả\",\"Ấ\"],\"missing_used_chars\":[\"à\",\"á\",\"ù\",\"ạ\",\"ầ\",\"ắ\",\"ệ\",\"ị\",\"ọ\",\"ừ\"],\"missing_used_total\":10,\"supplied\":true,\"reason\":\"GameFont: thiếu 135/142 ký tự tiếng Việt: U+00C0 (À), U+00C1 (Á), U+00C2 (Â), U+00C3 (Ã), U+00C8 (È), U+00C9 (É), U+00CA (Ê), U+00CC (Ì)…\",\"num_glyphs\":103}]; key lạ ghost_key: verdict=FAIL, diffverify=fail, unmatched có ghost_key=true",
+      "seconds": 0.1
+    },
+    "C3_gate_pressed_mode": {
+      "ok": true,
+      "detail": "pressed thật: verdict=PASS, mode=pressed, delivery_allowed=true, checks=[\"translation_complete:pass\",\"placeholders:pass\",\"diffverify:pass\",\"fonts:pass\",\"integrity:pass\"]; ép sai 1 giá trị: verdict=FAIL, diffverify=fail; cắt ngắn 16 byte: verdict=FAIL; lật 1 byte vùng đệm: verdict=PASS (đúng thiết kế), cảnh báo khác bytes=true; pressed == file gốc (trùng đường dẫn): verdict=FAIL, ok=true, code=null, errors=[\"[Ép lại khớp bản dịch (diffverify)] File đã ép chưa khớp bản dịch: 0 key chưa ép, 12 lệch nội dung, 0 đơn vị bị từ chối.\",\"Key 'hello' trong file đã ép là 'Hello', kế hoạch ép là 'Xin chào' (đơn vị Payload/9Kings.app/Data/Raw/aa/iOS/localization-locales_assets_all.bundle::CAB-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa).\"]",
+      "seconds": 0.1
+    },
+    "C4_verdict_authorizes_apply": {
+      "ok": true,
+      "detail": "verdict PASS: ghi được=true (dest=/tmp/rebuild_out/localization-locales_assets_all.bundle); verdict FAIL: ok=false, code=E_CONFIG_INVALID, dest=null; sai bản dịch: ok=false, code=E_CONFIG_INVALID; sai sha nguồn: ok=false, code=E_CONFIG_INVALID (kỳ vọng cả 3 đều E_CONFIG_INVALID + không ghi)",
+      "seconds": 0
+    },
+    "C5_gate_refusals_v9_encrypted": {
+      "ok": true,
+      "detail": "v9: verdict=FAIL, refused=[{\"unit\":\"CAB-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"code\":\"E_UNSUPPORTED_FORMAT\",\"message\":\"E_UNSUPPORTED_FORMAT: Bundle UnityFS v9 chỉ đọc — chưa hỗ trợ patch. (bundle UnityFS v9 chỉ đọc — chưa hỗ trợ patch (ghi lại bundle v9 chưa được hỗ trợ))\"}], code=null; mã hóa: verdict=FAIL, refused=[{\"unit\":\"<quét tất cả>\",\"code\":\"E_ENCRYPTED\",\"message\":\"E_ENCRYPTED: Dữ liệu hoặc binary được mã hóa/bảo vệ. (bundle mã hóa (flag 0x240))\"}], code=null",
+      "seconds": 0.1
+    },
+    "browser_gate_pass_enables_apply": {
+      "ok": true,
+      "detail": "nút Ghi vẫn tắt sau preview chưa qua cổng=true, cổng ĐẠT=true, bật sau cổng ĐẠT=true; cổng: \"Kết quả cổng kiểm tra (bước 6): ĐẠT — được giao file · chế độ kiểm trước khi ghi · 9/9 key đã đổi · 1 đơn vị · 0 key chưa ép · 0 đơn vị bị từ chốiKiểm traKết quảChi tiếtBản dịch đầy đủĐạt9/9 key có bả\"; apply: \"Kết quả (E): ĐÃ GHI · 9/9 key đã đổi · 1 đơn vị · 0 key không ép được · 0 key giữ nguyên · 0 đơn vị bị từ chốiCảnh báo: khong co provenance: quet tat ca don vi trong file de tim key (cham hon va key t\"; download nhận được=true",
+      "seconds": 7.7
+    },
+    "browser_gate_pressed_mode": {
+      "ok": true,
+      "detail": "cổng với file đã ép từ D1: ĐẠT=true, chế độ kiểm file đã ép=true; cổng: \"Kết quả cổng kiểm tra (bước 6): ĐẠT — được giao file · chế độ kiểm file đã ép · 9/9 key đã đổi · 1 đơn vị · 0 key chưa ép · 0 đơn vị bị từ chốiKiểm traKết quảChi tiếtBản dịch đầy đủĐạt9/9 key có bản dịch, không key trống/thừa.Placeholder và định dạng\"",
+      "seconds": 0.1
+    },
+    "browser_gate_fail_blocks_apply": {
+      "ok": true,
+      "detail": "cổng CHƯA ĐẠT=true, lỗi nhắc key title=true, nút Ghi vẫn tắt=true; cổng: \"Kết quả cổng kiểm tra (bước 6): CHƯA ĐẠT — chưa được giao file · chế độ kiểm trước khi ghi · 8/8 key đã đổi · 1 đơn vị · 0 key chưa ép · 0 đơn vị bị từ chốiKiểm traKết quảChi tiếtBản dịch đầy đủChưa đạtBản dịch chưa đầy đủ: 1 key thiếu.Placeholder và định dạngĐạtPlaceholder/thẻ/xuống dòng giữ nguyên\"",
+      "seconds": 0.2
+    },
+    "browser_390_no_overflow_no_errors": {
+      "ok": true,
+      "detail": "scrollWidth=390 clientWidth=390; pageerror/console-error thật: không có",
+      "seconds": 0
+    },
+    "shell_size_after_gate": {
+      "ok": true,
+      "detail": "shell lần tải đầu sau P0-2: index.html raw=70151B gzip=19709B; kb-store.js raw=8192B gzip=3212B; worker-pool.js raw=14840B gzip=5227B; stream.js raw=18358B gzip=6141B; opfs.js raw=12753B gzip=4045B; app.js raw=294476B gzip=80184B; gt.js raw=34379B gzip=9599B | TỔNG raw=453149B (442.5KB), gzip=128117B (125.1KB). Ngưỡng ĐÃ chốt 102400B: raw CHƯA đạt, gzip CHƯA đạt — số thật ở đây là căn cứ duy nhất. P0-2 thêm code UI cổng (bước 6) nên app.js tăng so với trước.",
+      "seconds": 0
+    }
+  }
+}

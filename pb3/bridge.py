@@ -1773,7 +1773,8 @@ def plan_undo(plan_json, path):
 
 
 def rebuild_apply(path, translations_json, provenance_json=None,
-                  choices_json=None, dry_run=True, confirm=False):
+                  choices_json=None, dry_run=True, confirm=False,
+                  gate_verdict_json=None):
     """(E) Ép bản dịch lại vào file gốc [bước 5, P0-1].
 
     Preview và apply là CÙNG 1 op với cờ dry_run (tiền lệ plan_apply /
@@ -1788,6 +1789,12 @@ def rebuild_apply(path, translations_json, provenance_json=None,
     là đơn vị nhỏ nhất đã patch, KHÔNG phải IPA đóng gói lại.
     Tiến độ thật kind "rebuild" qua _emit. Response: units[]/totals/
     unmatched[]/conflicts[]/refused[]/outputs/dest/zip_path + note.
+    gate_verdict_json (P0-2, tùy chọn): verdict của cổng kiểm tra
+    (bước 6) mà UI bắt buộc phải có trước khi ghi. Khi được truyền,
+    verdict phải là PASS ở chế độ pre_write, đúng file gốc (sha) và
+    đúng bản dịch (translations_sha256) — nếu không thì từ chối ghi
+    với E_CONFIG_INVALID, không ghi gì. Không truyền thì giữ hành vi
+    cũ (đường gọi bridge trực tiếp tự chịu trách nhiệm; UI luôn truyền).
     """
     try:
         from sdk import rebuild as rb
@@ -1816,6 +1823,31 @@ def rebuild_apply(path, translations_json, provenance_json=None,
         # với E_CONFIG_INVALID, không ghi gì.
         data = open(path, "rb").read()
         orig_sha = hashlib.sha256(data).hexdigest()
+        # P0-2: verdict cổng (nếu UI truyền) phải PASS + đúng file + đúng
+        # bản dịch thì mới ghi; FAIL/lệch thì từ chối trước khi ép.
+        if gate_verdict_json and not dry:
+            try:
+                verdict = json.loads(gate_verdict_json)
+            except ValueError:
+                raise ValueError("gate_verdict_json không phải JSON hợp lệ.")
+            if not isinstance(verdict, dict):
+                raise ValueError("gate_verdict_json phải là JSON object.")
+            from sdk import gate as _gate
+            from core.errors import PB3Error as _PB3Error
+            problems = []
+            if verdict.get("verdict") != "PASS" or not verdict.get("delivery_allowed"):
+                problems.append("cổng kiểm tra (bước 6) chưa ĐẠT")
+            if verdict.get("mode") != "pre_write":
+                problems.append("verdict cổng không phải chế độ pre_write")
+            if verdict.get("source_sha256") != orig_sha:
+                problems.append("verdict cổng không đúng file gốc đang chọn")
+            if verdict.get("translations_sha256") != _gate.canonical_translations_sha(translations):
+                problems.append("verdict cổng không đúng bản dịch đang ép")
+            if problems:
+                raise _PB3Error(
+                    "E_CONFIG_INVALID",
+                    "không ghi được: %s — chạy lại cổng kiểm tra (bước 6) cho đúng file + bản dịch này."
+                    % "; ".join(problems), where="rebuild")
 
         def _pf(done, total):
             _emit("rebuild", done, total)
@@ -1836,6 +1868,109 @@ def rebuild_apply(path, translations_json, provenance_json=None,
         elif res.get("zip_path"):
             res["filename"] = "rebuild-%s.zip" % (
                 res["units"][0]["plan_id"] if res.get("units") else "out")
+        return json.dumps(res, ensure_ascii=False)
+    except Exception as e:  # noqa: BLE001
+        return _err(e)
+
+
+def delivery_gate(path, translations_json, source_json=None,
+                  provenance_json=None, pressed_path=None,
+                  allowlist_json=None, font_path=None, choices_json=None,
+                  allow_partial=False):
+    """Cổng kiểm tra trước khi giao (bước 6, P0-2) — ĐIỂM VÀO DUY NHẤT.
+
+    Nhận file gốc (+ file đã ép nếu có) + bản dịch + provenance (+ bản
+    gốc đã trích xuất + danh sách cho phép + font hiển thị) và trả 1
+    verdict PASS/FAIL duy nhất + chi tiết từng kiểm tra + danh sách lỗi
+    bằng ngôn ngữ dễ hiểu. FAIL thì delivery_allowed=False: UI chặn
+    giao file, không có đường giao khi cảnh báo. Op này CHỈ ĐỌC, không
+    ghi file nào; file gốc được xác minh sha sau khi chạy (như
+    rebuild_apply). Không có verdict thì không giao file.
+    pressed_path: file đã ép cần kiểm (trống = kiểm trước khi ghi bằng
+    mô phỏng trong RAM theo đúng đường (E)). font_path: file font sẽ
+    hiển thị (trống = quét font trong file gốc; font đi kèm dùng đường
+    dẫn /pb3web/fonts/BeVietnamPro-Regular.ttf). Tiến độ thật kind
+    "gate" qua _emit.
+    """
+    try:
+        from sdk import gate as _gate
+
+        _check_size(path)
+        try:
+            translations = json.loads(translations_json)
+        except ValueError:
+            raise ValueError("translations phải là JSON object "
+                             "(key -> giá trị mới).")
+        source_texts = None
+        if source_json:
+            try:
+                source_texts = json.loads(source_json)
+            except ValueError:
+                raise ValueError("source_json không phải JSON hợp lệ.")
+        provenance = None
+        if provenance_json:
+            try:
+                provenance = json.loads(provenance_json)
+            except ValueError:
+                raise ValueError("provenance_json không phải JSON hợp lệ.")
+        choices = None
+        if choices_json:
+            try:
+                choices = json.loads(choices_json)
+            except ValueError:
+                raise ValueError("choices_json không phải JSON hợp lệ.")
+        allowlist = None
+        if allowlist_json:
+            try:
+                allowlist = json.loads(allowlist_json)
+            except ValueError:
+                raise ValueError("allowlist_json không phải JSON hợp lệ.")
+        data = open(path, "rb").read()
+        orig_sha = hashlib.sha256(data).hexdigest()
+        # JsNull (Pyodide) là falsy — dùng truthiness như plan_apply.
+        pressed_bytes = None
+        pressed_name = None
+        pressed_arg = None
+        if pressed_path:
+            pressed_arg = str(pressed_path)
+            _check_size(pressed_arg)
+            pressed_bytes = open(pressed_arg, "rb").read()
+            pressed_name = os.path.basename(pressed_arg)
+        # Font: font hiển thị do user chỉ định (nếu có) + quét font
+        # trong file gốc (dùng cache của font_list như font_list()).
+        display_fonts = []
+        font_error = None
+        if font_path:
+            try:
+                fdata = open(str(font_path), "rb").read()
+                display_fonts.append(_gate.font_entry_from_bytes(
+                    fdata, os.path.basename(str(font_path))))
+            except Exception as exc:  # noqa: BLE001 - thành lỗi kiểm tra font
+                font_error = "không đọc được font đã chỉ định (%s): %s" % (
+                    os.path.basename(str(font_path)), exc)
+        fonts = []
+        try:
+            res, _reused = _font_scan_cached(path)
+            fonts = _font_scan_public(res).get("fonts") or []
+        except Exception as exc:  # noqa: BLE001 - thành lỗi kiểm tra font
+            if font_error is None:
+                font_error = "không quét được font trong file gốc: %s" % exc
+
+        def _pf(done, total):
+            _emit("gate", done, total)
+
+        res = _gate.run_gate(
+            data, source_name=os.path.basename(path),
+            translations=translations, source_texts=source_texts,
+            provenance=provenance, choices=choices,
+            pressed_bytes=pressed_bytes, pressed_name=pressed_name,
+            allowlist=allowlist, fonts=fonts,
+            display_fonts=display_fonts, font_error=font_error,
+            progress_fn=_pf, src_path=path, pressed_path=pressed_arg,
+            allow_partial=bool(allow_partial))
+        # File gốc không đổi: xác minh sha sau khi chạy (cổng chỉ đọc).
+        if hashlib.sha256(open(path, "rb").read()).hexdigest() != orig_sha:
+            raise ValueError("file gốc đã đổi trong lúc kiểm — từ chối kết quả.")
         return json.dumps(res, ensure_ascii=False)
     except Exception as e:  # noqa: BLE001
         return _err(e)
