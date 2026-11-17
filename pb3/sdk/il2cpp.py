@@ -547,6 +547,26 @@ def patch_literals(data, patches):
     for idx, text, _off, _ln in iter_literals(fh, header):
         before[idx] = text
     entries = _read_literal_entries(fh, header)
+    # Giữ whitespace 2 đầu của literal gốc (layout): bảng dịch giữ text
+    # ĐÃ STRIP (extract_literals strip để dịch sạch) nên bản dịch chỉ
+    # thay phần text hiển thị; khi vá, gắn lại whitespace gốc của
+    # literal đó để độ dài so theo text đã strip (cái user thấy trong
+    # bảng) và file giữ nguyên layout. Không làm vậy thì literal có
+    # thừa whitespace 2 đầu sẽ không bao giờ vá được ở v39 (bản dịch
+    # 19 byte != gốc 20 byte — vd 9K LIT_000042), dù bản dịch đúng
+    # bằng text đã strip. Literal không có whitespace thừa thì đây
+    # là no-op (prefix/suffix rỗng).
+    eff_patches = {}
+    for _idx, _new in patches.items():
+        if isinstance(_idx, int) and not isinstance(_idx, bool) \
+                and _idx in before and isinstance(_new, str):
+            _raw = before[_idx]
+            _pre = _raw[:len(_raw) - len(_raw.lstrip())]
+            _suf = _raw[len(_raw.rstrip()):]
+            eff_patches[_idx] = _pre + _new.strip() + _suf
+        else:
+            eff_patches[_idx] = _new
+    patches = eff_patches
     out = bytearray(data)
     patched = []
     skipped = []
@@ -697,14 +717,20 @@ def apply_literal_patches(data, table, manifest=None):
                                 "reason": "literal gốc không đọc được "
                                           "(không phải text sạch)"})
             continue
-        if isinstance(m, dict) and "source" in m \
-                and m["source"] != before[idx]:
-            key_results.append({"key": str(key), "index": idx,
-                                "outcome": "skipped",
-                                "reason": "source_mismatch: text gốc ở "
-                                          "index này khác manifest — sai "
-                                          "file metadata, không vá"})
-            continue
+        if isinstance(m, dict) and "source" in m:
+            # Bang dich giu text DA STRIP (extract_literals strip de
+            # dich sach), con literal goc trong file co the thua khoang
+            # trang/xuong dong o 2 dau — so ca raw lan strip, khong thi
+            # literal co thua whitespace se bi loai oan (vd 9K
+            # '-\t Event Count: {0}\n' — bang la '...{0}' da strip).
+            _raw = before[idx]
+            if m["source"] != _raw and m["source"] != _raw.strip():
+                key_results.append({"key": str(key), "index": idx,
+                                    "outcome": "skipped",
+                                    "reason": "source_mismatch: text gốc ở "
+                                              "index này khác manifest — sai "
+                                              "file metadata, không vá"})
+                continue
         patches[idx] = new_text
         key_of_index[idx] = str(key)
     patched_bytes, report = patch_literals(data, patches)

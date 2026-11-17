@@ -209,6 +209,18 @@ class PatchLiteralsV39Test(unittest.TestCase):
         self.assertEqual(rep["patched"], [])
         self.assertIn("length_must_match", rep["skipped"][0]["reason"])
 
+    def test_patch_stripped_text_keeps_edge_whitespace_v39(self):
+        # Hồi quy [ĐÃ ĐO THẬT — patch 9K thật]: literal gốc có thừa
+        # whitespace 2 đầu (vd '...{0}\n', raw 20 byte, strip 19
+        # byte); bản dịch thay phần text đã strip (19 byte) thì phải
+        # vá được — patch gắn lại whitespace gốc nên độ dài file vẫn
+        # đúng bằng raw (20 byte), literal đọc lại giữ '\n' cuối.
+        data = _build_meta_v39(["Event Count: {0}\n", "Change lang"])
+        patched, rep = il2cpp_sdk.patch_literals(
+            data, {0: "Dem su kien: {0}"})  # 16 byte == strip 16 byte
+        self.assertEqual(len(rep["patched"]), 1, rep)
+        self.assertEqual(_literals_of(patched)[0], "Dem su kien: {0}\n")
+
 
 class ApplyLiteralPatchesTest(unittest.TestCase):
     def setUp(self):
@@ -221,6 +233,25 @@ class ApplyLiteralPatchesTest(unittest.TestCase):
             self.data, {"LIT_000000": "Im di!"}, manifest)
         self.assertEqual(rep["patched_count"], 1)
         self.assertEqual(_literals_of(patched)[0], "Im di!")
+        self.assertEqual(rep["key_results"][0]["outcome"], "patched")
+
+    def test_apply_stripped_source_matches_raw_literal(self):
+        # Hồi quy [ĐÃ ĐO THẬT — patch 9K thật trả patched=0]: bảng
+        # dịch giữ text ĐÃ STRIP (extract_literals strip 2 đầu) nhưng
+        # literal gốc trong file có thể thừa whitespace — manifest
+        # source (stripped) phải khớp raw literal đã strip, không thì
+        # key bị loại oan vì source_mismatch.
+        data = _build_meta_v31(["Hello world \n", "Change lang"])
+        res = il2cpp_sdk.extract_literals(io.BytesIO(data), "test")
+        table, manifest = il2cpp_sdk.literals_to_table(res)
+        # Bảng giữ text đã strip, không còn '\n' cuối.
+        self.assertEqual(table["LIT_000000"], "Hello world")
+        self.assertEqual(manifest["LIT_000000"]["source"], "Hello world")
+        patched, rep = il2cpp_sdk.apply_literal_patches(
+            data, {"LIT_000000": "Xin chào"}, manifest)
+        self.assertEqual(rep["patched_count"], 1, rep)
+        # Đọc lại giữ đúng whitespace thừa gốc (" \n" cuối).
+        self.assertEqual(_literals_of(patched)[0], "Xin chào \n")
         self.assertEqual(rep["key_results"][0]["outcome"], "patched")
 
     def test_apply_manifest_source_mismatch_skipped(self):
@@ -402,8 +433,12 @@ class RealIpaIl2cppTest(unittest.TestCase):
 
     @slow
     @unittest.skipUnless(TOM_IPA.exists(), "thiếu IPA Tom thật")
-    def test_tom_patch_one_literal_and_repack(self):
-        # Vá 1 literal thật bằng bản dịch ngắn hơn rồi đóng gói lại IPA.
+    def test_tom_patch_one_literal(self):
+        # Vá 1 literal thật bằng bản dịch ngắn hơn rồi đọc lại đúng
+        # giá trị mới. KHÔNG đóng gói lại IPA ở đây: repack Tom thật
+        # mất ~210 s (vượt trần 180 s/test của run_tests.py) nên phần
+        # repack kiểm bằng test IPA tổng hợp bên dưới + kiểm tay E2E
+        # (6/6 check PASS, xem NOTES.md).
         out = json.loads(bridge.il2cpp_table(str(TOM_IPA), TOM_META))
         self.assertTrue(out["ok"], out)
         table = json.loads(open("/tmp/pb3out/il2cpp-literals.json",
@@ -413,7 +448,7 @@ class RealIpaIl2cppTest(unittest.TestCase):
             encoding="utf-8").read())
         key = next(k for k, v in table.items()
                    if v == "Daily challenge!")
-        # "Thử thách!" = 12 byte <= gốc 16 byte (v31 ghi được).
+        # "Thử thách!" = 13 byte UTF-8 <= gốc 16 byte (v31 ghi được).
         patched = json.loads(bridge.patch_il2cpp_literals(
             str(TOM_IPA), TOM_META,
             json.dumps({key: "Thử thách!"}, ensure_ascii=False),
@@ -427,20 +462,92 @@ class RealIpaIl2cppTest(unittest.TestCase):
         after = _literals_of(data)
         idx = manifest["keys"][key]["literal_index"]
         self.assertEqual(after[idx], "Thử thách!")
-        # Đóng gói lại IPA với metadata đã vá (kiểm tra 6 mục M2).
-        # out_dir đĩa lớn: /tmp tmpfs chỉ 512 MB mà AtomicWriter cần
-        # 2.5x kích thước IPA (~525 MB cho Tom 210 MB) nên không đóng
-        # gói được trong /tmp/repack_out mặc định.
-        repacked = json.loads(bridge.il2cpp_repack(
-            str(TOM_IPA), TOM_META,
-            out_dir="/home/hatch/tmp-pb3test/repack_out"))
-        self.assertTrue(repacked["ok"], repacked)
-        self.assertTrue(all(c["passed"] for c in repacked["checks"]),
-                        repacked["checks"])
-        self.assertIn(TOM_META, repacked["replaced"])
-        # IPA mới chứa metadata đã vá.
-        with zipfile.ZipFile(repacked["dest"], "r") as zf:
-            self.assertEqual(zf.read(TOM_META), data)
+
+    @slow
+    @unittest.skipUnless(NINEKINGS_IPA.exists(), "thiếu IPA 9K thật")
+    def test_9k_patch_one_literal_exact_length(self):
+        # 9K dùng metadata v39 (delta): chỉ vá được khi bản dịch đúng
+        # bằng byte gốc. Lấy literal ASCII đầu tiên, đổi ký tự cuối
+        # sang ký tự ASCII khác (giữ đúng số byte) rồi đọc lại.
+        out = json.loads(bridge.il2cpp_table(str(NINEKINGS_IPA),
+                                             NINEKINGS_META))
+        self.assertTrue(out["ok"], out)
+        table = json.loads(open("/tmp/pb3out/il2cpp-literals.json",
+                                encoding="utf-8").read())
+        manifest = json.loads(open(
+            "/tmp/pb3out/il2cpp-literals.manifest.json",
+            encoding="utf-8").read())
+        key = val = None
+        for k, v in table.items():
+            if v and v.isascii() and len(v) >= 2:
+                key, val = k, v
+                break
+        self.assertIsNotNone(key, "không tìm được literal ASCII để vá")
+        new = val[:-1] + ("Z" if val[-1] != "Z" else "Y")
+        self.assertEqual(len(new.encode("utf-8")),
+                         len(val.encode("utf-8")))
+        patched = json.loads(bridge.patch_il2cpp_literals(
+            str(NINEKINGS_IPA), NINEKINGS_META,
+            json.dumps({key: new}, ensure_ascii=False),
+            json.dumps(manifest, ensure_ascii=False)))
+        self.assertTrue(patched["ok"], patched)
+        self.assertEqual(patched["patched_count"], 1, patched)
+        self.assertTrue(patched["verified"])
+        data = open("/tmp/pb3out/global-metadata.patched.dat",
+                    "rb").read()
+        after = _literals_of(data)
+        idx = manifest["keys"][key]["literal_index"]
+        # Đọc lại giữ whitespace thừa gốc của literal (vd tab đầu);
+        # so phần text đã strip với bản dịch mới.
+        self.assertEqual(after[idx].strip(), new)
+
+    def test_repack_op_on_synthetic_ipa(self):
+        # Repack IPA với metadata đã vá, trên IPA tổng hợp nhỏ (chạy
+        # trong vài giây): chứng minh đường il2cpp_repack -> repack_ipa
+        # (M2, 6 mục) nối đúng; repack IPA thật (Tom 210 MB) đã kiểm
+        # tay E2E 6/6 PASS, không đưa vào suite vì vượt trần 180 s/test.
+        meta = _build_meta_v31(["Daily challenge!", "Change lang"])
+        entry = ("Payload/Test.app/Data/Managed/Metadata/"
+                 "global-metadata.dat")
+        with tempfile.TemporaryDirectory() as td:
+            src = os.path.join(td, "test.ipa")
+            with zipfile.ZipFile(src, "w") as zf:
+                zf.writestr("Payload/Test.app/", b"",
+                            compress_type=zipfile.ZIP_STORED)
+                zf.writestr("Payload/Test.app/Info.plist",
+                            b"<?xml version='1.0'?><plist><dict/></plist>",
+                            compress_type=zipfile.ZIP_DEFLATED)
+                zf.writestr("Payload/Test.app/Data/resources.assets",
+                            b"ASSETS-v1-" + b"A" * 100,
+                            compress_type=zipfile.ZIP_DEFLATED)
+                zf.writestr(entry, meta,
+                            compress_type=zipfile.ZIP_DEFLATED)
+            out = json.loads(bridge.il2cpp_table(src, entry))
+            self.assertTrue(out["ok"], out)
+            table = json.loads(open("/tmp/pb3out/il2cpp-literals.json",
+                                    encoding="utf-8").read())
+            manifest = json.loads(open(
+                "/tmp/pb3out/il2cpp-literals.manifest.json",
+                encoding="utf-8").read())
+            key = next(k for k, v in table.items()
+                       if v == "Daily challenge!")
+            patched = json.loads(bridge.patch_il2cpp_literals(
+                src, entry,
+                json.dumps({key: "Thử thách!"}, ensure_ascii=False),
+                json.dumps(manifest, ensure_ascii=False)))
+            self.assertTrue(patched["ok"], patched)
+            self.assertEqual(patched["patched_count"], 1)
+            data = open("/tmp/pb3out/global-metadata.patched.dat",
+                        "rb").read()
+            repacked = json.loads(bridge.il2cpp_repack(
+                src, entry, out_dir=os.path.join(td, "repack_out")))
+            self.assertTrue(repacked["ok"], repacked)
+            self.assertTrue(all(c["passed"]
+                                for c in repacked["checks"]),
+                            repacked["checks"])
+            self.assertIn(entry, repacked["replaced"])
+            with zipfile.ZipFile(repacked["dest"], "r") as zf:
+                self.assertEqual(zf.read(entry), data)
 
     @slow
     @unittest.skipUnless(NINEKINGS_IPA.exists(), "thiếu IPA 9K thật")
