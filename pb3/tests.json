@@ -93,6 +93,7 @@
   "pb3/tests/test_appendix_b.py",
   "pb3/tests/test_batch.py",
   "pb3/tests/test_batch_cli.py",
+  "pb3/tests/test_bug2_merge.py",
   "pb3/tests/test_color_display.py",
   "pb3/tests/test_compress.py",
   "pb3/tests/test_conformance.py",

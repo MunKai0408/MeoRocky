@@ -1,0 +1,224 @@
+{
+ "boot_ok": true,
+ "cases": [
+  {
+   "case": "build68",
+   "status": "PASS",
+   "checks": [
+    {
+     "name": "chỉ 3 file locale trong out_dir",
+     "ok": true,
+     "detail": "['en.json', 'zh-CN.json', 'zh-TW.json']"
+    },
+    {
+     "name": "zip chỉ chứa 3 file locale",
+     "ok": true,
+     "detail": "['en.json', 'zh-CN.json', 'zh-TW.json']"
+    },
+    {
+     "name": "en.json == en-build68.json (từng key/giá trị)",
+     "ok": true,
+     "detail": "en=2086 key, expected=2086 key"
+    },
+    {
+     "name": "en.json 2086 key",
+     "ok": true,
+     "detail": "2086"
+    },
+    {
+     "name": "zh-CN 2086 key",
+     "ok": true,
+     "detail": "2086"
+    },
+    {
+     "name": "zh-CN cùng tập key với en",
+     "ok": true,
+     "detail": "0"
+    },
+    {
+     "name": "zh-CN 0 key generic",
+     "ok": true,
+     "detail": "[]"
+    },
+    {
+     "name": "zh-TW 2086 key",
+     "ok": true,
+     "detail": "2086"
+    },
+    {
+     "name": "zh-TW cùng tập key với en",
+     "ok": true,
+     "detail": "0"
+    },
+    {
+     "name": "zh-TW 0 key generic",
+     "ok": true,
+     "detail": "[]"
+    },
+    {
+     "name": "en 0 key generic",
+     "ok": true,
+     "detail": "[]"
+    },
+    {
+     "name": "bridge ok",
+     "ok": true,
+     "detail": ""
+    }
+   ]
+  },
+  {
+   "case": "9kings-v1.0.6",
+   "status": "PASS",
+   "checks": [
+    {
+     "name": "chỉ file locale trong out_dir",
+     "ok": true,
+     "detail": "['en.json', 'zh-CN.json', 'zh-TW.json']"
+    },
+    {
+     "name": "zip chỉ chứa file locale",
+     "ok": true,
+     "detail": "['en.json', 'zh-CN.json', 'zh-TW.json']"
+    },
+    {
+     "name": "en.json 2252 key",
+     "ok": true,
+     "detail": "2252"
+    },
+    {
+     "name": "en.json 0 key generic",
+     "ok": true,
+     "detail": "[]"
+    },
+    {
+     "name": "zh-CN.json 2252 key",
+     "ok": true,
+     "detail": "2252"
+    },
+    {
+     "name": "zh-CN.json 0 key generic",
+     "ok": true,
+     "detail": "[]"
+    },
+    {
+     "name": "zh-TW.json 2252 key",
+     "ok": true,
+     "detail": "2252"
+    },
+    {
+     "name": "zh-TW.json 0 key generic",
+     "ok": true,
+     "detail": "[]"
+    },
+    {
+     "name": "zh-CN.json cùng tập key với en.json",
+     "ok": true,
+     "detail": "0"
+    },
+    {
+     "name": "zh-TW.json cùng tập key với en.json",
+     "ok": true,
+     "detail": "0"
+    },
+    {
+     "name": "en.json == file mẫu en.json",
+     "ok": true,
+     "detail": "khác 0 key"
+    },
+    {
+     "name": "zh-TW.json == file mẫu zh-TW.json (trừ key fallback ST zh)",
+     "ok": true,
+     "detail": "khác 26 key, trong đó 26 key fallback cho phép"
+    },
+    {
+     "name": "bridge ok",
+     "ok": true,
+     "detail": ""
+    }
+   ]
+  },
+  {
+   "case": "pb3-v1.1.7",
+   "status": "PASS",
+   "checks": [
+    {
+     "name": "chỉ file locale trong out_dir",
+     "ok": true,
+     "detail": "['en.json', 'zh-CN.json']"
+    },
+    {
+     "name": "zip chỉ chứa file locale",
+     "ok": true,
+     "detail": "['en.json', 'zh-CN.json']"
+    },
+    {
+     "name": "en.json 2348 key",
+     "ok": true,
+     "detail": "2348"
+    },
+    {
+     "name": "en.json 0 key generic",
+     "ok": true,
+     "detail": "[]"
+    },
+    {
+     "name": "zh-CN.json 2348 key",
+     "ok": true,
+     "detail": "2348"
+    },
+    {
+     "name": "zh-CN.json 0 key generic",
+     "ok": true,
+     "detail": "[]"
+    },
+    {
+     "name": "zh-CN.json cùng tập key với en.json",
+     "ok": true,
+     "detail": "0"
+    },
+    {
+     "name": "bridge ok",
+     "ok": true,
+     "detail": ""
+    }
+   ]
+  },
+  {
+   "case": "ek2-v0.0.18",
+   "status": "PASS",
+   "checks": [
+    {
+     "name": "chỉ file locale trong out_dir",
+     "ok": true,
+     "detail": "['en.json']"
+    },
+    {
+     "name": "zip chỉ chứa file locale",
+     "ok": true,
+     "detail": "['en.json']"
+    },
+    {
+     "name": "en.json 1344 key",
+     "ok": true,
+     "detail": "1344"
+    },
+    {
+     "name": "en.json 0 key generic",
+     "ok": true,
+     "detail": "[]"
+    },
+    {
+     "name": "bridge ok",
+     "ok": true,
+     "detail": ""
+    }
+   ]
+  }
+ ],
+ "summary": {
+  "PASS": 4,
+  "FAIL": 0,
+  "skipped": 0
+ }
+}

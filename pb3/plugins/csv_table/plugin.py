@@ -154,6 +154,15 @@ class CsvPlugin(FormatPluginBase):
         for r, row in enumerate(data_rows):
             key = row[key_col] if key_col < len(row) else ""
             if not (key or "").strip():
+                # BUG#2: dòng HOÀN TOÀN TRỐNG (không key, mọi giá trị đều
+                # rỗng — vd 2 dòng trống trong PB3_LOC_DEFAULT.csv) không
+                # phải term: bỏ hẳn thay vì sinh key vị trí row_NNNNNN
+                # rỗng rồi lọt vào file locale đã gộp. Dòng key rỗng
+                # nhưng CÓ giá trị vẫn giữ key vị trí (đặc tả 7.5;
+                # test_empty_key_gets_stable_row_key).
+                if all(not (row[c] if c < len(row) else "").strip()
+                       for c, _loc in col_locale):
+                    continue
                 key = stable_row_key(r)
             for c, loc in col_locale:
                 val = row[c] if c < len(row) else ""

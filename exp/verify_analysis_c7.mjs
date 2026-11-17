@@ -8,7 +8,7 @@
 //
 //  A. Tĩnh: node --check; py_compile; check_analysis_c7_static.py
 //     (patch_pack.py stdlib-only + Python 3.9, không chuỗi cấm iSH-only,
-//     manifest files.json=95 / tests.json=166, sw.js precache +
+//     manifest files.json=95 / tests.json=167, sw.js precache +
 //     CACHE_VERSION v20, bridge có op patch_pack, UI đủ 2 nút).
 //  B. Unit test Python: tests.test_patch_pack (23) + tests.test_plan (19).
 //  C. Node Pyodide + bridge thật (fixture item8_fixture.zip: bundle v7 LZ4,
@@ -90,8 +90,8 @@ const sha256 = (buf) => createHash("sha256").update(buf).digest("hex");
     if (j.fails && j.fails.length) { ok = false; detail = j.fails.join(" | "); }
     else detail = "patch_pack.py stdlib-only + Python 3.9 + không chuỗi cấm " +
       "iSH-only + script ap parse được (stdlib + core/sdk) + files.json=95 " +
-      "+ tests.json=166 + sw.js precache sdk/patch_pack.py + CACHE_VERSION " +
-      "v22-20261117 + bridge patch_pack + UI đủ 2 nút xuất pack";
+      "+ tests.json=167 + sw.js precache sdk/patch_pack.py + CACHE_VERSION " +
+      "v23-20261117 + bridge patch_pack + UI đủ 2 nút xuất pack";
   } catch (e) { ok = false; detail = "không đọc được JSON: " + (r.stdout || "") + (r.stderr || ""); }
   rec("static_c7_checks", ok, detail, performance.now() - t0);
 }

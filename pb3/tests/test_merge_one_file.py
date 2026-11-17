@@ -154,7 +154,10 @@ class MergeOutcomesCase(unittest.TestCase):
         ]
         _apply_merge(res, {"en"})
         self.assertEqual(len(res.files), 2)
-        self.assertEqual(res.total_entries, 4)  # 3 key en gộp + 1 config
+        # BUG#2 (2026-11-17): total chỉ đếm key của file locale ĐÃ GỘP
+        # (3 key en); file config passthrough (1 key) không nằm trong
+        # output ở chế độ gộp nên không đếm nữa (trước đây: 3 + 1 = 4).
+        self.assertEqual(res.total_entries, 3)
         self.assertEqual(len(res.merged_files), 1)
         self.assertEqual(res.merged_files[0]["duplicates_identical"], 1)
 

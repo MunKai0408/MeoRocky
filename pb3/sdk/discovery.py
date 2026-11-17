@@ -37,11 +37,18 @@ from sdk.vfs import VFS, VStat, check_vpath, read_policy
 LOCALE_BUILTIN: List[Dict[str, Any]] = [
     {"code": "en", "aliases": ["en-us", "en-gb", "en_us", "english", "eng"],
      "display": "English", "script": "Latn"},
-    {"code": "zh", "aliases": ["zh-cn", "zh-tw", "zh_cn", "chinese", "中文", "mandarin"],
-     "display": "Chinese", "script": "Hans"},
-    {"code": "zh-Hans", "aliases": ["zh-hans", "zh_cn", "简体中文", "simplified chinese"],
+    # BUG#2 (2026-11-17): zh-CN / zh-TW là mã riêng, KHÔNG gộp về "zh" nữa —
+    # xin zh thì ra cả 2 file zh-CN.json + zh-TW.json. Đặt trước mục "zh"
+    # (detect_locale ưu tiên mã dài hơn khi cùng độ tin cậy, xem detect_locale).
+    {"code": "zh-CN", "aliases": ["zh-cn", "zh_cn", "简体中文", "simplified chinese"],
      "display": "Chinese (Simplified)", "script": "Hans"},
-    {"code": "zh-Hant", "aliases": ["zh-hant", "zh-tw", "zh_hk", "繁體中文", "traditional chinese"],
+    {"code": "zh-TW", "aliases": ["zh-tw", "zh_hk", "繁體中文", "traditional chinese"],
+     "display": "Chinese (Traditional)", "script": "Hant"},
+    {"code": "zh", "aliases": ["chinese", "中文", "mandarin"],
+     "display": "Chinese", "script": "Hans"},
+    {"code": "zh-Hans", "aliases": ["zh-hans", "简体中文"],
+     "display": "Chinese (Simplified)", "script": "Hans"},
+    {"code": "zh-Hant", "aliases": ["zh-hant", "繁體中文"],
      "display": "Chinese (Traditional)", "script": "Hant"},
     {"code": "vi", "aliases": ["vi-vn", "vietnamese", "tiếng việt", "tieng viet"],
      "display": "Vietnamese", "script": "Latn"},
@@ -99,8 +106,20 @@ LOCALE_BUILTIN: List[Dict[str, Any]] = [
      "display": "Czech", "script": "Latn"},
     {"code": "sk", "aliases": ["sk-sk", "slovak", "slovenčina"],
      "display": "Slovak", "script": "Latn"},
-    {"code": "no", "aliases": ["nb-no", "nn-no", "norwegian", "norsk"],
+    # BUG#2 (2026-11-17): "nb" (Bokmål) là mã riêng — trước đây chỉ nằm
+    # trong alias "nb-no" của "no" nên file nb bị nhận locale None rồi lọt
+    # bộ lọc. Đặt TRƯỚC "no" để "nb-no" khớp "nb" (cùng độ tin cậy, "nb"
+    # đứng trước thắng khi hòa).
+    {"code": "nb", "aliases": ["nb-no", "norwegian bokmål", "bokmål"],
+     "display": "Norwegian Bokmål", "script": "Latn"},
+    {"code": "no", "aliases": ["nn-no", "norwegian", "norsk"],
      "display": "Norwegian", "script": "Latn"},
+    # BUG#2 (2026-11-17): "bg" và "fil" trước đây không có trong bảng nên
+    # file bg/fil bị nhận locale None rồi lọt bộ lọc en/zh.
+    {"code": "bg", "aliases": ["bg-bg", "bulgarian", "български"],
+     "display": "Bulgarian", "script": "Cyrl"},
+    {"code": "fil", "aliases": ["fil-ph", "filipino"],
+     "display": "Filipino", "script": "Latn"},
     {"code": "el", "aliases": ["el-gr", "greek", "ελληνικά"],
      "display": "Greek", "script": "Grek"},
     {"code": "he", "aliases": ["he-il", "hebrew", "עברית"],
@@ -122,6 +141,44 @@ def locale_display_name(code: str, table: Optional[List[Dict[str, Any]]] = None)
 def export_filename(code: str, table: Optional[List[Dict[str, Any]]] = None) -> str:
     """Tên file JSON xuất cho một locale (đặc tả 7.6: English.json...)."""
     return locale_display_name(code, table) + ".json"
+
+
+def locale_base(code: str) -> str:
+    """Mã gốc của một mã locale (BUG#2): "zh-CN" -> "zh", "en" -> "en"."""
+    return (code or "").replace("_", "-").split("-")[0].lower()
+
+
+def canonical_locale_code(code: str, table: Optional[List[Dict[str, Any]]] = None) -> str:
+    """Mã locale với đúng dạng chữ hoa/thường trong bảng (BUG#2):
+    "zh-cn" -> "zh-CN", "en" -> "en". Không có trong bảng thì giữ nguyên."""
+    table = table if table is not None else LOCALE_BUILTIN
+    low = (code or "").lower()
+    for loc in table:
+        if loc["code"].lower() == low:
+            return loc["code"]
+    return code
+
+
+def locale_in_wanted(code: Optional[str], wanted) -> bool:
+    """Mã locale có thuộc tập lọc không (BUG#2, khớp theo họ locale).
+
+    wanted là tập mã chữ thường người dùng xin (vd {"en", "zh"}).
+    Khớp khi: đúng mã ("zh-CN" xin "zh-cn"), mã gốc được xin
+    ("zh-CN" xin "zh"), hoặc mã là mã gốc của một biến thể được xin
+    ("zh" xin "zh-cn" — bảng zh gốc là fallback cho biến thể).
+    Biến thể anh em KHÔNG khớp nhau ("zh-TW" xin "zh-cn" là sai)."""
+    if code is None or wanted is None:
+        return False
+    c = str(code).lower()
+    want = {str(w).lower() for w in wanted}
+    if c in want:
+        return True
+    base = locale_base(c)
+    if base in want:
+        return True
+    if c == base and any(base == locale_base(str(w)) for w in want):
+        return True
+    return False
 
 
 def load_locale_table(root: Optional[str] = None) -> List[Dict[str, Any]]:

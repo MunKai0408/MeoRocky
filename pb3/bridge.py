@@ -279,7 +279,7 @@ def extract(path, source_paths=None, locales=None, merge_one_file=None):
     "skipped" (mọi file bỏ qua kèm lý do — không bao giờ im lặng) và
     "log" (log pipeline, vd "Unity: ... -> N TextAsset").
     merge_one_file: True = gộp thành 1 file mỗi ngôn ngữ đã chọn
-    (en.json/zh.json; Joseph 23:35). None/False = giữ file tách per-unit
+    (en.json/zh-CN.json/zh-TW.json; Joseph 23:35). None/False = giữ file tách per-unit
     như cũ (mặc định False để API/harness cũ không đổi; bản web bật bằng
     checkbox ở tab Trích xuất, mặc định tick).
     """
@@ -313,10 +313,15 @@ def extract(path, source_paths=None, locales=None, merge_one_file=None):
             source_paths=paths, locales=locs,
             merge_one_file=bool(merge_one_file))
         r = ext.run_extraction(req)
+        # BUG#2: chế độ gộp chỉ liệt kê file locale đã xuất (đã ghi ra
+        # đĩa); outcome passthrough (rác/config) không nằm trong output
+        # nên không liệt kê — khớp đúng với nội dung extract.zip.
+        _files = [f for f in r.files
+                  if not req.merge_one_file or f.exported]
         files = [{"path": f.path, "plugin": f.plugin,
                   "entries": int(f.entries), "locale": f.locale,
                   "exported": f.exported,
-                  "source": f.source or f.path} for f in r.files]
+                  "source": f.source or f.path} for f in _files]
         zpath = "/tmp/extract.zip"
         if os.path.exists(zpath):
             os.remove(zpath)
@@ -348,7 +353,7 @@ def extract(path, source_paths=None, locales=None, merge_one_file=None):
                             if "không phải" in str((s or {}).get("reason") or ""))
                 err_text = ("Không trích xuất được file nào (quyết định: %s; "
                             "đã bỏ qua %d mục, trong đó %d mục do bộ lọc ngôn ngữ; "
-                            "xem skipped/log trong extraction_report.txt của extract.zip)"
+                            "xem danh sách đã bỏ qua / log trong kết quả trích xuất)"
                             % (r.decision, n_sk, n_loc))
                 if n_loc:
                     err_text += " — thử tắt bộ lọc ngôn ngữ rồi trích xuất lại."
@@ -356,6 +361,7 @@ def extract(path, source_paths=None, locales=None, merge_one_file=None):
             "ok": bool(r.ok), "decision": str(r.decision),
             "total_entries": int(r.total_entries), "files": files,
             "merged_files": list(r.merged_files or []),
+            "language_columns": list(r.language_columns or []),
             "skipped": list(r.skipped or []),
             "log": list((r.report or {}).get("log") or []),
             "errors": list(r.errors or []), "zip_path": zpath,

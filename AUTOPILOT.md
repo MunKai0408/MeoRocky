@@ -21,6 +21,8 @@
 
 ## Mục đang làm
 
+- **BUG#2** (đường merge trích xuất) — XONG 2026-11-17, xem "Đã xong" (nhánh
+  `fix/bug2-merge-extract`, chờ PR/duyệt — chưa gộp vào main).
 - **P1-1** (mở file theo nội dung, bỏ cổng đuôi) — tiếp theo. P0-4 đã BỎ QUA (chờ
   Joseph, xem "Chờ Joseph" #5): chưa có ảnh Q1/Q2/Q3 bản v4 + xác nhận bản đang
   cài; không đứng chờ, quay lại P0-4 khi có đủ.
@@ -79,6 +81,68 @@
   có `Perk_Benevolent`, không lẫn giá trị cột tiếng Nhật, `en.json` có mặt.
 
 ## Đã xong
+
+### BUG#2 (đường merge trích xuất: loại quét phẳng khỏi file locale, tách biến thể zh, vứt rác) — XONG 2026-11-17 [ĐÃ ĐO THẬT] (nhánh `fix/bug2-merge-extract`, chưa gộp vào main — chờ PR/duyệt)
+
+- Chuẩn do Joseph chốt: 1 file duy nhất cho mỗi locale xin (en → chỉ
+  `en.json`; en+zh → `en.json` + `zh-CN.json` + `zh-TW.json`); đủ toàn bộ
+  text (term langtable + StringTable gộp `Collection/Key`); 0 key generic
+  (`.sNNNN`/`.pNNNN`/`textasset.sN`); rác vứt hết (không giữ
+  `_non_localization.json`, không provenance/checkpoint/report/conflicts
+  trong output); áp dụng chung mọi game Unity, không hardcode game/build.
+- Nguyên nhân gốc: parser P0-3 đúng; `merge_language_outcomes()` gộp chỉ
+  theo locale, giữ-bản-đầu, không phân biệt nguồn có cấu trúc hay quét
+  phẳng — langtable đúng (2.086 term) bị gộp chung với quét phẳng cùng
+  `resources.assets` thành `en.json` 6.140 key (3.955 rác). `_build_layers()`
+  không gắn thẻ nguồn; `_language_source_base_columns()` gộp biến thể về
+  mã gốc; pipeline dùng `_join_string_tables()` phẳng thay vì
+  `join_string_tables_grouped()`; bộ lọc locale thiếu mã bg/fil/nb.
+- Sửa (`pb3/sdk/extraction.py`, `discovery.py`, `rebuild.py`, `bridge.py`,
+  `plugins/csv_table/plugin.py`): gắn thẻ `origin_kind` cho `FileOutcome`
+  (language_source / string_table / generic_flat / text_asset / other);
+  merge chỉ gộp outcome có cấu trúc, outcome generic_flat/locale:None
+  passthrough (không ghi ra đĩa ở chế độ gộp); một file ảo cho mỗi biến thể
+  đầy đủ (zh-CN/zh-TW riêng, mã gốc `zh` chỉ làm fallback sau biến thể);
+  StringTable dùng `join_string_tables_grouped()` + điền đủ vũ trụ
+  SharedTableData (kể cả tạo bucket collection chưa có cho locale đã có
+  StringTable); `_export` chế độ gộp chỉ ghi file locale đã gộp (tên file
+  dùng mã chuẩn `zh-CN.json`); `total_entries` chỉ đếm key đã gộp; bản kê
+  `language_columns` đủ 30 cột `mLanguages` trong report nội bộ; plugin CSV
+  bỏ dòng hoàn toàn trống (không sinh key `row_NNNNNN` rỗng — 2 dòng trống
+  trong `PB3_LOC_DEFAULT.csv`); `_collect_mb_keys` thêm dạng
+  `Collection/Key` cho ép ngược; `LOCALE_BUILTIN` thêm zh-CN/zh-TW/bg/fil/nb
+  riêng; `CACHE_VERSION` v22→**v23-20261117** + đồng bộ mọi kỳ vọng version/
+  đếm tests.json (166→167, thêm `pb3/tests/test_bug2_merge.py`, 22 test mới).
+- Kiểm chứng [ĐÃ ĐO THẬT] (harness `exp/verify_bug2_merge.py`, PASS 4/4,
+  0 bỏ qua; CPython qua `bridge.extract`, locales `["en","zh"]`,
+  `merge_one_file=True`): Build 68 `en.json` == `en-build68.json` từng
+  key/giá trị/thứ tự (2.086 key, 0 generic), zip chỉ 3 file locale;
+  9 Kings v1.0.6 mỗi locale 2.252 key, 0 generic, en == mẫu, zh-TW == mẫu
+  trừ 26 key Policies (mẫu để trống, bản gộp giữ giá trị thật từ bảng ST
+  `zh` duy nhất của game — fallback mã gốc→biến thể, xem harness);
+  PB3 v1.1.7 en/zh-CN 2.348 key/file, 0 generic (game không có zh-TW: chỉ
+  có cột `Chinese (Simplified)` trong CSV lẫn langtable); EK2 v0.0.18 chỉ
+  `en.json` 1.344 key (không có zh — đúng, không phải lỗi). Smoke 59/59;
+  full 1.872 = 1.737 đạt / 102 lỗi / 29 fail / 4 bỏ qua — tập đỏ trùng hệt
+  baseline main (2 fixture thiếu), 0 đỏ mới; 9 check tĩnh `fails: []`.
+- Probe `sharedassets0.assets` [ĐÃ ĐO THẬT] (9 Kings v1.0.6,
+  154.591.236 B; bản Build 68 là 155.232.944 B): SerializedFile, 128 object
+  MonoBehaviour toàn generic (1.132 chuỗi), 0 language_source, 0
+  StringTable; 81 TextAsset toàn `ChallengeData_*` (dữ liệu game JSON,
+  không phải text localizable). Kết luận: file này đóng góp 0 nội dung
+  localizable có cấu trúc → KHÔNG làm streaming, giữ giới hạn 64 MB +
+  lý do skip trong log. Không nâng `max_entry_bytes`.
+- Đánh đổi đã biết: game hoàn toàn không có nguồn ngôn ngữ có cấu trúc sẽ
+  không ra file locale nào ở chế độ gộp (rác bị vứt, không còn đường quét
+  phẳng làm dự phòng) — P1-5 (raw scan, gắn nhãn, chỉ làm đường dự phòng
+  cuối) có thể xem lại sau. Harness Node cũ
+  `exp/verify_analysis_merge_one_file.mjs` assert merged==tách 100% — nay
+  sai theo thiết kế (gộp loại generic, tách giữ generic); chưa chạy được ở
+  đây (cần Playwright/fixtures), để lại làm follow-up, không sửa file lịch
+  sử `exp/*_results.*`.
+- Sau khi bản v23 lên live, user trên Safari cần: có mạng, tải lại trang 1
+  lần (kích hoạt SW mới), rồi tải lại lần nữa (hoặc đóng tab/mở lại) để
+  chạy code mới; nếu vẫn ra kết quả cũ thì xóa dữ liệu trang rồi mở lại.
 
 ### P0-3 (trích xuất cấu trúc bảng ngôn ngữ + StringTable, lọc rác, conflicts) — XONG 2026-11-17 [ĐÃ ĐO THẬT] (commit `f88934c5`, PR #3, gộp vào main `fead921f`)
 
@@ -241,6 +305,22 @@ mb_generic 17.247; TextAsset JSON dict = 0 ở cả 3. DungeonWithin (91.389.555
 chỉ quét/probe, 4 bundle Addressables mã hóa AES — KHÔNG giải mã.
 Passpartout/Dead Cells/data.unity3d: chưa có file.
 Chạy lại sau P0-2 (2026-11-17): khớp chính xác cả 3 game, merged==tách 100%, không lệch.
+
+Mốc mới sau BUG#2 (2026-11-17) — harness `exp/verify_bug2_merge.py` PASS 4/4,
+output zip CHỈ chứa file locale (không còn rác/provenance/report/conflicts):
+
+| Game (build) | en | zh-CN | zh-TW | Generic |
+|---|---|---|---|---|
+| 9 Kings v1.0.6 (173.472.485 B) | 2.252 (== mẫu) | 2.252 | 2.252 (== mẫu trừ 26 key Policies fallback ST zh) | 0 |
+| Poly Bridge 3 v1.1.7 (482.039.645 B) | 2.348 | 2.348 | — (game không có zh-TW) | 0 |
+| Exploding Kittens 2 v0.0.18 (290.547.090 B) | 1.344 | — (không có zh) | — | 0 |
+| Build 68 `resources.assets` (20.046.080 B) | 2.086 (== `en-build68.json`) | 2.086 | 2.086 | 0 |
+
+Lưu ý mốc: số PB3 2.350 trong bảng P0-3 đã gồm 2 key rác `row_001064`/
+`row_001065` từ 2 dòng trống trong `PB3_LOC_DEFAULT.csv` (nay bỏ hẳn) —
+số đúng sau BUG#2 là 2.348. Số 9K zh 2.176 trước BUG#2 là langtable zh-TW
+(2.150) + 26 key ST phẳng từ bảng zh; thiếu 76 key ST (điền "" từ vũ trụ
+SharedTableData) và key ST chưa gộp nhóm `Collection/Key`.
 
 ## Lệnh đã chạy (mốc + kiểm tra)
 
