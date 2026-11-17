@@ -30,16 +30,15 @@ const state = {
   donor: null,
   file: null,            // {name, size, lastModified, data: ArrayBuffer}
   batchFiles: [],        // [{name, size, lastModified, data}] cho tab Batch (nhiều file)
-  // HOTFIX clone (Safari DataCloneError): file chỉ được gửi sang worker 1 lần.
-  // Sau lần transfer đầu, ArrayBuffer trong transfer list bị detached
-  // (byteLength = 0); gửi lại cùng buffer thì Safari ném "The object can
-  // not be cloned" ở MỌI thao tác sau thao tác đầu tiên. Vì vậy:
-  //  - fileSentFor/batchSentFor ghi lại file nào đã gửi (tên + size +
-  //    lastModified); thao tác sau không kèm file nữa — worker đã giữ file
-  //    trong FS /tmp/input từ lần gửi đầu, FS sống suốt phiên trang.
-  //  - Khi gửi, luôn gửi f.data.slice(0) (bản copy) để buffer gốc không
-  //    bao giờ bị detached, dù có phải gửi lại.
-  //  - Reset cờ khi chọn file mới và khi một runOp lỗi (để thử lại gửi lại).
+  // Gửi file sang worker: CHỈ 1 lần/file (cờ fileSentFor/batchSentFor).
+  // Gửi bằng structured clone (KHÔNG transfer list, KHÔNG slice(0)):
+  // [ĐÃ ĐO THẬT 2026-11-17] tab Safari ~4× dung lượng file + ~250MB nền
+  // (Pyodide + trình duyệt); bản copy slice(0) 210MB trên main thread là
+  // đỉnh phụ thêm ~1× file ngay lúc trích xuất — IPA Tom 210MB đã sập tab.
+  // Structured clone không detach buffer gốc (chỉ transfer mới detach)
+  // nên gửi lại vẫn an toàn; cờ fileSentFor/batchSentFor vẫn tránh gửi
+  // lại file worker đã giữ trong FS /tmp/input (FS sống suốt phiên).
+  // Reset cờ khi chọn file mới và khi một runOp lỗi (để thử lại gửi lại).
   fileSentFor: null,     // "tên|size|lastModified" của file đơn đã gửi
   batchSentFor: null,    // key tương tự cho lô batch
   lastCheckpoint: null,  // chuỗi checkpoint batch mới nhất (để tải về)
@@ -73,10 +72,10 @@ const state = {
   batchRun: null,        // đợt batch đang/chạy xong gần nhất (Mục 4)
 };
 
-const WARN_BYTES = 600 * 1024 * 1024;   // >600MB: cảnh báo rõ, vẫn cho tiếp tục (Mục 5)
-const STRONG_BYTES = 800 * 1024 * 1024; // >800MB: khuyên mạnh dùng iSH (Mục 5)
-const EXTRACT_WARN_BYTES = 400 * 1024 * 1024; // >400MB: trích xuất hỏi xác nhận trước (đợt sửa 2026-11-16: file .unity3d 590MB từng làm chết tab vì OOM; nay đọc streaming nhưng RAM đỉnh vẫn ~2× dung lượng file)
-const LARGE_FILE_CONFIRM_BYTES = EXTRACT_WARN_BYTES; // >400MB: hộp thoại xác nhận TRƯỚC khi đọc file vào RAM (Mục C4) — nút "Tiếp tục"/"Hủy"
+const WARN_BYTES = 140 * 1024 * 1024;   // >140MB: cảnh báo rõ, vẫn cho tiếp tục (Mục 5) — [ĐÃ ĐO THẬT 2026-11-17] tab ~4× file + ~250MB nền nên file 140MB đã ~800MB RAM
+const STRONG_BYTES = 190 * 1024 * 1024; // >190MB: khuyên mạnh dùng iSH (Mục 5) — ước tính ~1GB, sát giới hạn tab Safari ~1GB
+const EXTRACT_WARN_BYTES = 140 * 1024 * 1024; // >140MB: trích xuất hỏi xác nhận trước (đo thật: IPA Tom 210MB sập tab lúc trích xuất; RAM đỉnh ~4× file + ~250MB nền, không phải ~2× như ghi cũ)
+const LARGE_FILE_CONFIRM_BYTES = EXTRACT_WARN_BYTES; // >140MB: hộp thoại xác nhận TRƯỚC khi đọc file vào RAM (Mục C4) — nút "Tiếp tục"/"Hủy"
 const OPFS_MIN_BYTES = 1 * 1024 * 1024; // output >=1MB thì ghi ra OPFS thay vì ôm Blob trong RAM (Mục C4)
 const MAX_BYTES = 2 * 1024 * 1024 * 1024;   // >2GB: từ chối (bridge cũng từ chối)
 
@@ -256,7 +255,7 @@ function callWorkerRaw(op, payload) {
     // HOTFIX clone: chỉ kèm file vào postMessage khi worker chưa có file đó.
     // File đơn: so bằng tên|size|lastModified với cờ fileSentFor.
     // Batch: so toàn bộ lô với cờ batchSentFor. File lẻ một lần (vd nhập KB)
-    // không có cờ thì luôn gửi bản copy slice(0).
+    // không có cờ thì gửi kèm luôn (structured clone, không detach buffer gốc).
     let files = payload.files || [];
     let toSend = files;
     const filesKey = (list) => list.map((f) => f.name + "|" + f.size + "|" + (f.lastModified || 0)).join(";");
@@ -264,17 +263,18 @@ function callWorkerRaw(op, payload) {
       if (files.length === 1 && state.file && files[0].data === state.file.data) {
         const key = filesKey([state.file]);
         if (state.fileSentFor === key) toSend = [];
-        else { toSend = [{ name: files[0].name, data: files[0].data.slice(0) }]; state.fileSentFor = key; }
+        else { toSend = [{ name: files[0].name, data: files[0].data }]; state.fileSentFor = key; }
       } else if (files.length && state.batchFiles.length && files.length === state.batchFiles.length &&
                  files.every((f, i) => f.data === state.batchFiles[i].data)) {
         const key = filesKey(state.batchFiles);
         if (state.batchSentFor === key) toSend = [];
-        else { toSend = files.map((f) => ({ name: f.name, data: f.data.slice(0) })); state.batchSentFor = key; }
+        else { toSend = files.map((f) => ({ name: f.name, data: f.data })); state.batchSentFor = key; }
       } else if (files.length) {
-        toSend = files.map((f) => ({ name: f.name, data: f.data.slice(0) }));
+        toSend = files.map((f) => ({ name: f.name, data: f.data }));
       }
-      getWorker().postMessage(Object.assign({ id, op }, payload, { files: toSend }),
-        toSend.map((f) => f.data));
+      // Structured clone (không transfer list): worker nhận 1 bản copy, buffer
+      // gốc ở main thread còn nguyên để các tab EOCD nhanh dùng tiếp.
+      getWorker().postMessage(Object.assign({ id, op }, payload, { files: toSend }));
     } catch (e) {
       // postMessage ném lỗi (vd transfer thất bại): cờ vừa đặt phải bỏ để
       // lần thử sau gửi lại file; promise reject để runOp báo lỗi.
@@ -289,7 +289,7 @@ function callWorkerRaw(op, payload) {
 async function runOp(label, fn, args, files, fileOut) {
   clearError();
   // Mục 5: cảnh báo kích thước TRƯỚC khi chạy thao tác nặng (file đã chọn
-  // >600MB cảnh báo, >800MB khuyên dùng iSH). Cảnh báo hiện ở ô #error
+  // >140MB cảnh báo, >190MB khuyên dùng iSH). Cảnh báo hiện ở ô #error
   // như khi chọn file; lỗi thật của thao tác sẽ ghi đè lên sau.
   if (state.file) {
     const w = sizeWarningFor(state.file.size);
@@ -1237,11 +1237,12 @@ $("setting-save-history").checked = historyEnabled();
 loadRecent();
 
 // ---- Hộp thoại cảnh báo file lớn (Mục C4) ----
-// File >400MB thì hỏi TRƯỚC KHI đọc vào RAM (khác với cảnh báo chữ của
+// File >140MB thì hỏi TRƯỚC KHI đọc vào RAM (khác với cảnh báo chữ của
 // mục 5 chỉ hiện rồi vẫn đọc tiếp): user bấm "Tiếp tục" mới mở file,
-// bấm "Hủy" thì dừng hẳn, file cũ (nếu có) vẫn giữ nguyên. >800MB thì
-// cảnh báo mạnh hơn + gợi ý dùng bản iSH (tab Safari chỉ ~1–1,5GB RAM).
-// Trả Promise<boolean>; file <=400MB thì không hiện hộp thoại, trả true ngay.
+// bấm "Hủy" thì dừng hẳn, file cũ (nếu có) vẫn giữ nguyên. >190MB thì
+// cảnh báo mạnh hơn + gợi ý dùng bản iSH (tab Safari chỉ ~1–1,5GB RAM;
+// đo thật 2026-11-17: tab ~4× file + ~250MB nền).
+// Trả Promise<boolean>; file <=140MB thì không hiện hộp thoại, trả true ngay.
 // state: để harness/chẩn đoán đọc (visible, files, decision).
 const largeFileModalState = { visible: false, files: [], decision: null };
 if (typeof window !== "undefined") {
@@ -1267,8 +1268,8 @@ function confirmLargeFile(files) {
   const strongest = large.some((f) => f.size > STRONG_BYTES);
   const lines = large.map((f) => "• " + f.name + " (" + fmtBytes(f.size) + ")").join("\n");
   const ramNote = strongest
-    ? "File rất lớn (>800MB). Tab trình duyệt trên iPhone chỉ có khoảng 1–1,5GB RAM — file này cộng với dữ liệu đang giải nén có thể làm tab bị tắt giữa chừng. Nên dùng bản iSH cho file này."
-    : "File lớn (>400MB). Trích xuất/nén đọc từng phần (streaming) nhưng RAM đỉnh ước tính ~2× dung lượng file (file + dữ liệu đang giải nén); trên iPhone vẫn có thể làm chết tab.";
+    ? "File rất lớn (>190MB). Tab trình duyệt trên iPhone chỉ có khoảng 1–1,5GB RAM — file này cộng với dữ liệu đang giải nén có thể làm tab bị tắt giữa chừng. Nên dùng bản iSH cho file này."
+    : "File lớn (>140MB). Trích xuất/nén đọc từng phần (streaming) nhưng RAM đỉnh ước tính ~4× dung lượng file + ~250MB nền (đo thật 2026-11-17); trên iPhone vẫn có thể làm chết tab.";
   textEl.textContent = lines + "\n\n" + ramNote + "\n\nBấm “Tiếp tục” để mở file trên web (nên đóng các tab khác trước), hoặc bấm “Hủy” để dùng bản iSH cho file này.";
   largeFileModalState.visible = true;
   largeFileModalState.files = large.map((f) => ({ name: f.name, size: f.size }));
@@ -1319,13 +1320,13 @@ async function handleChosenFile(f) {
     showError("File " + fmtBytes(f.size) + " quá lớn cho bản web (>2GB). Dùng bản iSH cho file này.");
     return undefined;
   }
-  // Mục C4: file >400MB thì hỏi TRƯỚC KHI đọc vào RAM — "Hủy" thì dừng
+  // Mục C4: file >140MB thì hỏi TRƯỚC KHI đọc vào RAM — "Hủy" thì dừng
   // hẳn (file cũ vẫn giữ nguyên, không boot, không đọc); "Tiếp tục" mới đọc.
   if (!(await confirmLargeFile([f]))) {
     showError("Đã huỷ mở file lớn — dùng bản iSH cho file này nếu cần.");
     return undefined;
   }
-  // Mục 5: >600MB cảnh báo rõ, >800MB khuyên mạnh dùng iSH — vẫn cho tiếp tục.
+  // Mục 5: >140MB cảnh báo rõ, >190MB khuyên mạnh dùng iSH — vẫn cho tiếp tục.
   const warn = sizeWarningFor(f.size);
   if (warn.text) showError(warn.text);
   // Mục 6 (lazy boot): chọn file lần đầu thì bắt đầu boot Pyodide ngay
@@ -1644,6 +1645,69 @@ $("btn-unity-run").addEventListener("click", async () => {
   } catch (e) { maybeShowIpaZipHint($("unity-ipa-hint")); }
 });
 
+// ---- Xem sâu + Trích sâu (deep inspect / raw scan, 2026-11-17) ----
+// Chỉ chạy khi user bấm nút (opt-in); kết quả trích sâu ghi nhãn
+// unverified, tách riêng khỏi file locale chính.
+function renderDeepInspect(parsed) {
+  let html = "<p><b>Xem sâu:</b> " + (parsed.total_entries || 0) + " entry";
+  const kinds = parsed.entries_by_kind || {};
+  html += " (" + (kinds.file || 0) + " file · " + (kinds.unity || 0) + " unity)</p>";
+  for (const uf of (parsed.unity_files || [])) {
+    const d = uf.deep || {};
+    const b = d.bundle || {};
+    html += "<p><b>" + esc(uf.path || "") + "</b> — " + fmtBytes(uf.size || 0) +
+      " · UnityFS v" + (b.version ?? "?") + " · " + esc((b.unity_revision || b.unity_version || "?")) +
+      " · " + (b.blocks || 0) + " block (" + esc(Object.entries(b.compression || {}).map(([k, v]) => k + "×" + v).join(", ") || "?") + ")" +
+      " · " + (b.entries || []).length + " entry · nguồn ngôn ngữ: " + (d.language_sources_found ? "CÓ" : "không") + "</p>";
+    if (uf.pipeline) html += "<p class=\"warn\">" + esc(uf.pipeline) + "</p>";
+    for (const f of (d.files || [])) {
+      if (!f.objects_by_class) continue;
+      html += "<p>" + esc(f.entry || "") + ": " + (f.objects || 0) + " object (" +
+        esc(f.objects_by_class.map((c) => c.class + "×" + c.count).join(", ")) + ")" +
+        " · TextAsset " + (f.text_assets_total || 0) + "</p>";
+    }
+  }
+  for (const s of (parsed.skipped || [])) {
+    html += "<p class=\"warn\">Bỏ qua: " + esc(s.path || "") + " — " + esc(s.reason || "") + "</p>";
+  }
+  return html;
+}
+function renderRawScan(parsed) {
+  const label = parsed.label || "unverified-raw-scan";
+  const mode = parsed.mode || "raw";
+  let html = "<p><b>Trích sâu</b> — mode <b>" + esc(mode) + "</b> · nhãn <b>" + esc(label) + "</b> (unverified — cần đối chiếu, không trộn vào file locale chính)</p>";
+  if (parsed.metadata_version) html += "<p>IL2CPP metadata v" + parsed.metadata_version + " · literal: " + (parsed.literals_total || 0) + " (đọc được " + (parsed.literals_read || 0) + ")</p>";
+  html += "<p>Giữ được <b>" + (parsed.kept || 0) + "</b> chuỗi nhiều từ" +
+    (parsed.total_runs ? " / " + parsed.total_runs + " run" : "") +
+    " · từ đơn " + (parsed.single_words_kept || 0) + " · lọc nhiễu " + (parsed.dropped_noise || 0) +
+    (parsed.truncated ? " · <b>đã chạm giới hạn, kết quả bị cắt</b>" : "") + "</p>";
+  const sample = (parsed.strings || []).slice(0, 20);
+  if (sample.length) {
+    html += "<table><tr><th>#</th><th>Chuỗi (mẫu 20)</th><th>Nguồn</th></tr>";
+    sample.forEach((s, i) => {
+      html += "<tr><td>" + (i + 1) + "</td><td>" + esc(s.text || "") + "</td><td>" + esc("offset " + (s.offset ?? "?")) + "</td></tr>";
+    });
+    html += "</table>";
+  } else {
+    html += "<p>Không giữ được chuỗi nào.</p>";
+  }
+  return html;
+}
+$("btn-unity-deep").addEventListener("click", async () => {
+  try {
+    const { parsed } = await runOp("Xem sâu", "inspect_deep", [inputPath()], inputFileArgs());
+    $("unity-deep-result").innerHTML = renderDeepInspect(parsed);
+  } catch (e) { /* runOp đã báo lỗi */ }
+});
+$("btn-unity-rawscan").addEventListener("click", async () => {
+  try {
+    const entry = ($("deep-raw-entry").value || "").trim();
+    if (!entry) { showError("Nhập đường dẫn entry trong IPA/ZIP cần trích sâu (vd .../global-metadata.dat hoặc .../data.unity3d)."); return; }
+    const { parsed } = await runOp("Trích sâu", "raw_scan", [inputPath(), entry], inputFileArgs());
+    $("unity-deep-result").innerHTML = renderRawScan(parsed);
+  } catch (e) { /* runOp đã báo lỗi */ }
+});
+
 // ---- Danh sách file để chọn tay (tab Trích xuất) ----
 // Chỉ liệt kê entry trích xuất được: container Unity (.assets/.unity3d/
 // .bundle) + file text. Dùng chung dữ liệu inventory với tab Danh sách
@@ -1752,6 +1816,9 @@ $("extract-mode-auto").addEventListener("change", renderExtractFileList);
 $("extract-mode-manual").addEventListener("change", renderExtractFileList);
 
 // ---- Trích xuất ----
+// Nút "Trích xuất" ở ĐẦU danh sách (2026-11-17): gọi đúng handler của nút
+// cuối (cùng hành vi, cùng điều kiện) — user khỏi cuộn hết 200 file.
+$("btn-extract-run-top").addEventListener("click", () => $("btn-extract-run").click());
 $("btn-extract-run").addEventListener("click", async () => {
   try {
     const manual = $("extract-mode-manual") && $("extract-mode-manual").checked;
@@ -1776,14 +1843,14 @@ $("btn-extract-run").addEventListener("click", async () => {
     // để giữ file tách per-unit như cũ. Gửi kèm làm tham số thứ 4 cho
     // bridge.extract (mặc định bridge là False để API/harness cũ không đổi).
     const mergeOne = !($("extract-merge-one") && !$("extract-merge-one").checked);
-    // Đợt sửa 2026-11-16 (mục 2): file >400MB hỏi xác nhận TRƯỚC khi chạy —
-    // trích xuất nay đọc streaming từng phần nhưng RAM đỉnh vẫn ~2× dung
-    // lượng file (file + entry lớn nhất đang giải nén), trên iPhone
-    // (tab ~1–1,5GB) vẫn có thể làm chết tab. "Huỷ" dừng lại, không chạy ngầm.
+    // Đợt sửa 2026-11-17: file >140MB hỏi xác nhận TRƯỚC khi chạy —
+    // [ĐÃ ĐO THẬT] RAM đỉnh lúc trích xuất ~4× dung lượng file + ~250MB nền
+    // (file gốc + bản gửi worker + MEMFS + Pyodide); IPA Tom 210MB đã làm
+    // chết tab Safari (~1GB). "Huỷ" dừng lại, không chạy ngầm.
     if (state.file && state.file.size > EXTRACT_WARN_BYTES) {
       const ok = confirm("File lớn: " + state.file.name + " (" + fmtBytes(state.file.size) + ").\n"
-        + "Trích xuất đọc từng phần (streaming) nhưng RAM đỉnh ước tính ~" + fmtBytes(state.file.size * 2)
-        + " (file + dữ liệu đang giải nén); trên iPhone file trên ~400MB vẫn có thể làm chết tab.\n"
+        + "Trích xuất đọc từng phần (streaming) nhưng RAM đỉnh ước tính ~" + fmtBytes(state.file.size * 4 + 250 * 1024 * 1024)
+        + " (khoảng 4× dung lượng file + ~250MB nền Pyodide/trình duyệt — đo thật 2026-11-17); trên iPhone file trên ~140MB vẫn có thể làm chết tab.\n"
         + "Bấm OK để tiếp tục, hoặc Huỷ để dùng bản iSH cho file này.");
       if (!ok) { showError("Đã huỷ trích xuất file lớn — dùng bản iSH cho file này nếu cần."); return; }
     }
@@ -3057,7 +3124,7 @@ renderPlanList();
 // .provenance.json từ máy. Preview và ghi là cùng 1 op bridge
 // rebuild_apply với cờ dry_run (tiền lệ plan_apply/mod_patch); nút ghi
 // disabled tới khi preview xong; ghi cần confirm() + confirm riêng cho
-// file >400MB. Mọi dữ liệu từ file game/bản dịch đều qua esc() khi vẽ
+// file >140MB. Mọi dữ liệu từ file game/bản dịch đều qua esc() khi vẽ
 // HTML (luật textContent/esc của brief — 2 lỗ innerHTML ở dropdown
 // nguồn đã vá ở P0-1, xem refreshTranslateSourceSelect /
 // refreshModJsonSourceSelect). File gốc KHÔNG bị ghi đè; output không
@@ -3169,8 +3236,8 @@ function rebuildErrorText(msg) {
 async function rebuildConfirmLargeFile() {
   if (!state.file || state.file.size <= EXTRACT_WARN_BYTES) return true;
   return confirm("File lớn: " + state.file.name + " (" + fmtBytes(state.file.size) + ").\n" +
-    "Ép lại đọc/ghi theo luồng (streaming) với bundle .unity3d độc lập lớn, nhưng RAM đỉnh ước tính ~" + fmtBytes(state.file.size * 2) +
-    " (file + entry lớn nhất đang xử lý); trên iPhone file trên ~400MB vẫn có thể làm chết tab.\n" +
+    "Ép lại đọc/ghi theo luồng (streaming) với bundle .unity3d độc lập lớn, nhưng RAM đỉnh ước tính ~" + fmtBytes(state.file.size * 4 + 250 * 1024 * 1024) +
+    " (khoảng 4× dung lượng file + ~250MB nền — đo thật 2026-11-17); trên iPhone file trên ~140MB vẫn có thể làm chết tab.\n" +
     "Bấm OK để tiếp tục, hoặc Huỷ để dùng bản iSH cho file này.");
 }
 function rebuildConflictChoices() {
@@ -3809,7 +3876,7 @@ function batchFileKey(f) {
 function makeSingleExecutor() {
   // Hàng đợi 1 job trên worker đơn cũ (callWorker): cùng giao diện như pool
   // để vòng batch không cần rẽ nhánh. File gửi qua callWorker (đã có logic
-  // chống clone DataCloneError: gửi bản copy slice(0), 1 lần/file).
+  // chống clone DataCloneError: gửi bằng structured clone, 1 lần/file).
   const ex = {
     kind: "single",
     _sentKeys: null,   // file đã gửi tới worker đơn này (FS sống suốt phiên)
@@ -3999,7 +4066,7 @@ async function handleBatchFiles(list) {
     if (w.text && (!batchWarn || w.level === "strong")) batchWarn = { name: f.name, w };
     valid.push(f);
   }
-  // Mục C4: lô có file >400MB thì hỏi TRƯỚC KHI đọc file nào vào RAM —
+  // Mục C4: lô có file >140MB thì hỏi TRƯỚC KHI đọc file nào vào RAM —
   // "Hủy" thì dừng hẳn, lô cũ vẫn giữ nguyên, không đọc file nào.
   if (valid.length && !(await confirmLargeFile(valid))) {
     showError("Đã huỷ mở lô file lớn — dùng bản iSH cho các file này nếu cần.");
@@ -4291,12 +4358,15 @@ async function runBatchFlow(opts) {
     }
     const singleManifest = JSON.stringify([{ path: it.path, mode: it.mode, locale: it.locale,
       old: it.old, new: it.new, file: it.file, object: it.object }]);
-    const dataCopy = f.data.slice(0);   // HOTFIX clone: luôn gửi bản copy
+    // Gửi game bằng structured clone (không slice(0), không transfer):
+    // tránh đỉnh phụ ~1× file trên main thread lúc gửi game lớn (đo thật
+    // 2026-11-17: tab ~4× file + ~250MB nền). Buffer gốc không bị detach
+    // nên gửi lại cho worker khác vẫn an toàn.
     const payload = { fn: "batch_run",
       args: [singleManifest, opts.dryRun, ckptToJson(merged), true, runId,
              executor.kind === "single", false, it.index],
-      files: [{ name: f.name, data: dataCopy, size: f.size, lastModified: f.lastModified || 0 }] };
-    return executor.run(payload, { label: base, transfer: [dataCopy] })
+      files: [{ name: f.name, data: f.data, size: f.size, lastModified: f.lastModified || 0 }] };
+    return executor.run(payload, { label: base })
       .then((reply) => recordGameDone(it, reply))
       .catch((err) => recordGameError(it, err));
   });

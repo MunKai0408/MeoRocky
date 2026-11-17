@@ -37,8 +37,11 @@
   "use strict";
 
   var MB = 1024 * 1024;
-  var WARN_600MB = 600 * MB;    // >600MB: cảnh báo rõ, vẫn cho tiếp tục
-  var STRONG_800MB = 800 * MB;  // >800MB: khuyên mạnh dùng iSH
+  // [ĐÃ ĐO THẬT 2026-11-17] tab Safari ~4× dung lượng file + ~250MB nền
+  // (Pyodide + trình duyệt) nên IPA Tom 210MB (~860-940MB) đã sập tab:
+  // cảnh báo từ file >140MB (~800MB RAM), khuyên mạnh iSH từ >190MB (~1GB).
+  var WARN_140MB = 140 * MB;    // >140MB: cảnh báo rõ, vẫn cho tiếp tục
+  var STRONG_190MB = 190 * MB;  // >190MB: khuyên mạnh dùng iSH
   var MAX_2GB = 2 * 1024 * MB;  // >2GB: từ chối (khớp bridge MAX_WEB_INPUT)
 
   function fmtBytes(n) {
@@ -50,7 +53,7 @@
   }
 
   // Cảnh báo kích thước TRƯỚC khi mở / TRƯỚC khi chạy thao tác nặng.
-  // level: 'none' | 'warn' (>600MB) | 'strong' (>800MB) | 'reject' (>2GB).
+  // level: 'none' | 'warn' (>140MB) | 'strong' (>190MB) | 'reject' (>2GB).
   function sizeWarning(size) {
     if (typeof size !== "number" || isNaN(size) || size <= 0) {
       return { level: "none", text: null };
@@ -59,13 +62,13 @@
       return { level: "reject",
         text: "File " + fmtBytes(size) + " quá lớn cho bản web (>2GB). Dùng bản iSH cho file này." };
     }
-    if (size > STRONG_800MB) {
+    if (size > STRONG_190MB) {
       return { level: "strong",
-        text: "File " + fmtBytes(size) + " rất lớn (>800MB). Tab trình duyệt trên iPhone có thể hết RAM và bị tắt giữa chừng — nên dùng bản iSH cho file này. Vẫn có thể thử tiếp trên web, nhưng hãy đóng các tab khác trước." };
+        text: "File " + fmtBytes(size) + " rất lớn (>190MB). Tab trình duyệt trên iPhone chỉ có khoảng 1–1,5GB RAM và cần ~4× dung lượng file + ~250MB nền (đo thật 2026-11-17) — có thể hết RAM và bị tắt giữa chừng, nên dùng bản iSH cho file này. Vẫn có thể thử tiếp trên web, nhưng hãy đóng các tab khác trước." };
     }
-    if (size > WARN_600MB) {
+    if (size > WARN_140MB) {
       return { level: "warn",
-        text: "Lưu ý: file " + fmtBytes(size) + " khá lớn (>600MB), tab trình duyệt có thể tốn nhiều RAM. Vẫn thử chạy." };
+        text: "Lưu ý: file " + fmtBytes(size) + " khá lớn (>140MB), tab trình duyệt có thể tốn ~" + fmtBytes(size * 4 + 250 * MB) + " RAM (đo thật 2026-11-17). Vẫn thử chạy." };
     }
     return { level: "none", text: null };
   }
