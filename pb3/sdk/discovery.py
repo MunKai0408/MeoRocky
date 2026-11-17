@@ -122,8 +122,52 @@ LOCALE_BUILTIN: List[Dict[str, Any]] = [
      "display": "Filipino", "script": "Latn"},
     {"code": "el", "aliases": ["el-gr", "greek", "ελληνικά"],
      "display": "Greek", "script": "Grek"},
-    {"code": "he", "aliases": ["he-il", "hebrew", "עברית"],
+    {"code": "he", "aliases": ["he-il", "hebrew", "עברית", "iw"],
      "display": "Hebrew", "script": "Hebr"},
+    # (fix strings-arbitration 2026-11-17): các mã BCP 47 hay gặp trong
+    # thư mục .lproj của IPA iOS mà bảng còn thiếu — trước đây detect_locale
+    # trả None nên file bị loại khỏi merge (locale None) và xuất tên rác
+    # đánh số ở chế độ tách (BGNativeAd.BGNativeAd.2.json...). Đo thật trên
+    # Tom (bn-BD/bn-IN/gu/kn/mr/ne/pa/si/ta/te/ur/uz/az/hy/kk/ky/lv/sr) và
+    # EK2 (ca/hr). "iw" là mã cũ của Hebrew trên iOS (nay "he").
+    {"code": "bn", "aliases": ["bn-bd", "bn-in", "bengali", "বাংলা"],
+     "display": "Bengali", "script": "Beng"},
+    {"code": "gu", "aliases": ["gu-in", "gujarati", "ગુજરાતી"],
+     "display": "Gujarati", "script": "Gujr"},
+    {"code": "kn", "aliases": ["kn-in", "kannada", "ಕನ್ನಡ"],
+     "display": "Kannada", "script": "Knda"},
+    {"code": "mr", "aliases": ["mr-in", "marathi", "मराठी"],
+     "display": "Marathi", "script": "Deva"},
+    {"code": "ne", "aliases": ["ne-np", "nepali", "नेपाली"],
+     "display": "Nepali", "script": "Deva"},
+    {"code": "pa", "aliases": ["pa-in", "punjabi", "ਪੰਜਾਬੀ"],
+     "display": "Punjabi", "script": "Guru"},
+    {"code": "si", "aliases": ["si-lk", "sinhala", "සිංහල"],
+     "display": "Sinhala", "script": "Sinh"},
+    {"code": "ta", "aliases": ["ta-in", "tamil", "தமிழ்"],
+     "display": "Tamil", "script": "Taml"},
+    {"code": "te", "aliases": ["te-in", "telugu", "తెలుగు"],
+     "display": "Telugu", "script": "Telu"},
+    {"code": "ur", "aliases": ["ur-pk", "urdu", "اردو"],
+     "display": "Urdu", "script": "Arab"},
+    {"code": "uz", "aliases": ["uz-uz", "uzbek", "o'zbek"],
+     "display": "Uzbek", "script": "Latn"},
+    {"code": "az", "aliases": ["az-az", "azerbaijani", "azərbaycan"],
+     "display": "Azerbaijani", "script": "Latn"},
+    {"code": "hy", "aliases": ["hy-am", "armenian", "հայերեն"],
+     "display": "Armenian", "script": "Armn"},
+    {"code": "kk", "aliases": ["kk-kz", "kazakh", "қазақша"],
+     "display": "Kazakh", "script": "Cyrl"},
+    {"code": "ky", "aliases": ["ky-kg", "kyrgyz", "кыргызча"],
+     "display": "Kyrgyz", "script": "Cyrl"},
+    {"code": "lv", "aliases": ["lv-lv", "latvian", "latviešu"],
+     "display": "Latvian", "script": "Latn"},
+    {"code": "sr", "aliases": ["sr-rs", "serbian", "српски"],
+     "display": "Serbian", "script": "Cyrl"},
+    {"code": "ca", "aliases": ["ca-es", "catalan", "català"],
+     "display": "Catalan", "script": "Latn"},
+    {"code": "hr", "aliases": ["hr-hr", "croatian", "hrvatski"],
+     "display": "Croatian", "script": "Latn"},
 ]
 
 # Preset ngôn ngữ bắt buộc (đặc tả 2, 7.4): English + Chinese.
