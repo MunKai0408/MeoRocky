@@ -17,7 +17,7 @@
 // supported"). Vì vậy file này dùng import ES module, không dùng cách nạp
 // script của worker classic.
 import { loadPyodide } from "./pyodide/pyodide.mjs";
-import { setTranslateProxyUrl, getTranslateProxyUrl, translateOneWithFallbacks,
+import { setTranslateProxyUrl, getTranslateProxyUrl, checkProxyStatus, translateOneWithFallbacks,
          translateBatchWithFallbacks, abortGoogleTranslate,
          resetGoogleTranslateAbort, getFallbackTrace,
          setLibreTranslateEndpoint, getLibreTranslateEndpoint, setLibreTranslateApiKey } from "./gt.js";
@@ -200,6 +200,15 @@ self.onmessage = async (ev) => {
       // worker, không cần Pyodide đã boot xong.
       setTranslateProxyUrl(typeof msg.url === "string" ? msg.url : "");
       postMessage({ id: msg.id, ok: true, result: JSON.stringify({ proxy: !!msg.url }) });
+      return;
+    }
+    if (msg.op === "check_translate_proxy") {
+      // T1: kiểm tra trạng thái Cloudflare Worker (GET /) để tab Dịch hiển
+      // thị "Worker: đang dùng / chưa triển khai / lỗi". Chỉ fetch JS thuần,
+      // không cần Pyodide đã boot — như diag_state. Không chặn luồng dịch:
+      // worker lỗi/vắng thì dịch vẫn chạy qua chuỗi fallback như trước.
+      const st = await checkProxyStatus(getTranslateProxyUrl());
+      postMessage({ id: msg.id, ok: true, result: JSON.stringify(st) });
       return;
     }
     if (msg.op === "set_libretranslate") {

@@ -469,9 +469,14 @@
     <p class="note">Để trống = gọi trực tiếp Google. Có proxy thì dịch qua proxy
     (cache + giới hạn cứng 500.000 ký tự/tháng, hết hạn mức tự rơi về MyMemory
     + từ điển offline, không phát sinh phí). Cần tài khoản Cloudflare + API key
-    Google — xem hướng dẫn trong repo (<b>cloudflare/README.md</b>).
+    Google — xem hướng dẫn đầy đủ trong repo (<b>docs/API_KEY_SETUP.md</b>,
+    kèm <b>cloudflare/README.md</b>).
     <a href="diagnostics.html">Mở trang Kiểm tra dịch</a> để thử trực tiếp
     Google / proxy / MyMemory trên máy này trước khi dịch file lớn.</p>
+    <div class="row">
+      <button id="btn-translate-worker-check" class="secondary">Kiểm tra worker</button>
+      <span id="translate-worker-status" class="sub">Worker: chưa kiểm tra — bấm “Kiểm tra worker” để xem worker đã triển khai chưa.</span>
+    </div>
     <div class="row">
       <label style="flex:1;min-width:220px">LibreTranslate (tùy chọn, mặc định tắt):
         <input type="text" id="translate-lt-endpoint" placeholder="vd: libretranslate.com">
