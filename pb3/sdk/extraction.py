@@ -165,9 +165,11 @@ class ExtractionRequest:
     locales: Optional[set] = None      # lọc mềm nhiều locale ở vòng export (vd {"en", "zh"}); None = không lọc. Khác req.locale (lọc cứng 1 locale + E_LOCALE_NOT_FOUND khi vắng): lọc mềm KHÔNG fail cả đợt khi một locale vắng mặt.
     merge_one_file: bool = False     # Gộp thành 1 file mỗi ngôn ngữ (Joseph 23:35): khi True, các
     # outcome ngôn ngữ thuộc tập lọc được gộp thành đúng 1 FileOutcome mỗi
-    # locale (xuất en.json/zh.json), giữ thứ tự nguồn + thứ tự key gốc,
-    # trùng key giữ bản đầu + liệt kê xung đột vào report/sidecar, provenance
-    # từng key giữ cho (E). File config/plist (locale None) giữ nguyên.
+    # locale (xuất en.json/zh-CN.json/zh-TW.json), giữ thứ tự nguồn + thứ
+    # tự key gốc, trùng key giữ bản đầu + liệt kê xung đột vào report/sidecar,
+    # provenance từng key giữ cho (E). BUG#2: khi True, output CHỈ chứa các
+    # file locale đã gộp — file config/plist (locale None), file rác,
+    # provenance/checkpoint/report/conflicts đều KHÔNG ghi ra đĩa nữa.
     # Mặc định False để mọi hành vi cũ/test/harness cũ không đổi; bản web
     # bật bằng checkbox (mặc định tick) ở tab Trích xuất.
 
@@ -187,6 +189,15 @@ class FileOutcome:
     exported: Optional[str] = None
     editable: bool = False
     source_kind: str = "verified"      # verified | raw_scan
+    # BUG#2: nguồn gốc nội dung của outcome — language_source (bảng ngôn
+    # ngữ có cấu trúc) | string_table (StringTable gộp nhóm) | generic_flat
+    # (quét phẳng MonoBehaviour / dò chuỗi thô, key vị trí .s/.p) |
+    # text_asset (file locale có cấu trúc khác: TextAsset, CSV, .po...) |
+    # other (không phải text localizable: plist, abi, config...). Merge
+    # một file chỉ gộp language_source + string_table + text_asset.
+    # Mặc định "text_asset" để outcome tổng hợp trong test + plugin chưa
+    # phân loại giữ hành vi cũ; pipeline luôn gắn rõ ở lúc tạo outcome.
+    origin_kind: str = "text_asset"
     kv: Dict[str, str] = field(default_factory=dict)
     sha256: str = ""                   # sha256 file nguồn (để khóa checkpoint)
     merged: bool = False               # True = outcome gộp 1 file (merge_one_file): kv là hợp
@@ -216,6 +227,12 @@ class ExtractionResult:
     report: Dict[str, Any] = field(default_factory=dict)
     ir: Optional[IRDocument] = None
     merged_files: List[Dict[str, Any]] = field(default_factory=list)
+    # BUG#2: bản kê theo từng cột của bảng ngôn ngữ (mLanguages) — mỗi mục
+    # {unit, code, keys, empty, status}: status exported = cột đã xuất
+    # thành file locale; filtered = cột bị lọc theo yêu cầu; not_exported =
+    # cột có trong game nhưng không xuất được (kèm lý do ở skipped/log).
+    # Để không còn cột "mất tích" không dấu vết.
+    language_columns: List[Dict[str, Any]] = field(default_factory=list)
     # Thống kê gộp 1 file (merge_one_file), mỗi locale một mục: {locale,
     # file, keys, entries_before, sources, duplicates_identical, conflicts}
     # — conflicts liệt kê key trùng KHÁC giá trị (giữ bản đầu) kèm nguồn
@@ -226,10 +243,15 @@ class ExtractionResult:
 class _Layer:
     """Một lớp VFS để quét ứng viên: (tiền tố vpath, vfs)."""
 
-    def __init__(self, prefix: str, vfs, kind: str):
+    def __init__(self, prefix: str, vfs, kind: str,
+                 origin_map: Optional[Dict[str, str]] = None):
         self.prefix = prefix
         self.vfs = vfs
         self.kind = kind
+        # BUG#2: origin_kind của từng file ảo trong lớp (chỉ lớp virtual
+        # mới có): {vpath: language_source | string_table | generic_flat |
+        # text_asset} — để run_extraction gắn thẻ nguồn cho FileOutcome.
+        self.origin_map: Dict[str, str] = dict(origin_map or {})
 
 
 _UNITY_SOURCE_EXTS = (".assets", ".unity3d", ".bundle", ".resS")
@@ -930,20 +952,19 @@ def _join_string_tables(tables, shared):
     return merged, notes
 
 
-def _language_source_base_columns(item):
-    """Chọn 1 cột cho mỗi mã ngôn ngữ GỐC trong bảng ngôn ngữ (cho pipeline).
+def _language_source_all_columns(item):
+    """Mọi cột ngôn ngữ trong bảng ngôn ngữ (BUG#2 — thay cho
+    _language_source_base_columns cũ gộp biến thể về mã gốc).
 
-    Pipeline gộp biến thể về mã gốc (bảng locale chỉ có "zh", "en", "pt"...;
-    detect_locale cũng gộp "zh-CN"/"zh-TW" về "zh"). Quy tắc chung, không
-    theo game nào: mỗi mã gốc lấy cột có mã ĐÚNG BẰNG mã gốc nếu có ("zh"),
-    nếu không thì cột biến thể ĐẦU TIÊN theo thứ tự bảng ("zh-TW" đứng trước
-    "zh-CN" thì lấy "zh-TW"). Cột mã rỗng/không hợp lệ (Notes, Status...) là
-    cột không phải ngôn ngữ -> bỏ qua, đếm riêng. Biến thể không được chọn
-    vẫn đọc được qua xuất locale đầy đủ (en/zh-CN/zh-TW riêng), không mất.
-    Trả (picked, skipped_variants, n_nonlocale): picked {mã_gốc: (mã_đầy_đủ,
-    chỉ_số_cột)}; skipped_variants [mã_đầy_đủ...] theo thứ tự bảng."""
-    picked: Dict[str, Tuple[str, int]] = {}
-    skipped_variants: List[str] = []
+    Trả (columns, n_nonlocale): columns {mã_đầy_đủ: chỉ_số_cột} với mã
+    chuẩn hóa ("zh_CN" -> "zh-cn", giữ nguyên từng biến thể zh-CN/zh-TW
+    riêng — KHÔNG gộp về "zh"); n_nonlocale = số cột không phải ngôn ngữ
+    (mã rỗng / mã gốc không phải chữ cái: Notes, Status...). Quy tắc
+    chung, không theo game nào: mỗi cột ngôn ngữ được 1 file ảo riêng ở
+    _language_source_virtual_files; xin "zh" thì ra cả zh-CN + zh-TW.
+    Cột trùng mã (hiếm) giữ cột đầu, cột sau đếm vào n_nonlocale để khỏi
+    ghi đè im lặng."""
+    columns: Dict[str, int] = {}
     n_nonlocale = 0
     for idx, lang in enumerate(item.get("languages") or []):
         code = (lang.get("code") or "").strip()
@@ -955,40 +976,62 @@ def _language_source_base_columns(item):
         if not base.isalpha() or not 2 <= len(base) <= 3:
             n_nonlocale += 1
             continue
+        if norm in columns:
+            n_nonlocale += 1
+            continue
+        columns[norm] = idx
+    return columns, n_nonlocale
+
+
+def _language_source_base_columns(item):
+    """[TƯƠNG THÍCH NGƯỢC — giữ cho test/harness cũ] Chọn 1 cột cho mỗi
+    mã ngôn ngữ GỐC (gộp biến thể về mã gốc như trước BUG#2). Code mới
+    dùng _language_source_all_columns; hàm này chỉ còn để test cũ +
+    script ngoài repo gọi vẫn chạy, không dùng trong pipeline."""
+    columns, n_nonlocale = _language_source_all_columns(item)
+    picked: Dict[str, Tuple[str, int]] = {}
+    skipped_variants: List[str] = []
+    for full, idx in columns.items():
+        base = full.split("-")[0]
         if base not in picked:
-            picked[base] = (norm, idx)
-        elif picked[base][0] != base and norm == base:
+            picked[base] = (full, idx)
+        elif picked[base][0] != base and full == base:
             skipped_variants.append(picked[base][0])
-            picked[base] = (norm, idx)
+            picked[base] = (full, idx)
         else:
-            skipped_variants.append(norm)
+            skipped_variants.append(full)
     return picked, skipped_variants, n_nonlocale
 
 
 def _language_source_virtual_files(mb_lang_sources, log):
-    """File JSON ao cho bang ngon ngu co cau truc: {(vpath): bytes}.
+    """File JSON ảo cho bảng ngôn ngữ có cấu trúc: {(vpath): bytes}.
 
-    Moi (don vi, ma goc) mot file, key = ten term that, GIU chuoi rong.
-    Ten file co doan ".langtable" de khong dung file generic cung don vi +
-    ngon ngu (dict ao ghi de se mat bang). Nhieu bang trong cung don vi
-    gop keep-first theo thu tu gap, xung dot dem + log (khong lang le)."""
+    Mỗi (đơn vị, mã ĐẦY ĐỦ) một file, key = tên term thật, GIỮ chuỗi rỗng.
+    BUG#2: mỗi biến thể (zh-CN, zh-TW...) có file riêng — không gộp về mã
+    gốc nữa. Tên file có đoạn ".langtable" để không đụng file generic cùng
+    đơn vị + ngôn ngữ (dict ảo ghi đè sẽ mất bảng, lỗi đã gặp khi kiểm
+    chứng 2026-11-17); hậu tố ".monobehaviour.<lang>.json" giữ nguyên để
+    nhóm __mono__ + đặt tên xuất vẫn nhận ra. Nhiều bảng trong cùng đơn vị
+    gộp keep-first theo thứ tự gặp, xung đột đếm + log (không lặng lẽ)."""
+
+    def _lang_log(columns, n_nonloc):
+        return ", ".join(sorted(columns))
+
     ls_units: Dict[Tuple[str, str, str], Dict[str, str]] = {}
     ls_order: List[Tuple[str, str, str]] = []
     ls_conflicts = 0
     for unit_path, assets_name, item in mb_lang_sources:
-        picked, skipped_var, n_nonloc = _language_source_base_columns(item)
+        columns, n_nonloc = _language_source_all_columns(item)
         unit_label = unit_path + ("::" + assets_name if assets_name else "")
-        log("Unity: %s -> bảng ngôn ngữ %r: %d term, %d cột (mã gốc: %s; "
-            "biến thể gộp: %s; cột không phải ngôn ngữ: %d)"
+        log("Unity: %s -> bảng ngôn ngữ %r: %d term, %d cột (mã đầy đủ: %s; "
+            "cột không phải ngôn ngữ: %d)"
             % (unit_label, item.get("name") or "?",
                len(item.get("terms") or []),
                len(item.get("languages") or []),
-               ", ".join("%s<-%s" % (b, f)
-                         for b, (f, _i) in sorted(picked.items())),
-               ", ".join(skipped_var) if skipped_var else "-",
+               _lang_log(columns, n_nonloc),
                n_nonloc))
-        for base, (_full, col) in sorted(picked.items()):
-            ukey = (unit_path, assets_name, base)
+        for code, col in sorted(columns.items()):
+            ukey = (unit_path, assets_name, code)
             bucket = ls_units.setdefault(ukey, {})
             if ukey not in ls_order:
                 ls_order.append(ukey)
@@ -1008,23 +1051,55 @@ def _language_source_virtual_files(mb_lang_sources, log):
         log("Unity: bảng ngôn ngữ: %d xung đột cùng term trong đơn vị "
             "(giữ bản đầu)" % ls_conflicts)
     out: Dict[str, bytes] = {}
-    for unit_path, assets_name, base in ls_order:
-        kv = ls_units[(unit_path, assets_name, base)]
+    for unit_path, assets_name, code in ls_order:
+        kv = ls_units[(unit_path, assets_name, code)]
         if not kv:
             continue
         if assets_name:
             stem = _sanitize_segment(os.path.splitext(os.path.basename(assets_name))[0]
                                      or "assets")
-            vpath = "%s::%s::%s.langtable.monobehaviour.%s.json" % (unit_path, assets_name, stem, base)
+            vpath = "%s::%s::%s.langtable.monobehaviour.%s.json" % (unit_path, assets_name, stem, code)
         else:
             stem = _sanitize_segment(os.path.splitext(os.path.basename(unit_path))[0]
                                      or "assets")
-            vpath = "%s::%s.langtable.monobehaviour.%s.json" % (unit_path, stem, base)
+            vpath = "%s::%s.langtable.monobehaviour.%s.json" % (unit_path, stem, code)
         out[vpath] = json.dumps(kv, ensure_ascii=False, indent=1).encode("utf-8")
         log("Unity: %s -> bảng ngôn ngữ [%s]: %d term (xuất %s)"
             % (unit_path + ("::" + assets_name if assets_name else ""),
-               base, len(kv), vpath))
+               code, len(kv), vpath))
     return out
+
+
+def _fill_string_table_universe(grouped, shared_keys):
+    """Điền "" cho key trong universe SharedTableData mà bucket chưa có (BUG#2).
+
+    grouped: {(bundle, locale, collection): {key: value}} từ
+    join_string_tables_grouped; shared_keys: {collection: {m_Id: key}}.
+    Trả (dict_mới, số_key_đã_điền); không sửa dict gốc. Key thiếu ở một
+    locale nhưng có trong SharedTableData là bản dịch còn thiếu — giữ key
+    với giá trị rỗng để tập key giống hệt nhau giữa các locale (đo thật
+    trên IPA 9 Kings v1.0.6: universe 102 key; en chỉ có 100 key thật,
+    điền 2 key "" — đúng số rỗng 2 của file mẫu en.json; zh chỉ có 26 key
+    thật, điền 76 key "" — 76 + 30 rỗng langtable = 106, đúng số rỗng của
+    file mẫu zh-TW.json).
+    Điền cả bucket collection CHƯA CÓ cho (bundle, locale) đã có ít nhất
+    một bucket StringTable: vd zh chỉ có bảng Policies (26 key) thì vẫn
+    tạo đủ Buildings/CommonTexts/Kings/Spells/Troops toàn "" — nếu không
+    zh sẽ thiếu 54 key so với en (lỗi gặp khi kiểm chứng 2026-11-17).
+    Locale hoàn toàn không có StringTable nào thì không tạo (không có
+    bằng chứng game có StringTable cho locale đó)."""
+    filled = 0
+    out: Dict[Tuple[str, str, str], Dict[str, str]] = {
+        k: dict(v) for k, v in grouped.items()}
+    pairs = {(bundle, loc) for (bundle, loc, _coll) in grouped}
+    for (bundle, loc) in sorted(pairs):
+        for coll, keys in shared_keys.items():
+            bucket = out.setdefault((bundle, loc, coll), {})
+            for key in keys.values():
+                if key not in bucket:
+                    bucket[key] = ""
+                    filled += 1
+    return out, filled
 
 
 def _build_layers(root_vfs, inv: List[disc.InventoryEntry], limits, backend, log,
@@ -1053,6 +1128,8 @@ def _build_layers(root_vfs, inv: List[disc.InventoryEntry], limits, backend, log
     layers = [_Layer("", root_vfs, "root")]
     nested = NestedVFS(root_vfs, limits=limits)
     virtual: Dict[str, bytes] = {}
+    # BUG#2: origin_kind của từng file ảo (xem _Layer.origin_map).
+    virtual_origin: Dict[str, str] = {}
     # MonoBehaviour: StringTable/SharedTableData có thể nằm ở 2 bundle khác
     # nhau trong cùng IPA nên gom hết rồi join sau vòng lặp (theo m_Id);
     # generic gom theo từng đơn vị (.assets / entry CAB trong bundle).
@@ -1143,6 +1220,10 @@ def _build_layers(root_vfs, inv: List[disc.InventoryEntry], limits, backend, log
                 n_gen_str += len(_f) if isinstance(_f, dict) else len(_s or [])
             if got or n_st or n_gen or n_ls:
                 virtual.update(got)
+                for _vp in got:
+                    # TextAsset Unity: file locale có cấu trúc (JSON/CSV/
+                    # .po...) khi parse được bằng plugin định dạng.
+                    virtual_origin[_vp] = "text_asset"
                 # Giữ nguyên tiền tố log cũ "-> N TextAsset" (harness cũ
                 # kiểm tra đúng chuỗi này) rồi thêm số liệu MonoBehaviour.
                 log("Unity: %s -> %d TextAsset, %d StringTable, %d MonoBehaviour (%d chuỗi)%s"
@@ -1163,17 +1244,21 @@ def _build_layers(root_vfs, inv: List[disc.InventoryEntry], limits, backend, log
     # MonoBehaviour -> file JSON ảo (để plugin json_text nhận bằng đuôi .json):
     # - StringTable: gộp mọi bảng cùng (bundle, locale) thành 1 file
     #   "<bundle>::<locale>.json" (vd "...bundle::en.json" -> xuất English.json),
-    #   key đã join qua SharedTableData; nguồn bundle hiện ở FileOutcome.source.
-    # - Bảng ngôn ngữ có cấu trúc: LUÔN 1 file mỗi mã gốc
-    #   ("<đơn vị>.langtable.monobehaviour.<base>.json", key = tên term thật,
+    #   key đã join qua SharedTableData, dạng "Collection/Key" (BUG#2:
+    #   join_string_tables_grouped thay cho _join_string_tables phẳng cũ),
+    #   key thiếu ở locale nhưng có trong SharedTableData thì điền "" để
+    #   tập key giống hệt nhau giữa các locale; nguồn bundle hiện ở
+    #   FileOutcome.source.
+    # - Bảng ngôn ngữ có cấu trúc: LUÔN 1 file mỗi mã ĐẦY ĐỦ (BUG#2)
+    #   ("<đơn vị>.langtable.monobehaviour.<code>.json", key = tên term thật,
     #   giữ chuỗi rỗng) — không bao giờ trộn các cột vào 1 file, không đi qua
     #   đường quét chuỗi phẳng (đường đó bỏ chuỗi rỗng -> lệch cột). Đoạn
     #   ".langtable" để KHÔNG đụng tên file generic cùng đơn vị + ngôn ngữ
     #   ("...monobehaviour.<lang>.json" — đụng tên thì dict ảo ghi đè mất
     #   bảng, lỗi đã gặp khi kiểm chứng 2026-11-17); hậu tố
     #   ".monobehaviour.<lang>.json" giữ nguyên để nhóm __mono__ + đặt tên
-    #   xuất vẫn nhận ra. Biến thể (zh-CN/zh-TW) gộp về mã gốc theo
-    #   _language_source_base_columns.
+    #   xuất vẫn nhận ra. Mỗi biến thể (zh-CN, zh-TW...) có file riêng theo
+    #   _language_source_all_columns — không gộp về mã gốc nữa.
     # - Generic: 1 file "<đơn vị>.monobehaviour.json" cho mỗi .assets / CAB
     #   (vd "...resources.assets::resources.monobehaviour.json"); khi tách
     #   ngôn ngữ thì 1 file mỗi ngôn ngữ ("...monobehaviour.<lang>.json").
@@ -1181,24 +1266,43 @@ def _build_layers(root_vfs, inv: List[disc.InventoryEntry], limits, backend, log
     #   (không validate được cấu trúc bảng); xóa hẳn sẽ mất text thật không
     #   gắn nguồn trong prefab/UI — xem README/HANDOVER. Output locale mới
     #   (locales/) không dùng đường này nên không có key hậu tố .sN/.pN/.xN.
+    #   BUG#2: file generic gắn origin_kind "generic_flat" nên merge một
+    #   file LOẠI khỏi file locale (rác vứt hết theo quyết định người dùng).
     # Thứ tự key GIỮ NGUYÊN thứ tự gốc trong game (ý 7): dict Python giữ
     # thứ tự chèn, KHÔNG sort_keys ở đây (cũng không sorted() key ở các
     # bước sau — xem _mb_generic_kv, export_key_value_json). Chỉ sorted()
     # ở vòng duyệt FILE/bundle dưới đây là thứ tự duyệt file, không ảnh
     # hưởng thứ tự key trong file.
     if mb_tables:
-        merged, join_notes = _join_string_tables(mb_tables, mb_shared)
-        for (bundle_path, loc), kv in sorted(merged.items()):
+        grouped, join_notes, join_conflicts, shared_keys = \
+            join_string_tables_grouped(mb_tables, mb_shared)
+        grouped, n_filled = _fill_string_table_universe(grouped, shared_keys)
+        per_file: Dict[Tuple[str, str], Dict[str, str]] = {}
+        for (bundle_path, loc, coll), kv in sorted(grouped.items()):
+            bucket = per_file.setdefault((bundle_path, loc), {})
+            for k, v in kv.items():
+                bucket["%s/%s" % (coll, k)] = v
+        for (bundle_path, loc), kv in sorted(per_file.items()):
             if not kv:
                 continue
             vpath = "%s::%s.json" % (bundle_path, loc)
             virtual[vpath] = json.dumps(kv, ensure_ascii=False, indent=1).encode("utf-8")
-            log("Unity: %s -> StringTable %s: %d chuỗi (xuất %s)"
+            virtual_origin[vpath] = "string_table"
+            log("Unity: %s -> StringTable %s: %d chuỗi (gộp nhóm Collection/Key, xuất %s)"
                 % (bundle_path, loc, len(kv), vpath))
         for n in join_notes:
             log("Unity: StringTable: %s" % n)
+        if join_conflicts:
+            log("Unity: StringTable: %d xung đột gộp nhóm (giữ bản đầu, xem log gộp)"
+                % len(join_conflicts))
+        if n_filled:
+            log("Unity: StringTable: điền %d key rỗng từ SharedTableData "
+                "(bản dịch thiếu, giữ tập key giống nhau giữa các locale)"
+                % n_filled)
     if mb_lang_sources:
-        virtual.update(_language_source_virtual_files(mb_lang_sources, log))
+        for _vp, _b in _language_source_virtual_files(mb_lang_sources, log).items():
+            virtual[_vp] = _b
+            virtual_origin[_vp] = "language_source"
     for (unit_path, assets_name), items in sorted(mb_generic_units.items()):
         res = _mb_generic_kv(items, split_languages=split_mono_languages)
         kept, dropped = res["kept"], res["dropped"]
@@ -1218,6 +1322,7 @@ def _build_layers(root_vfs, inv: List[disc.InventoryEntry], limits, backend, log
                                              or "assets")
                     vpath = "%s::%s.monobehaviour.%s.json" % (unit_path, stem, lang)
                 virtual[vpath] = json.dumps(lkv, ensure_ascii=False, indent=1).encode("utf-8")
+                virtual_origin[vpath] = "generic_flat"
                 log("Unity: %s -> MonoBehaviour [%s]: %d chuỗi (xuất %s)"
                     % (unit_label, lang, len(lkv), vpath))
             log("Unity: %s -> MonoBehaviour tách ngôn ngữ: %d chuỗi "
@@ -1244,10 +1349,12 @@ def _build_layers(root_vfs, inv: List[disc.InventoryEntry], limits, backend, log
                                      or "assets")
             vpath = "%s::%s.monobehaviour.json" % (unit_path, stem)
         virtual[vpath] = json.dumps(kv, ensure_ascii=False, indent=1).encode("utf-8")
+        virtual_origin[vpath] = "generic_flat"
         log("Unity: %s -> MonoBehaviour: %d chuỗi (lọc %d chuỗi rác, xuất %s)"
             % (unit_label, kept, dropped, vpath))
     if virtual:
-        layers.append(_Layer("", MemoryVFS(virtual, limits=limits), "virtual"))
+        layers.append(_Layer("", MemoryVFS(virtual, limits=limits), "virtual",
+                             origin_map=virtual_origin))
     return layers
 
 
@@ -1270,47 +1377,74 @@ def _find_layer(layers: List[_Layer], full_path: str) -> Tuple[Any, str]:
 MERGE_CONFLICTS_CAP = 500  # số xung đột tối đa ghi chi tiết vào report/sidecar
 # mỗi locale (còn lại chỉ đếm tổng; bản bị loại nào cũng đã liệt kê nguồn
 # trong merge_sources của key được giữ — (E) ép theo bản giữ).
+# BUG#2: chỉ outcome có nguồn CÓ CẤU TRÚC mới được gộp vào file locale.
+# generic_flat (quét phẳng MonoBehaviour, key vị trí .s/.p) và other
+# (plist/abi/config...) KHÔNG gộp — chúng là rác theo quyết định người dùng.
+MERGE_ORIGINS = frozenset({"language_source", "string_table", "text_asset"})
 
 
 def merge_language_outcomes(files: List[FileOutcome],
                             target_locales) -> Tuple[List[FileOutcome], List[Dict[str, Any]]]:
     """Gộp các outcome ngôn ngữ thành ĐÚNG 1 outcome mỗi locale (Joseph 23:35).
 
-    files: danh sách outcome theo thứ tự pipeline (thứ tự nguồn phát hiện).
-    target_locales: tập locale cần gộp (vd {"en"} hay {"en", "zh"}).
-
-    Quy tắc (đo trên 5 game thật trước khi chốt — xem
-    exp/analysis_merge_one_file_results.md):
-      - Thứ tự: outcome theo thứ tự đã có; key trong mỗi outcome giữ thứ
-        tự gốc (dict giữ thứ tự chèn, không sort_keys).
+    BUG#2 (2026-11-17) — hợp đồng mới (cũ: gộp mọi outcome theo locale):
+      - Chỉ gộp outcome có origin_kind thuộc MERGE_ORIGINS
+        (language_source / string_table / text_asset). Outcome generic_flat
+        hoặc other KHÔNG gộp, không lọt vào file locale.
+      - Mỗi biến thể là 1 target riêng (zh-CN, zh-TW...). Outcome mang mã
+        GỐC ("zh") được gộp làm fallback SAU các outcome biến thể của cùng
+        target (vd bảng StringTable chỉ có cột "zh" thì cả zh-CN lẫn zh-TW
+        đều lấy giá trị đó); biến thể luôn thắng mã gốc khi trùng key.
       - Trùng key, GIỐNG hệt giá trị: gộp 1 bản, đếm duplicates_identical
         (không mất chuỗi — giá trị giống hệt nhau từng byte).
-      - Trùng key, KHÁC giá trị: KHÔNG ghi đè im lặng — giữ bản xuất hiện
-        đầu tiên, liệt kê toàn bộ bản xung đột (key + giá trị + nguồn của
-        từng bản) vào conflicts của mục thống kê.
+      - Trùng key, bản giữ là "" (bản dịch thiếu, đã điền từ SharedTableData
+        hoặc bảng ngôn ngữ) mà bản sau có giá trị thật: LẤY bản thật
+        (đếm filled_empty) — "" không phải bản dịch, không được giữ để rồi
+        che mất giá trị thật ở bundle khác. Ngược lại (bản giữ thật, bản
+        sau "") thì bỏ qua bản sau, không tính xung đột.
+      - Trùng key, KHÁC giá trị (cả hai đều thật): KHÔNG ghi đè im lặng —
+        giữ bản xuất hiện đầu tiên, liệt kê toàn bộ bản xung đột (key +
+        giá trị + nguồn của từng bản) vào conflicts của mục thống kê.
       - Outcome không thuộc target (vd file config/plist locale None) giữ
-        nguyên, không gộp, không đổi thứ tự tương đối.
+        nguyên, không gộp, không đổi thứ tự tương đối — việc loại chúng
+        khỏi OUTPUT là trách nhiệm của _export ở chế độ merge_one_file,
+        không phải của hàm gộp thuần này.
     Trả (danh_sách_outcome_mới, thống_kê_mỗi_locale). Outcome gộp có
-    path "<merged:<lang>>", plugin "merge_one_file", merged=True,
-    merged_from = tên file tách đã gộp (exported nếu có, không thì path),
-    merge_sources = {key: nguồn của key đó} cho (E) ép ngược.
+    path "<merged:<lang>>" (lang dạng canonical, vd "zh-CN"), plugin
+    "merge_one_file", merged=True, merged_from = tên file tách đã gộp
+    (exported nếu có, không thì path), merge_sources = {key: nguồn của
+    key đó} cho (E) ép ngược.
     """
     targets = {str(c).lower() for c in (target_locales or set())}
     if not targets:
         return list(files), []
+    # Nhóm theo target: outcome biến thể trước, outcome mã gốc (fallback) sau.
     by_lang: Dict[str, List[FileOutcome]] = {}
     for f in files:
-        if f.locale is not None and f.locale.lower() in targets and f.kv:
-            by_lang.setdefault(f.locale.lower(), []).append(f)
+        if f.locale is None or not f.kv or f.origin_kind not in MERGE_ORIGINS:
+            continue
+        loc = f.locale.lower()
+        if loc in targets:
+            by_lang.setdefault(loc, []).append(f)
+    for target in sorted(targets):
+        base = disc.locale_base(target)
+        if base == target:
+            continue
+        for f in files:
+            if (f.locale is not None and f.locale.lower() == base and f.kv
+                    and f.origin_kind in MERGE_ORIGINS):
+                by_lang.setdefault(target, []).append(f)
     if not by_lang:
         return list(files), []
     merged_outcomes: Dict[str, FileOutcome] = {}
     stats: List[Dict[str, Any]] = []
     for lang in sorted(by_lang):
         group = by_lang[lang]
+        canonical = disc.canonical_locale_code(lang)
         kv: Dict[str, str] = {}
         sources: Dict[str, str] = {}
         dups = 0
+        filled_empty = 0
         conflicts: List[Dict[str, Any]] = []
         entries_before = 0
         for f in group:
@@ -1321,13 +1455,22 @@ def merge_language_outcomes(files: List[FileOutcome],
                     sources[key] = f.source or f.path
                 elif kv[key] == value:
                     dups += 1
+                elif kv[key] == "" and value != "":
+                    # Bản giữ chỉ là chỗ trống đã điền, bản sau có giá trị
+                    # thật: lấy bản thật, không tính xung đột.
+                    kv[key] = value
+                    sources[key] = f.source or f.path
+                    filled_empty += 1
+                elif value == "":
+                    # Bản sau chỉ là chỗ trống: bỏ qua, giữ bản thật.
+                    continue
                 else:
                     conflicts.append({
                         "key": key,
                         "kept": {"value": kv[key], "source": sources[key]},
                         "dropped": {"value": value, "source": f.source or f.path},
                     })
-        out = FileOutcome("<%s:%s>" % ("merged", lang), "merge_one_file", lang,
+        out = FileOutcome("<%s:%s>" % ("merged", canonical), "merge_one_file", canonical,
                           entries=len(kv), ok=len(kv), kv=kv,
                           source=group[0].source or group[0].path,
                           merged=True,
@@ -1335,37 +1478,117 @@ def merge_language_outcomes(files: List[FileOutcome],
                           merge_sources=sources)
         merged_outcomes[lang] = out
         stats.append({
-            "locale": lang,
-            "file": "%s.json" % lang,
+            "locale": canonical,
+            "file": "%s.json" % canonical,
             "keys": len(kv),
             "entries_before": entries_before,
             "sources": [(f.exported or f.path) for f in group],
             "duplicates_identical": dups,
+            "filled_empty": filled_empty,
             "conflicts": conflicts[:MERGE_CONFLICTS_CAP],
             "conflicts_total": len(conflicts),
             "conflicts_truncated": len(conflicts) > MERGE_CONFLICTS_CAP,
         })
-    # Outcome mới: giữ vị trí của outcome ngôn ngữ đầu tiên của mỗi locale,
-    # các outcome cùng locale sau đó bị thay bằng outcome gộp (chỉ 1 lần).
+    # Outcome mới: giữ vị trí của outcome đầu tiên của mỗi nhóm gộp; các
+    # outcome trong nhóm sau đó bị thay bằng outcome gộp (chỉ 1 lần). Một
+    # outcome mã gốc có thể là fallback cho NHIỀU biến thể (vd bảng
+    # StringTable "zh" cho cả zh-CN lẫn zh-TW) — khi tới vị trí của nó thì
+    # đặt TẤT CẢ outcome gộp dùng nó làm đầu nhóm, theo thứ tự locale.
+    firsts: Dict[int, List[str]] = {}
+    for lang, group in by_lang.items():
+        firsts.setdefault(id(group[0]), []).append(lang)
+    consumed = {id(f) for group in by_lang.values() for f in group}
     placed: set = set()
     new_files: List[FileOutcome] = []
     for f in files:
-        if f.locale is not None and f.locale.lower() in targets and f.kv:
-            lang = f.locale.lower()
-            if lang not in placed:
-                placed.add(lang)
-                new_files.append(merged_outcomes[lang])
+        if id(f) in firsts:
+            for lang in sorted(firsts[id(f)]):
+                if lang not in placed:
+                    placed.add(lang)
+                    new_files.append(merged_outcomes[lang])
+            continue
+        if id(f) in consumed:
             continue
         new_files.append(f)
     return new_files, stats
 
 
+def _expand_merge_targets(requested, present_locales) -> set:
+    """Mở rộng tập locale cần gộp theo biến thể có thật trong dữ liệu (BUG#2).
+
+    requested: tập mã chữ thường người dùng xin (vd {"en", "zh"}).
+    present_locales: tập mã chữ thường có trong result.files.
+    Quy tắc: mã xin là mã GỐC ("zh") mà dữ liệu có biến thể của nó
+    ("zh-CN", "zh-TW") thì target là các biến thể đó (KHÔNG ra file
+    "zh.json" nữa); chỉ khi dữ liệu không có biến thể nào thì target mới
+    là chính mã gốc (vd game chỉ có bảng "zh" thì ra zh.json). Mã xin đã
+    là biến thể ("zh-CN") thì chỉ target đúng mã đó."""
+    targets = set()
+    for r in (requested or set()):
+        r = str(r).lower()
+        variants = {p for p in present_locales
+                    if p != r and disc.locale_base(p) == r}
+        if variants:
+            targets |= variants
+        elif r in present_locales:
+            targets.add(r)
+    return targets
+
+
+def _build_language_columns(layers, result: ExtractionResult, locales) -> None:
+    """Bản kê theo từng cột bảng ngôn ngữ (BUG#2, tiêu chí 8).
+
+    Đọc từ file ảo langtable trong lớp virtual: mỗi cột một mục {unit,
+    code, keys, empty, status}. status: "exported" nếu có outcome đã gộp
+    cho mã đó trong result.files; "filtered" nếu mã không thuộc tập lọc
+    yêu cầu; "not_exported" nếu còn lại. Không đoán số — đếm thật từ file
+    ảo (keys = số term, empty = số giá trị rỗng)."""
+    merged_locales = {str(f.locale).lower() for f in result.files if f.merged}
+    seen = set()
+    for layer in layers:
+        if layer.kind != "virtual":
+            continue
+        for vpath, origin in sorted(layer.origin_map.items()):
+            if origin != "language_source":
+                continue
+            m = re.search(r"\.langtable\.monobehaviour\.(.+)\.json$", vpath)
+            if not m:
+                continue
+            code = m.group(1)
+            unit = vpath.split("::")[0]
+            key = (unit, code)
+            if key in seen:
+                continue
+            seen.add(key)
+            try:
+                kv = json.loads(bytes(layer.vfs.read(vpath, None)).decode("utf-8"))
+                if not isinstance(kv, dict):
+                    kv = {}
+            except Exception:
+                kv = {}
+            empty = sum(1 for v in kv.values() if v == "")
+            if code.lower() in merged_locales:
+                status = "exported"
+            elif locales is not None and not disc.locale_in_wanted(code, locales):
+                status = "filtered"
+            else:
+                status = "not_exported"
+            result.language_columns.append({
+                "unit": unit, "code": code, "keys": len(kv),
+                "empty": empty, "status": status,
+            })
+
+
 def _apply_merge(result: ExtractionResult, target_locales) -> None:
-    """Áp merge_language_outcomes lên result.files (chạy trước _export)."""
+    """Áp merge_language_outcomes lên result.files (chạy trước _export).
+
+    BUG#2: total_entries chỉ đếm key của các file locale ĐÃ GỘP (không đếm
+    file rác passthrough — vd config/plist — vì chúng không nằm trong
+    output ở chế độ gộp nữa)."""
     new_files, stats = merge_language_outcomes(result.files, target_locales)
     result.files = new_files
     result.merged_files = stats
-    result.total_entries = sum(len(f.kv) for f in result.files)
+    result.total_entries = sum(len(f.kv) for f in result.files if f.merged)
 
 
 # ------------------------------------------------------------------ pipeline
@@ -1731,7 +1954,7 @@ def run_extraction(req: ExtractionRequest) -> ExtractionResult:
         _locale_skip_seen = set()
         for item in probed:
             code, _conf, _ev = disc.detect_locale(item["full"], locale_table)
-            if code is not None and code not in locales:
+            if code is not None and not disc.locale_in_wanted(code, locales):
                 # Cùng đường dẫn có thể được probe bởi nhiều plugin: ghi
                 # skipped 1 lần cho 1 đường dẫn, khỏi trùng lặp.
                 if item["full"] not in _locale_skip_seen:
@@ -1882,7 +2105,7 @@ def run_extraction(req: ExtractionRequest) -> ExtractionResult:
                 # LẠI (lỗi 2026-11-16: trước đây `None not in {en,zh}`
                 # loại cả file không có ngôn ngữ, khiến IPA thật chỉ còn
                 # config thì ra 0 file + banner "Lỗi không rõ").
-                if locales is not None and loc_code is not None and loc_code not in locales:
+                if locales is not None and loc_code is not None and not disc.locale_in_wanted(loc_code, locales):
                     result.skipped.append({"path": item["full"],
                                            "reason": "locale %s không phải %s"
                                                      % (loc_code or "không xác định", wanted_txt)})
@@ -1893,6 +2116,8 @@ def run_extraction(req: ExtractionRequest) -> ExtractionResult:
                                       editable=bool(rec.manifest.can_write),
                                       source_kind="raw_scan" if rec.plugin_id == "generic_strings"
                                       else "verified",
+                                      origin_kind=_origin_kind_for(
+                                          item["full"], item["layer"], rec.plugin_id),
                                       warnings=["dùng checkpoint, không parse lại"],
                                       sha256=file_sha,
                                       source=_source_of(item["full"]))
@@ -1930,7 +2155,7 @@ def run_extraction(req: ExtractionRequest) -> ExtractionResult:
             # ngôn ngữ không thể gọi là "không phải en/zh" (lỗi 2026-11-16:
             # trước đây lọc loại cả config, IPA thật chỉ còn config thì ra
             # 0 file + banner "Lỗi không rõ").
-            if locales is not None and loc is not None and loc not in locales:
+            if locales is not None and loc is not None and not disc.locale_in_wanted(loc, locales):
                 result.skipped.append({"path": item["full"],
                                        "reason": "locale %s không phải %s"
                                                  % (loc or "không xác định", wanted_txt)})
@@ -1944,6 +2169,8 @@ def run_extraction(req: ExtractionRequest) -> ExtractionResult:
                 continue
             outcome = _outcome_for(table, rec, item["full"], loc, entries)
             outcome.sha256 = file_sha
+            outcome.origin_kind = _origin_kind_for(
+                item["full"], item["layer"], rec.plugin_id)
             result.files.append(outcome)
             result.total_entries += len(outcome.kv)
             result.generated_keys.extend(
@@ -1968,6 +2195,8 @@ def run_extraction(req: ExtractionRequest) -> ExtractionResult:
                     table, rec, item, loc, entries, file_sha = payload
                     outcome = _outcome_for(table, rec, item["full"], loc, entries)
                     outcome.sha256 = file_sha
+                    outcome.origin_kind = _origin_kind_for(
+                        item["full"], item["layer"], rec.plugin_id)
                     result.files.append(outcome)
                     result.total_entries += len(outcome.kv)
                     result.generated_keys.extend(
@@ -1991,7 +2220,7 @@ def run_extraction(req: ExtractionRequest) -> ExtractionResult:
         n_loc = sum(1 for s in (result.skipped or [])
                     if "không phải" in (s.get("reason") or ""))
         hint = ("; thử tắt bộ lọc ngôn ngữ rồi trích xuất lại"
-                if n_loc else "; xem skipped/log trong extraction_report.txt")
+                if n_loc else "; xem danh sách đã bỏ qua / log trong kết quả trích xuất")
         filt = ("; trong đó %d mục do bộ lọc ngôn ngữ %s"
                 % (n_loc, wanted_txt)) if locales is not None else ""
         result.errors.append({"path": "", "code": "E_NO_FILES",
@@ -2007,10 +2236,15 @@ def run_extraction(req: ExtractionRequest) -> ExtractionResult:
     # cứng req.locale). Không lọc ngôn ngữ thì không gộp (không có locale
     # đích để gộp theo). Chạy TRƯỚC _export để file ghi ra đĩa đã là file
     # gộp; IR/report dùng result.files sau gộp.
+    # BUG#2: target mở rộng theo biến thể có thật (xin "zh" -> zh-CN +
+    # zh-TW, không ra zh.json), tính từ locale thật của outcome.
     if req.merge_one_file:
         _merge_targets = locales
         if _merge_targets is None and req.locale not in (None, "all"):
             _merge_targets = {str(req.locale).lower()}
+        if _merge_targets:
+            _present = {str(f.locale).lower() for f in result.files if f.locale}
+            _merge_targets = _expand_merge_targets(_merge_targets, _present)
         if _merge_targets:
             _apply_merge(result, _merge_targets)
             for _ms in result.merged_files:
@@ -2018,6 +2252,11 @@ def run_extraction(req: ExtractionRequest) -> ExtractionResult:
                     "xung đột giữ bản đầu: %d)"
                     % (_ms["file"], _ms["keys"], len(_ms["sources"]),
                        _ms["duplicates_identical"], _ms["conflicts_total"]))
+
+    # BUG#2: bản kê theo từng cột bảng ngôn ngữ (để không còn cột "mất
+    # tích" không dấu vết). Tính sau khi gộp để status "exported" khớp
+    # đúng file locale cuối cùng.
+    _build_language_columns(layers, result, locales)
 
     # IR: chuẩn hóa toàn bộ bảng (giữ key/value/locale/status/source).
     result.ir = from_tables(
@@ -2180,6 +2419,29 @@ def _normalize_table(table: LocTable, rec, full_path: str) -> None:
                 e.notes.append("dò chuỗi thô, chưa xác minh — có thể không phải chuỗi localization")
 
 
+# Plugin nào parse ra nội dung KHÔNG phải text localizable (cấu hình,
+# metadata...): origin_kind "other" — không gộp vào file locale (BUG#2).
+_NON_LOCALE_PLUGINS = frozenset({"apple_plist"})
+
+
+def _origin_kind_for(full_path: str, layer, plugin_id: str) -> str:
+    """origin_kind của một outcome (BUG#2).
+
+    Ưu tiên bảng origin của lớp virtual (_build_layers đã gắn thẻ từng
+    file ảo: language_source / string_table / generic_flat / text_asset).
+    File thường (không nằm trong lớp virtual): generic_strings là dò chuỗi
+    thô -> generic_flat; plugin cấu hình (apple_plist) -> other; còn lại
+    là file locale có cấu trúc -> text_asset."""
+    origin_map = getattr(layer, "origin_map", None) if layer is not None else None
+    if origin_map and full_path in origin_map:
+        return origin_map[full_path]
+    if plugin_id == "generic_strings":
+        return "generic_flat"
+    if plugin_id in _NON_LOCALE_PLUGINS:
+        return "other"
+    return "text_asset"
+
+
 def _outcome_for(table: LocTable, rec, full_path: str, locale: Optional[str],
                  entries: List[LocEntry]) -> FileOutcome:
     """Một locale trong một file nguồn -> FileOutcome (kv xuất, đếm status)."""
@@ -2238,7 +2500,13 @@ def _source_stem(path: str) -> str:
 
 def _export(req: ExtractionRequest, result: ExtractionResult, source_hash: str,
             logs: List[str]) -> None:
-    """Ghi JSON key-value + report (trừ dry-run / không có out_dir)."""
+    """Ghi JSON key-value + report (trừ dry-run / không có out_dir).
+
+    BUG#2: khi merge_one_file=True (chế độ web mặc định), out_dir CHỈ
+    chứa các file locale đã gộp — outcome chưa gộp (file rác, config,
+    plist...) bị bỏ qua; không ghi sidecar provenance, conflicts.json,
+    checkpoint hay report vào out_dir (chúng vẫn có trong result.report
+    nội bộ để debug)."""
     if req.out_dir is None or req.dry_run:
         return
     import os as _os
@@ -2246,7 +2514,12 @@ def _export(req: ExtractionRequest, result: ExtractionResult, source_hash: str,
     game = _game_name(req.source)
     checkpoint_files: Dict[str, Any] = {}
     used_names: set = set()
+    merge_mode = bool(req.merge_one_file)
     for outcome in result.files:
+        # BUG#2: chế độ gộp chỉ xuất outcome đã gộp (file locale); mọi
+        # outcome khác (rác, config, plist...) vứt hết, không ghi file.
+        if merge_mode and not outcome.merged:
+            continue
         if not outcome.kv:
             continue
         if outcome.locale:
@@ -2254,11 +2527,11 @@ def _export(req: ExtractionRequest, result: ExtractionResult, source_hash: str,
         else:
             fname = _sanitize_segment(_source_stem(outcome.path)) + ".json"
         # Gộp 1 file (merge_one_file): tên file gộp là đúng mã ngôn ngữ
-        # (en.json / zh.json — dạng file en.json mẫu của Joseph), KHÔNG
-        # phải tên hiển thị (English.json) và không lẫn với file tách
-        # per-unit (resources.monobehaviour.en.json).
+        # CHUẨN (en.json / zh-CN.json / zh-TW.json — khớp file mẫu của
+        # Joseph), KHÔNG phải tên hiển thị (English.json) và không lẫn
+        # với file tách per-unit (resources.monobehaviour.en.json).
         if outcome.merged and outcome.locale:
-            fname = "%s.json" % outcome.locale.lower()
+            fname = "%s.json" % disc.canonical_locale_code(outcome.locale)
         # (A) File MonoBehaviour đã tách theo ngôn ngữ: tên xuất riêng theo
         # đơn vị + ngôn ngữ (vd resources.monobehaviour.en.json) thay vì
         # English.json — tên đó đã dùng cho file StringTable cùng locale
@@ -2266,10 +2539,13 @@ def _export(req: ExtractionRequest, result: ExtractionResult, source_hash: str,
         # nhau. Chỉ áp cho file ảo tách ngôn ngữ (đuôi
         # ".monobehaviour.<lang>.json", lang khớp outcome.locale); file gộp
         # cũ (locale None) giữ nguyên tên như trước.
-        if outcome.locale and ".monobehaviour." in outcome.path:
+        # (A) ... Chỉ áp cho file tách chưa gộp: outcome đã gộp dùng tên
+        # file gộp chuẩn ở trên (en.json / zh-CN.json), không ghi đè về
+        # tên per-unit (path của outcome gộp là path của nguồn đầu tiên).
+        if outcome.locale and not outcome.merged and ".monobehaviour." in outcome.path:
             m = re.search(r"\.monobehaviour\.([a-z]{2,3}(?:-[A-Za-z]+)?)\.json$",
                           outcome.path)
-            if m and m.group(1) == outcome.locale:
+            if m and m.group(1).lower() == outcome.locale.lower():
                 fname = _sanitize_segment(_source_stem(outcome.path)) + ".json"
         # Hai nguồn cùng locale -> tên file trùng: thêm stem nguồn vào tên
         # (English.json + English.strings.json), không ghi đè im lặng.
@@ -2300,70 +2576,75 @@ def _export(req: ExtractionRequest, result: ExtractionResult, source_hash: str,
                                                              "locales": {}, "exported": {}})
             ent["locales"][outcome.locale or ""] = dict(outcome.kv)
             ent["exported"][outcome.locale or ""] = fname
-    # Sidecar provenance cho file gộp (cho (E) ép ngược): từng key lấy từ
-    # nguồn nào (bundle/.assets), gộp từ những file tách nào, xung đột nào
-    # đã giữ bản đầu. Format "beartea-merge-provenance/1"; file gộp chính
-    # vẫn giữ dạng phẳng sạch như file en.json mẫu (không nhét provenance
-    # vào làm bẩn key).
-    for outcome in result.files:
-        if not outcome.merged or not outcome.exported:
-            continue
-        stat = next((m for m in result.merged_files
-                     if m.get("locale") == outcome.locale), None)
-        sidecar = {
-            "format": "beartea-merge-provenance/1",
-            "game": game,
-            "source": str(req.source),
-            "locale": outcome.locale,
-            "file": outcome.exported,
-            "merged_from": list(outcome.merged_from),
-            "keys": dict(outcome.merge_sources),
-            "duplicates_identical": (stat or {}).get("duplicates_identical", 0),
-            "conflicts": (stat or {}).get("conflicts", []),
-            "conflicts_total": (stat or {}).get("conflicts_total", 0),
-        }
-        try:
-            with open(os.path.join(req.out_dir, "%s.provenance.json"
-                                   % os.path.splitext(outcome.exported)[0]),
-                      "wb") as fh:
-                fh.write(json.dumps(sidecar, ensure_ascii=False, indent=1).encode("utf-8"))
-        except OSError:
-            pass
-    # conflicts.json: mọi xung đột key khi gộp (cùng key, giá trị khác nhau)
-    # — key, cả hai giá trị + nguồn, quy tắc giữ bản đầu. Trước đây xung đột
-    # chỉ nằm trong sidecar/report; file riêng này để không ai bỏ sót. Chỉ
-    # ghi khi có xung đột (tránh thêm file rỗng vào mọi lần xuất).
-    if req.out_dir is not None and result.merged_files:
-        all_conflicts: List[Dict[str, Any]] = []
-        total = 0
-        truncated = False
-        for stat in result.merged_files:
-            total += stat.get("conflicts_total", 0)
-            truncated = truncated or bool(stat.get("conflicts_truncated"))
-            for c in stat.get("conflicts", []):
-                entry = {"locale": stat.get("locale"),
-                         "file": stat.get("file"),
-                         "key": c.get("key"),
-                         "kept": c.get("kept"),
-                         "dropped": c.get("dropped"),
-                         "rule": "keep-first"}
-                all_conflicts.append(entry)
-        if total > 0:
+    # BUG#2: chế độ gộp (merge_mode) KHÔNG ghi sidecar provenance,
+    # conflicts.json, checkpoint hay report vào out_dir — output zip chỉ
+    # chứa các file locale đã gộp. Xung đột vẫn nằm trong result.report
+    # nội bộ (merged_files) để debug.
+    if not merge_mode:
+        # Sidecar provenance cho file gộp (cho (E) ép ngược): từng key lấy từ
+        # nguồn nào (bundle/.assets), gộp từ những file tách nào, xung đột nào
+        # đã giữ bản đầu. Format "beartea-merge-provenance/1"; file gộp chính
+        # vẫn giữ dạng phẳng sạch như file en.json mẫu (không nhét provenance
+        # vào làm bẩn key).
+        for outcome in result.files:
+            if not outcome.merged or not outcome.exported:
+                continue
+            stat = next((m for m in result.merged_files
+                         if m.get("locale") == outcome.locale), None)
+            sidecar = {
+                "format": "beartea-merge-provenance/1",
+                "game": game,
+                "source": str(req.source),
+                "locale": outcome.locale,
+                "file": outcome.exported,
+                "merged_from": list(outcome.merged_from),
+                "keys": dict(outcome.merge_sources),
+                "duplicates_identical": (stat or {}).get("duplicates_identical", 0),
+                "conflicts": (stat or {}).get("conflicts", []),
+                "conflicts_total": (stat or {}).get("conflicts_total", 0),
+            }
             try:
-                with open(os.path.join(req.out_dir, "conflicts.json"),
+                with open(os.path.join(req.out_dir, "%s.provenance.json"
+                                       % os.path.splitext(outcome.exported)[0]),
                           "wb") as fh:
-                    fh.write(json.dumps(
-                        {"format": "beartea-merge-conflicts/1",
-                         "game": game,
-                         "source": str(req.source),
-                         "conflicts_total": total,
-                         "conflicts_truncated": truncated,
-                         "conflicts": all_conflicts},
-                        ensure_ascii=False, indent=1).encode("utf-8"))
+                    fh.write(json.dumps(sidecar, ensure_ascii=False, indent=1).encode("utf-8"))
             except OSError:
                 pass
-    _save_checkpoint(req, source_hash, checkpoint_files)
-    _write_reports(req, result, logs)
+        # conflicts.json: mọi xung đột key khi gộp (cùng key, giá trị khác nhau)
+        # — key, cả hai giá trị + nguồn, quy tắc giữ bản đầu. Trước đây xung đột
+        # chỉ nằm trong sidecar/report; file riêng này để không ai bỏ sót. Chỉ
+        # ghi khi có xung đột (tránh thêm file rỗng vào mọi lần xuất).
+        if req.out_dir is not None and result.merged_files:
+            all_conflicts: List[Dict[str, Any]] = []
+            total = 0
+            truncated = False
+            for stat in result.merged_files:
+                total += stat.get("conflicts_total", 0)
+                truncated = truncated or bool(stat.get("conflicts_truncated"))
+                for c in stat.get("conflicts", []):
+                    entry = {"locale": stat.get("locale"),
+                             "file": stat.get("file"),
+                             "key": c.get("key"),
+                             "kept": c.get("kept"),
+                             "dropped": c.get("dropped"),
+                             "rule": "keep-first"}
+                    all_conflicts.append(entry)
+            if total > 0:
+                try:
+                    with open(os.path.join(req.out_dir, "conflicts.json"),
+                              "wb") as fh:
+                        fh.write(json.dumps(
+                            {"format": "beartea-merge-conflicts/1",
+                             "game": game,
+                             "source": str(req.source),
+                             "conflicts_total": total,
+                             "conflicts_truncated": truncated,
+                             "conflicts": all_conflicts},
+                            ensure_ascii=False, indent=1).encode("utf-8"))
+                except OSError:
+                    pass
+        _save_checkpoint(req, source_hash, checkpoint_files)
+        _write_reports(req, result, logs)
 
 
 def _write_reports(req: ExtractionRequest, result: ExtractionResult,
@@ -2416,6 +2697,7 @@ def _build_report(req: ExtractionRequest, result: ExtractionResult, logs: List[s
         "skipped": list(result.skipped),
         "errors": list(result.errors),
         "merged_files": list(result.merged_files),
+        "language_columns": list(result.language_columns),
         "generated_keys": list(result.generated_keys),
         "total_entries": result.total_entries,
         "elapsed_s": round(result.elapsed_s, 1),

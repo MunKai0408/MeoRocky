@@ -456,9 +456,15 @@ def _collect_mb_keys(sfs):
         generic = []
         for item in items:
             if item.get("kind") == "shared_table":
+                coll = item.get("collection") or ""
                 for term in (item.get("entries") or {}).values():
                     if isinstance(term, str):
                         terms.add(term)
+                        # BUG#2: StringTable xuất dạng nhóm Collection/Key
+                        # (vd Policies/ArcanePinnacle) — ép ngược phải
+                        # nhận cả dạng nhóm, không chỉ term phẳng.
+                        if coll:
+                            terms.add("%s/%s" % (coll, term))
             elif item.get("kind") == "language_source":
                 for term in (item.get("terms") or []):
                     if isinstance(term.get("term"), str):

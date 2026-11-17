@@ -719,6 +719,9 @@ class TestLanguageSourceVirtualFiles(unittest.TestCase):
                 "trailing_bytes": 0}
 
     def test_vpath_distinct_from_generic_and_keeps_empty(self):
+        # BUG#2 (2026-11-17): mỗi biến thể có file ảo RIÊNG (zh-CN và
+        # zh-TW không gộp về mã gốc "zh" nữa — trước đây chỉ có 1 file
+        # zh.json lấy biến thể đầu). Chuỗi rỗng vẫn giữ lại.
         item = self._item([("T1", ["Hi", "你好", "你好"]),
                            ("T2", ["", "X", "Y"])],
                           ["en", "zh-TW", "zh-CN"])
@@ -728,15 +731,18 @@ class TestLanguageSourceVirtualFiles(unittest.TestCase):
         self.assertEqual(
             sorted(out),
             ["u/resources.assets::resources.langtable.monobehaviour.en.json",
-             "u/resources.assets::resources.langtable.monobehaviour.zh.json"])
+             "u/resources.assets::resources.langtable.monobehaviour.zh-cn.json",
+             "u/resources.assets::resources.langtable.monobehaviour.zh-tw.json"])
         # Ten file khac han file generic cung don vi + ngon ngu (khong ghi de).
         for vpath in out:
             self.assertNotIn("::resources.monobehaviour.", vpath)
             self.assertIn(".monobehaviour.", vpath)  # nhom __mono__ van nhan
         en = json.loads(out["u/resources.assets::resources.langtable.monobehaviour.en.json"])
         self.assertEqual(en, {"T1": "Hi", "T2": ""})  # chuoi rong giu lai
-        zh = json.loads(out["u/resources.assets::resources.langtable.monobehaviour.zh.json"])
-        self.assertEqual(zh, {"T1": "你好", "T2": "X"})  # zh -> bien the dau (zh-TW)
+        zhtw = json.loads(out["u/resources.assets::resources.langtable.monobehaviour.zh-tw.json"])
+        self.assertEqual(zhtw, {"T1": "你好", "T2": "X"})
+        zhcn = json.loads(out["u/resources.assets::resources.langtable.monobehaviour.zh-cn.json"])
+        self.assertEqual(zhcn, {"T1": "你好", "T2": "Y"})
 
     def test_cab_unit_path_and_two_tables_keep_first(self):
         item1 = self._item([("T1", ["One", "Uno"])], ["en", "es"])
