@@ -12,7 +12,7 @@ TRẠNG THÁI HIỆN TẠI (cập nhật 2026-11-16, Claude 10 sandbox DONE — 
          thanh tiến độ, giữ iSH chạy nền.
          VFS thật cho ZIP/TAR/GZ/XZ (ZIP ghi được, còn lại chỉ đọc), container lồng
          ('::'), plugin container zip (M2, plugins/zip/), lệnh `container list/read`.
-         Unity backend (M2): UnityFS v6/v7/v8 + SerializedFile v15-23 (Unity 6), LZ4/LZMA,
+         Unity backend (M2): UnityFS v6/v7/v8 + SerializedFile v15-26 (Unity 6), LZ4/LZMA,
          backend AUTO/LIBRARY/NATIVE, planner, patch TextAsset
          (PATCH_INPLACE/REBUILD_SECTION + diffverify; REBUILD_ALL khóa ở M2),
          lệnh `unity inspect/read/patch` và `mod` (dry-run mặc định).
