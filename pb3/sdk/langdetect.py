@@ -143,6 +143,12 @@ _FUNCTION_WORDS = {
     "tr": set("ve bir bu ne de da için çok sonra önce gibi sadece daha hiç hep her zaman şimdi bugün dün yarın burada orada nerede neden çünkü ama veya mi benim senin onun bizim sizin onların ben sen o biz siz onlar var yok olmak ediyor diyor teşekkür iyi büyük küçük yeni eski az başka aynı".split()),
     "vi": set("và của là không các đã cho này những được với trong chỉ cũng rất đang sẽ luôn bao giờ khi đâu nào vì nhưng hoặc trên dưới trước sau ngoài tôi bạn anh chị em chúng họ nó kia đó đây mình có bị phải muốn đi đến làm nói xem nghe biết cảm ơn tốt lớn nhỏ mới cũ nhiều ít mỗi khác giống".split()),
     "id": set("dan yang di ke dari untuk tidak dengan pada adalah hanya juga sangat sudah masih selalu pernah sekarang hari ini kemarin besok sini sana mana kapan mengapa karena tapi atau saya kamu dia kami kita mereka itu milik ada bisa harus mau pergi datang lihat dengar tahu terima kasih baik besar kecil baru lama banyak sedikit setiap lain sama".split()),
+    # Tiếng Mã Lai (ms) gần như trùng từ vựng với tiếng Indonesia (id):
+    # chỉ phân biệt được nhờ vài từ riêng (kerana/ialah/tak thay cho
+    # karena/adalah/tidak). Chuỗi chỉ có từ chung sẽ xếp "id" (hòa điểm
+    # thì id thắng theo thứ tự chữ cái) — xem _source_match: họ ms/id
+    # được chấp nhận lẫn nhau khi lọc ngôn ngữ nguồn.
+    "ms": set("dan yang di ke dari untuk tidak dengan pada adalah hanya juga sangat sudah masih selalu pernah sekarang hari ini semalam esok sini sana mana bila mengapa kerana tapi atau saya kamu dia kami kita mereka itu milik ada boleh mesti akan telah sedang tak ialah seperti antara apabila bagaimana siapa apa selamat besar kecil baru lama banyak sedikit setiap lain sama terima kasih jangan sila".split()),
     "tl": set("ang ng mga sa ay at na ko mo siya kami tayo ito iyan iyon hindi oo salamat mabuti malaki maliit bago luma marami kaunti lahat iba pareho ako ikaw sila kayo dito diyan doon saan kailan bakit dahil pero kung kapag habang pagkatapos araw gabi tao bahay tubig pagkain mahal masama gusto ayaw kailangan maaari pwede sige tara halika tingnan pakinggan alam kilala walang mayroon meron wala".split()),
 }
 _WORD_RE = re.compile(r"[a-zA-Z\u00c0-\u024f\u1e00-\u1eff]+")
@@ -333,4 +339,4 @@ def align_to_modal(strong_codes, modal_langs, max_combos: int = 2000):
 SUPPORTED_CODES = frozenset(
     ["en", "zh", "ja", "ko", "ru", "uk", "es", "fr", "pt", "it", "de",
      "nl", "pl", "cs", "sk", "ro", "sv", "da", "no", "fi", "tr", "vi",
-     "id", "el", "ar", "he", "th", "tl", "hu"])
+     "id", "ms", "el", "ar", "he", "th", "tl", "hu"])

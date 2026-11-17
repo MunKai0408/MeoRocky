@@ -516,7 +516,10 @@ def _source_match(text, src):
     if code is None:
         return False, "no_letters", None
     if conf == "strong":
-        if code == src:
+        # Họ ms/id: tiếng Mã Lai và Indonesia gần như trùng từ vựng,
+        # phát hiện không tách reliably được (chuỗi chỉ có từ chung thì
+        # detect trả "id") — chấp nhận lẫn nhau khi lọc nguồn (T2).
+        if code == src or (src in ("ms", "id") and code in ("ms", "id")):
             return True, "", code
         return False, "other_lang:%s" % code, code
     # weak: chỉ Latin trơn, mặc định là tiếng Anh.
@@ -549,7 +552,8 @@ def _self_check(kv, translated, skipped_keys, credit_key):
             "ok": not missing and not wrong}
 
 
-def translate_json(json_text, to="vi", credit=True, src="en"):
+def translate_json(json_text, to="vi", credit=True, src="en",
+                   glossary_json=None):
     """Dịch bảng key-value bằng từ điển offline (không cần mạng).
 
     Chỉ dịch VALUE, giữ nguyên KEY (luật của PB3). credit=True thì gắn
@@ -559,6 +563,8 @@ def translate_json(json_text, to="vi", credit=True, src="en"):
     skipped) — không dịch nhầm như trước (bridge từng hard-code "en").
     Lọc ở mức VALUE (cả giá trị): giá trị nào phát hiện mạnh không phải
     src thì giữ nguyên toàn bộ.
+    glossary_json (T2): chuỗi JSON từ điển game (sdk.glossary) — áp dụng
+    TRƯỚC từ điển offline, dòng khớp thì dùng luôn, không bị ghi đè.
     """
     try:
         from sdk.translate import (OfflineGlossaryProvider, apply_credit,
@@ -575,6 +581,12 @@ def translate_json(json_text, to="vi", credit=True, src="en"):
         if src == to:
             raise ValueError(
                 "ngôn ngữ nguồn và đích trùng nhau: %s" % src)
+        # Từ điển game (T2): parse sớm để lỗi định dạng fail-closed
+        # trước khi dịch (không lặng lẽ bỏ qua từ điển của user).
+        game_glossary = None
+        if glossary_json:
+            from sdk.glossary import GameGlossary
+            game_glossary = GameGlossary.from_json(glossary_json)
         # Lọc theo ngôn ngữ nguồn ở mức value (xem _source_match).
         kv_src = {}
         skipped = {}  # key -> {"reason", "detected"}
@@ -603,7 +615,7 @@ def translate_json(json_text, to="vi", credit=True, src="en"):
             kv_src, source_lang=src, target_lang=to,
             provider=OfflineGlossaryProvider(),
             progress_fn=lambda d, t: _emit("translate", d, t),
-            credit=False)
+            credit=False, game_glossary=game_glossary)
         # Trải lại đủ mọi key theo đúng thứ tự input: key bị bỏ qua giữ
         # nguyên giá trị gốc (dedupe/lọc không bao giờ làm mất key).
         translated = {key: (res.translated[key] if key in res.translated
@@ -771,7 +783,8 @@ def _coerce_batch_result(got):
     return items, mode
 
 
-async def translate_json_google(json_text, to="vi", credit=True, src="en"):
+async def translate_json_google(json_text, to="vi", credit=True, src="en",
+                              glossary_json=None):
     """Dịch bảng key-value bằng Google Translate thật qua fetch() của JS.
 
     Luồng (batch, mục A): Python (async) gọi `js.pb3_google_translate_batch`
@@ -828,6 +841,12 @@ async def translate_json_google(json_text, to="vi", credit=True, src="en"):
         if src == to:
             raise ValueError(
                 "ngôn ngữ nguồn và đích trùng nhau: %s" % src)
+        # Từ điển game (T2): parse sớm để lỗi định dạng fail-closed
+        # trước khi dịch (không lặng lẽ bỏ qua từ điển của user).
+        game_glossary = None
+        if glossary_json:
+            from sdk.glossary import GameGlossary
+            game_glossary = GameGlossary.from_json(glossary_json)
         # src do người dùng chọn (mặc định "en"); trước đây hard-code
         # "en" nên chọn dịch zh vẫn gửi chuỗi đi như tiếng Anh (Joseph
         # 21:24: câu Nga/Đức bị "dịch" hỏng). Lọc từng ĐOẠN theo ngôn
@@ -944,7 +963,7 @@ async def translate_json_google(json_text, to="vi", credit=True, src="en"):
         # --- Khử trùng lặp: gom các dòng đã che giống nhau (chuẩn hoá
         # khoảng trắng) về 1 unique; dịch 1 lần rồi map lại cho mọi key.
         # An toàn: unmask dùng tokens riêng của từng dòng (xem mask_line).
-        uniques = []  # {"masked", "keys":[(key,line_no)], "prio"}
+        uniques = []  # {"masked", "tokens", "keys":[(key,line_no)], "prio"}
         uid_of_norm = {}
         for (key, line_no, masked, _tokens) in segments:
             norm = _norm_segment_text(masked)
@@ -952,7 +971,7 @@ async def translate_json_google(json_text, to="vi", credit=True, src="en"):
             if uid is None:
                 uid = len(uniques)
                 uid_of_norm[norm] = uid
-                uniques.append({"masked": masked,
+                uniques.append({"masked": masked, "tokens": _tokens,
                                 "keys": [(key, line_no)],
                                 "prio": _priority_of(key, masked)})
             else:
@@ -962,16 +981,30 @@ async def translate_json_google(json_text, to="vi", credit=True, src="en"):
                     uniques[uid]["prio"] = p
         deduped = len(segments) - len(uniques)
 
+        # --- Tra từ điển game TRƯỚC từ điển offline (T2): dòng nào
+        # khớp chính xác thì dùng luôn, không gửi Google, không bị từ
+        # điển offline hay bước sửa placeholder ghi đè. Tra trên dòng
+        # GỐC (bỏ che token) để entry có placeholder ("Save {0} gold")
+        # vẫn khớp; bản dịch giữ nguyên placeholder đó.
+        uniq_val = [None] * len(uniques)   # masked đã dịch / None
+        uniq_origin = [""] * len(uniques)
+        if game_glossary is not None and uniques:
+            for uid, u in enumerate(uniques):
+                orig = unmask_line(u["masked"], u["tokens"])
+                hit = game_glossary.lookup(orig)
+                if hit is not None:
+                    uniq_val[uid] = hit
+                    uniq_origin[uid] = "glossary"
+                    glossary_count += len(u["keys"])
+
         # --- Tra từ điển offline TRƯỚC (glossary-first): chuỗi nào từ
         # điển biết thì không gửi Google (tiết kiệm request + không tốn
         # hạn mức proxy).
-        uniq_val = [None] * len(uniques)   # masked đã dịch / None
-        uniq_origin = [""] * len(uniques)
         if uniques:
             fb_all = fallback.translate_batch(
                 [u["masked"] for u in uniques], src, to)
             for uid, val in enumerate(fb_all or []):
-                if val is not None:
+                if val is not None and uniq_val[uid] is None:
                     uniq_val[uid] = val
                     uniq_origin[uid] = "glossary"
                     glossary_count += len(uniques[uid]["keys"])
@@ -1209,6 +1242,10 @@ async def translate_json_google(json_text, to="vi", credit=True, src="en"):
             _by_masked = {}
             for (_key, _line_no), (_val, _origin) in list(seg_out.items()):
                 if _val is None:
+                    continue
+                # Đoạn từ từ điển game: KHÔNG dịch lại bằng máy (xem
+                # translate_table — entry của user không bị ghi đè).
+                if _origin == "glossary":
                     continue
                 _masked, _tokens = _seg_tokens.get((_key, _line_no),
                                                    (None, None))
@@ -2192,7 +2229,8 @@ def repack_ipa(path, units_json):
 def delivery_gate(path, translations_json, source_json=None,
                   provenance_json=None, pressed_path=None,
                   allowlist_json=None, font_path=None, choices_json=None,
-                  allow_partial=False, source_locale="en"):
+                  allow_partial=False, source_locale="en",
+                  target_lang="vi"):
     """Cổng kiểm tra trước khi giao (bước 6, P0-2) — ĐIỂM VÀO DUY NHẤT.
 
     Nhận file gốc (+ file đã ép nếu có) + bản dịch + provenance (+ bản
@@ -2207,6 +2245,10 @@ def delivery_gate(path, translations_json, source_json=None,
     hiển thị (trống = quét font trong file gốc; font đi kèm dùng đường
     dẫn /pb3web/fonts/BeVietnamPro-Regular.ttf). Tiến độ thật kind
     "gate" qua _emit.
+    target_lang (T2): ngôn ngữ đích của bản dịch (mặc định "vi") — cổng
+    font kiểm độ phủ theo bộ chữ của đích đó; đích khác vi mà không có
+    font hiển thị thì FAIL "chưa kiểm được" (fail-closed, không tự cho
+    là đạt).
     """
     try:
         from sdk import gate as _gate
@@ -2254,13 +2296,17 @@ def delivery_gate(path, translations_json, source_json=None,
             pressed_name = os.path.basename(pressed_arg)
         # Font: font hiển thị do user chỉ định (nếu có) + quét font
         # trong file gốc (dùng cache của font_list như font_list()).
+        # Font hiển thị quét theo bộ chữ của NGÔN NGỮ ĐÍCH (T2) để cổng
+        # font kiểm đúng chữ đang dùng (vd ä/ö/ü của tiếng Đức).
         display_fonts = []
         font_error = None
         if font_path:
             try:
+                from sdk.font import required_chars as _req_chars
                 fdata = open(str(font_path), "rb").read()
                 display_fonts.append(_gate.font_entry_from_bytes(
-                    fdata, os.path.basename(str(font_path))))
+                    fdata, os.path.basename(str(font_path)),
+                    required=_req_chars(target_lang or "vi")))
             except Exception as exc:  # noqa: BLE001 - thành lỗi kiểm tra font
                 font_error = "không đọc được font đã chỉ định (%s): %s" % (
                     os.path.basename(str(font_path)), exc)
@@ -2284,7 +2330,8 @@ def delivery_gate(path, translations_json, source_json=None,
             display_fonts=display_fonts, font_error=font_error,
             progress_fn=_pf, src_path=path, pressed_path=pressed_arg,
             allow_partial=bool(allow_partial),
-            source_locale=source_locale or "en")
+            source_locale=source_locale or "en",
+            target_lang=target_lang or "vi")
         # File gốc không đổi: xác minh sha sau khi chạy (cổng chỉ đọc).
         if hashlib.sha256(open(path, "rb").read()).hexdigest() != orig_sha:
             raise ValueError("file gốc đã đổi trong lúc kiểm — từ chối kết quả.")

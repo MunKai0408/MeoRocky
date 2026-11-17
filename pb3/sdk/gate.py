@@ -310,14 +310,19 @@ def check_placeholders(source: Optional[Dict[str, str]],
 # ------------------------------------------------------------- (d) font
 def font_entry_from_bytes(data: bytes, name: str,
                           source: str = "font do người dùng chỉ định",
-                          face_index: Optional[int] = None
+                          face_index: Optional[int] = None,
+                          required: Any = None
                           ) -> Dict[str, Any]:
     """1 font TTF/OTF (bytes) -> muc bao cao dang font_list (co
     missing_codepoints day du de cong tinh missing_used). Font hong
     thi raise PB3Error (bridge bat roi chuyen thanh loi cua kiem tra
     font, khong crash cong). TTC: `face_index` chọn face (None thì
-    từ chối — người gọi phải chọn face, xem font.list_ttc_faces)."""
-    rep = _font.coverage(data, where=name, face_index=face_index)
+    từ chối — người gọi phải chọn face, xem font.list_ttc_faces).
+    required: tap codepoint BO SUNG — coverage() luon kiem bo tieng
+    Viet 142 muc + tap nay (vd truyen tap chu Duc de cong biet font
+    co thieu a/o/u khong; muc nao trong tap dung moi tinh la thieu)."""
+    rep = _font.coverage(data, where=name, face_index=face_index,
+                         required=required)
     return {
         "kind": rep.kind, "name": name, "family": rep.family,
         "source": source, "size": len(data), "path_id": None,
@@ -356,10 +361,13 @@ def _normalize_font_entry(entry: Dict[str, Any],
 def check_font_coverage(translations: Dict[str, str],
                         fonts: Optional[List[Dict[str, Any]]], *,
                         display_fonts: Any = (),
-                        font_error: Optional[str] = None
+                        font_error: Optional[str] = None,
+                        target_lang: str = "vi"
                         ) -> Dict[str, Any]:
-    """(d) Moi ky tu tieng Viet DUNG trong ban dich phai nam trong vung
-    phu cua font se hien thi (bo 142 muc). Bao cao theo tung font.
+    """(d) Moi ky tu DUNG trong ban dich phai nam trong vung
+    phu cua font se hien thi (bo chu cua ngon ngu dich: vi = 142 muc
+    tieng Viet; de/fr/... = tap chu co dau cua ngon ngu do, xem
+    sdk/font.py:REQUIRED_CHARS). Bao cao theo tung font.
 
     Quy tac (ghi ro, ap dung nhat quan):
     - Neu co font hien thi do nguoi dung chi dinh (display_fonts): chi
@@ -368,17 +376,29 @@ def check_font_coverage(translations: Dict[str, str],
     - Neu khong: MOI font doc duoc trong game phai phu het chu dang
       dung (cong khong biet chu nao hien bang font nao); khong co font
       nao doc duoc thi FAIL "chua kiem duoc" (fail-closed).
+    - Dich != vi ma KHONG co font hien thi: FAIL "chua kiem duoc" —
+      font game quet chi theo bo chu tieng Viet (142 muc) nen khong
+      kiem duoc chu co dau cua dich khac (vd a/o/u cua tieng Duc);
+      KHONG tu cho la dat. Hay chon font hien thi de kiem that.
     - Font khong doc duoc bytes (font nhung Unity, TTC): liet ke ro
       la "chua kiem duoc", dem vao canh bao, khong tu cho la dat hay
       hong — gioi han doc cua sdk/font (xem font.py).
-    - Ban dich khong dung chu Viet nao trong bo 142 thi PASS (ghi ro).
+    - Ban dich khong dung chu nao trong bo chu cua dich thi PASS (ghi ro).
     """
     _validate_kv(translations, "translations")
+    # vi dùng đúng bộ 142 mục gốc (sdk.font.REQUIRED_VIETNAMESE); đích
+    # khác dùng bộ chữ của đích đó (sdk.font.required_chars).
+    required = (_font.REQUIRED_VIETNAMESE if target_lang == "vi"
+                else _font.required_chars(target_lang))
+    lang_label = _font.lang_name(target_lang)
+    # Thong bao giu nguyen tung chu cho vi (test cu + UI cu); dich khac
+    # thi thay "tieng Viet"/"chu Viet" bang ten ngon ngu dich.
+    _vi_word = "tiếng Việt" if target_lang == "vi" else lang_label
     used_set = set()
     for value in translations.values():
         for ch in value:
             cp = ord(ch)
-            if cp in _font.REQUIRED_VIETNAMESE:
+            if cp in required:
                 used_set.add(cp)
     used = sorted(used_set)
     scanned = [_normalize_font_entry(f, False) for f in (fonts or [])]
@@ -397,8 +417,21 @@ def check_font_coverage(translations: Dict[str, str],
     warnings: List[str] = []
     readable = [e for e in scanned if e["readable"]]
     unreadable = [e for e in scanned if not e["readable"]]
+    if target_lang not in _font.REQUIRED_CHARS:
+        # Đích chưa đăng ký bộ chữ (vd ro/zh/ja/ru): cổng không biết
+        # kiểm chữ nào -> FAIL "chưa kiểm được", không tự cho là đạt.
+        failures.append({
+            "kind": "font_unknown_target",
+            "message_vi": "Chưa có dữ liệu bộ chữ để kiểm độ phủ font cho %s — đích này chưa được hỗ trợ (chỉ kiểm được: %s)."
+                          % (lang_label,
+                             ", ".join(sorted(_font.REQUIRED_CHARS)))})
     if used:
-        if supplied:
+        if target_lang != "vi" and not supplied:
+            failures.append({
+                "kind": "font_unverifiable_target",
+                "message_vi": "Chưa kiểm được độ phủ font cho %s: font trong game chỉ quét được theo bộ chữ tiếng Việt. Hãy chọn font hiển thị (vd font Be Vietnam Pro đi kèm) hoặc file font để kiểm."
+                              % lang_label})
+        elif supplied:
             for ent in supplied:
                 if ent["missing_used"]:
                     failures.append({
@@ -420,10 +453,10 @@ def check_font_coverage(translations: Dict[str, str],
                                  "message_vi": "Không quét được font trong file gốc: %s" % font_error})
             elif not scanned:
                 failures.append({"kind": "no_fonts",
-                                 "message_vi": "Không tìm thấy font nào trong file gốc để kiểm độ phủ — chưa kiểm được chữ tiếng Việt có hiển thị đúng không."})
+                                 "message_vi": "Không tìm thấy font nào trong file gốc để kiểm độ phủ — chưa kiểm được chữ %s có hiển thị đúng không." % _vi_word})
             else:
                 failures.append({"kind": "no_readable_fonts",
-                                 "message_vi": "Không đọc được độ phủ của font nào trong %d font của game (font nhúng trong Unity không đọc được bytes) — chưa kiểm được chữ tiếng Việt có hiển thị đúng không. Hãy chỉ định font sẽ hiển thị (vd font Be Vietnam Pro đi kèm) để kiểm." % len(scanned)})
+                                 "message_vi": "Không đọc được độ phủ của font nào trong %d font của game (font nhúng trong Unity không đọc được bytes) — chưa kiểm được chữ %s có hiển thị đúng không. Hãy chỉ định font sẽ hiển thị (vd font Be Vietnam Pro đi kèm) để kiểm." % (len(scanned), _vi_word)})
         else:
             for ent in readable:
                 if ent["missing_used"]:
@@ -439,12 +472,23 @@ def check_font_coverage(translations: Dict[str, str],
                            ent["reason"] or "không đọc được bytes font."))
     status = "fail" if failures else "pass"
     if not used:
-        summary = "Bản dịch không dùng chữ Việt nào trong bộ 142 mục — không cần kiểm độ phủ."
+        if any(f.get("kind") == "font_unknown_target" for f in failures):
+            # Đích chưa đăng ký bộ chữ: used rỗng vì không biết chữ nào
+            # cần kiểm — tóm tắt phải nói rõ là CHƯA KIỂM ĐƯỢC, không được
+            # ghi "không cần kiểm" trong khi status là fail.
+            summary = ("Chưa có dữ liệu bộ chữ để kiểm độ phủ font cho %s — đích này chưa được hỗ trợ."
+                       % lang_label)
+        elif target_lang == "vi":
+            summary = "Bản dịch không dùng chữ Việt nào trong bộ 142 mục — không cần kiểm độ phủ."
+        elif required:
+            summary = "Bản dịch không dùng chữ %s có dấu nào — không cần kiểm độ phủ." % lang_label
+        else:
+            summary = "Bản dịch không dùng chữ đặc biệt nào của %s — không cần kiểm độ phủ." % lang_label
     elif status == "pass":
         if supplied:
-            summary = "Font hiển thị đã chỉ định phủ đủ %d chữ Việt đang dùng." % len(used)
+            summary = "Font hiển thị đã chỉ định phủ đủ %d chữ %s đang dùng." % (len(used), _vi_word)
         else:
-            summary = "%d font đọc được đều phủ đủ %d chữ Việt đang dùng." % (len(readable), len(used))
+            summary = "%d font đọc được đều phủ đủ %d chữ %s đang dùng." % (len(readable), len(used), _vi_word)
     else:
         summary = "Font thiếu chữ dùng trong bản dịch hoặc chưa kiểm được độ phủ."
     if unreadable and status == "pass":
@@ -467,7 +511,7 @@ def check_font_coverage(translations: Dict[str, str],
         failures, warnings,
         {"fonts": len(scanned), "readable": len(readable),
          "unreadable": len(unreadable), "display_fonts": len(supplied),
-         "used_vietnamese": len(used)},
+         "used_vietnamese": len(used), "target_lang": target_lang},
         fonts=report_fonts, used_chars=[chr(cp) for cp in used])
 
 
@@ -1006,7 +1050,8 @@ def run_gate(source_bytes: bytes, *, source_name: str,
              progress_fn: Any = None, src_path: Optional[str] = None,
              pressed_path: Optional[str] = None,
              allow_partial: bool = False,
-             source_locale: str = "en") -> Dict[str, Any]:
+             source_locale: str = "en",
+             target_lang: str = "vi") -> Dict[str, Any]:
     """Chay cong kiem tra day du, tra 1 verdict duy nhat.
 
     Khong ghi file nao. Loi dau vao (translations/source/allowlist sai
@@ -1082,7 +1127,8 @@ def run_gate(source_bytes: bytes, *, source_name: str,
     # (d) font.
     check_d = check_font_coverage(translations, fonts,
                                   display_fonts=display_fonts,
-                                  font_error=font_error)
+                                  font_error=font_error,
+                                  target_lang=target_lang)
     _prog(5)
 
     # (c) diffverify.
