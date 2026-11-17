@@ -8,4 +8,4 @@
 - index.html + app.js: nut btn-font-list + btn-font-unify, handler goi
   dung op, hien tmp_candidates + font_unified.zip.
 - Manifest: files.json 101 (co pb3/sdk/font_list.py), tests.json 175
-  (co pb3/tests/test_font_unify.py); sw.js CACHE_VERSION v38-20261117
+  (co pb3/tests/test_font_unify.py); sw.js CACHE_VERSION v39-20261117
