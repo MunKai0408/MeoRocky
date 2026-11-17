@@ -17,15 +17,15 @@
 //
 // Lưu ý dung lượng (đo thật từ đĩa, cùng phương pháp kiểm A3 của
 // harness mục 6: tổng các file trong PRECACHE_URLS, chưa tính "./" là
-// alias của index.html): precache 16.185.827 B (15,44 MiB) = Pyodide
-// 13.605.176 B (12,97 MiB, 7 file) + PB3 1.884.013 B (1,80 MiB) +
-// shell/gốc 484.418 B + font 177.264 B + fzstd 24.407 B +
+// alias của index.html): precache 16.231.858 B (15,48 MiB) = Pyodide
+// 13.605.176 B (12,97 MiB, 7 file) + PB3 1.929.257 B (1,84 MiB) +
+// shell/gốc 485.205 B + font 177.264 B + fzstd 24.407 B +
 // icons/fixtures 10.549 B. Nạp 1 lần ở lần thăm đầu (nền, không chặn
 // vẽ trang); lần sau đọc từ Cache Storage, không tốn mạng nữa.
 
 // ĐỔI SỐ NÀY MỖI KHI DEPLOY BẢN MỚI (bất kỳ file nào trong PRECACHE_URLS
 // đổi nội dung). Bản cũ sẽ bị xóa ở activate.
-const CACHE_VERSION = "v23-20261117";
+const CACHE_VERSION = "v24-20261117";
 const CACHE_NAME = "beartea-" + CACHE_VERSION;
 // Cache riêng cho prefetch Pyodide sau first paint (Mục C3): app.js ghi
 // file đã tải trước vào đây; SW dùng làm dự phòng khi cache chính trượt
