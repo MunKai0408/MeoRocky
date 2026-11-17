@@ -3206,7 +3206,7 @@ function rebuildRenderResult(parsed) {
   }
   const unmatched = parsed.unmatched || [];
   if (unmatched.length) {
-    const REASONS = { monobehaviour: "MonoBehaviour/StringTable — (E) v1 chỉ ghi TextAsset JSON, chưa ghi được nhóm này",
+    const REASONS = { monobehaviour: "MonoBehaviour generic (scan path) / bảng ngôn ngữ CÓ type tree — chưa có đường ghi",
       not_found: "không tìm thấy trong đơn vị nào", not_json_dict: "TextAsset không phải JSON dạng dict",
       non_string_value: "giá trị gốc không phải chuỗi" };
     html += "<p>Không ép được (" + (parsed.unmatched_total || unmatched.length) + " key" +
