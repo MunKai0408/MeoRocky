@@ -25,10 +25,15 @@ Tương thích Python 3.9, stdlib-only.
 
 from __future__ import annotations
 
+import io
 import re
+import struct
+
+from core.errors import PB3Error
 
 __all__ = ["RawScanner", "scan_bytes", "scan_file", "scan_zip_member",
            "scan_unity_stream", "scan_unity_bytes", "scan_target",
+           "scan_macho_stream", "scan_macho_bytes",
            "classify_string", "LABEL"]
 
 LABEL = "unverified-raw-scan"
@@ -370,6 +375,312 @@ def scan_zip_member(zip_path, member, min_len=DEFAULT_MIN_LEN,
                                 chunk_size=chunk_size)
 
 
+# ---------------------------------------------------------------------------
+# Mach-O: quét theo section (__cstring + __ustring)
+# ---------------------------------------------------------------------------
+# Lý do: quét thô cả file Mach-O vô dụng [ĐÃ ĐO THẬT — Tom 89 MB]:
+# 381.172 run, kept 10.000 (chạm cap) nhưng mẫu đầu toàn byte code
+# ('AA9\ta'...) vì \t lọt qua kiểm tra whitespace. Quét đúng 2 section
+# chứa chuỗi: __TEXT,__cstring (ASCII/UTF-8, chuỗi C) và
+# __TEXT,__ustring (UTF-16LE). __objc_methname/__objc_classname chỉ có
+# tên selector/class, __const chủ yếu là con trỏ/dữ liệu — không quét
+# (đo trên Tom: methname 0 chuỗi nhiều từ).
+# Đọc 1 lượt xuôi (streaming, không tua lại, không nạp cả file);
+# section bắt đầu trước vị trí đọc thì bỏ qua kèm lý do. FAT: chọn slice
+# arm64 (hoặc slice đầu nếu không có arm64). Mach-O 32-bit: từ chối rõ.
+
+MACHO_MAGIC_64 = 0xFEEDFACF   # thin 64-bit, bytes cf fa ed fe
+MACHO_MAGIC_32 = 0xFEEDFACE   # thin 32-bit, bytes ce fa ed fe
+MACHO_FAT_MAGIC = 0xCAFEBABE  # FAT (big-endian), bytes ca fe ba be
+MACHO_FAT_MAGIC_REV = 0xBEBAFECA  # FAT đọc little-endian, bytes be ba fe ca
+MACHO_CPU_ARM64 = 0x0100000C
+MACHO_CPU_ARM64_32 = 0x0000000C
+LC_SEGMENT_64 = 0x19
+MACHO_TEXT_SECTIONS = (("__TEXT", "__cstring"), ("__TEXT", "__ustring"))
+_MACHO_MAGICS = (b"\xcf\xfa\xed\xfe", b"\xce\xfa\xed\xfe",
+                 b"\xca\xfe\xba\xbe", b"\xbe\xba\xfe\xca")
+_MAX_MACHO_NCMDS = 10000
+_MAX_MACHO_CMDSIZE = 1024 * 1024
+_MAX_MACHO_NFAT = 1000
+_MAX_MACHO_NSECTS = 1000
+
+
+def _is_macho_magic(head):
+    """4 byte đầu có phải magic Mach-O (thin 32/64 hoặc FAT) không."""
+    return bytes(head[:4]) in _MACHO_MAGICS
+
+
+def _read_exact(stream, n):
+    """Đọc đúng n byte (lặp nếu stream trả ngắn, vd ZipExtFile); hết file
+    giữa chừng thì E_CORRUPT."""
+    parts = []
+    got = 0
+    while got < n:
+        chunk = stream.read(n - got)
+        if not chunk:
+            raise PB3Error("E_CORRUPT", "Mach-O: file ngắn hơn dự kiến "
+                           "(cần %d byte, đọc được %d)" % (n, got))
+        parts.append(chunk)
+        got += len(chunk)
+    return b"".join(parts)
+
+
+def _read_macho_sections(stream):
+    """Parse header + load commands của Mach-O (thin 64-bit hoặc FAT).
+
+    stream phải đứng ở byte 0 của file Mach-O (thin) hoặc ở byte 0 của
+    file FAT. Đọc 1 lượt xuôi; khi trả về, stream đứng ngay sau header +
+    load commands (data_start) — phần còn lại để scan_macho_stream đọc
+    tiếp, không tua lại.
+
+    Trả về (sections, info):
+    - sections: list dict {segment, section, offset, size} (offset TUYỆT
+      ĐỐI trong file, đã cộng slice_offset nếu FAT).
+    - info: {kind: "thin"|"fat", cputype, slice_offset, data_start,
+      sections_total}.
+    """
+    magic_b = _read_exact(stream, 4)
+    if magic_b == b"\xca\xfe\xba\xbe":
+        endian = ">"
+    elif magic_b in (b"\xbe\xba\xfe\xca", b"\xcf\xfa\xed\xfe",
+                     b"\xce\xfa\xed\xfe"):
+        endian = "<"
+    else:
+        raise PB3Error("E_UNSUPPORTED_FORMAT",
+                       "không phải Mach-O (magic %s)" % magic_b.hex())
+    magic = struct.unpack(endian + "I", magic_b)[0]
+    if magic in (MACHO_FAT_MAGIC, MACHO_FAT_MAGIC_REV):
+        (nfat,) = struct.unpack(endian + "I", _read_exact(stream, 4))
+        if nfat == 0 or nfat > _MAX_MACHO_NFAT:
+            raise PB3Error("E_CORRUPT",
+                           "Mach-O FAT: nfat_arch %d bất thường" % nfat)
+        archs = []
+        for _ in range(nfat):
+            cpu, _sub, off, size, _al = struct.unpack(
+                endian + "5I", _read_exact(stream, 20))
+            archs.append((cpu, off, size))
+        chosen = None
+        for cpu, off, size in archs:
+            if cpu in (MACHO_CPU_ARM64, MACHO_CPU_ARM64_32):
+                chosen = (cpu, off, size)
+                break
+        if chosen is None:
+            chosen = archs[0]
+        _cpu, slice_offset, _size = chosen
+        # Nhảy tới đầu slice (đọc + bỏ, không seek — giữ streaming).
+        remaining = slice_offset - (8 + 20 * nfat)
+        if remaining < 0:
+            raise PB3Error("E_CORRUPT",
+                           "Mach-O FAT: slice offset %d nằm trước header"
+                           % slice_offset)
+        while remaining > 0:
+            step = stream.read(min(remaining, DEFAULT_CHUNK))
+            if not step:
+                raise PB3Error("E_CORRUPT",
+                               "Mach-O FAT: file ngắn, không tới được slice")
+            remaining -= len(step)
+        # Đọc magic của slice (stream đang đứng ở đầu slice, chưa qua
+        # 4 byte magic như đường thin) rồi mới parse header 64-bit.
+        slice_magic = _read_exact(stream, 4)
+        if slice_magic != b"\xcf\xfa\xed\xfe":
+            if slice_magic == b"\xce\xfa\xed\xfe":
+                raise PB3Error(
+                    "E_UNSUPPORTED_FORMAT",
+                    "Mach-O 32-bit chưa hỗ trợ (chỉ 64-bit và FAT/arm64)")
+            raise PB3Error(
+                "E_UNSUPPORTED_FORMAT",
+                "slice FAT không phải Mach-O 64-bit (magic %s)"
+                % slice_magic.hex())
+        return _read_macho_thin(stream, slice_offset, kind="fat")
+    if magic == MACHO_MAGIC_32:
+        raise PB3Error("E_UNSUPPORTED_FORMAT",
+                       "Mach-O 32-bit chưa hỗ trợ (chỉ 64-bit và FAT/arm64)")
+    if magic != MACHO_MAGIC_64:
+        raise PB3Error("E_UNSUPPORTED_FORMAT",
+                       "Mach-O magic 0x%08x không hỗ trợ" % magic)
+    return _read_macho_thin(stream, 0, kind="thin")
+
+
+def _read_macho_thin(stream, slice_offset, kind):
+    """Parse header 64-bit + load commands. stream đứng sau 4 byte magic.
+    Trả về như _read_macho_sections."""
+    rest = _read_exact(stream, 28)  # hết header 32 byte
+    cputype, _sub, _ftype, ncmds, sizeofcmds, _flags, _res = \
+        struct.unpack("<7I", rest)
+    if ncmds > _MAX_MACHO_NCMDS:
+        raise PB3Error("E_CORRUPT", "Mach-O: ncmds %d bất thường" % ncmds)
+    if sizeofcmds > _MAX_MACHO_CMDSIZE:
+        raise PB3Error("E_CORRUPT",
+                       "Mach-O: sizeofcmds %d byte bất thường" % sizeofcmds)
+    cmds = _read_exact(stream, sizeofcmds)
+    sections = []
+    pos = 0
+    for _ in range(ncmds):
+        if pos + 8 > len(cmds):
+            raise PB3Error("E_CORRUPT",
+                           "Mach-O: load command vượt sizeofcmds")
+        cmd, cmdsize = struct.unpack_from("<2I", cmds, pos)
+        if cmdsize < 8 or pos + cmdsize > len(cmds):
+            raise PB3Error("E_CORRUPT",
+                           "Mach-O: load command size %d bất thường"
+                           % cmdsize)
+        if cmd == LC_SEGMENT_64:
+            if cmdsize < 72:
+                raise PB3Error("E_CORRUPT",
+                               "Mach-O: LC_SEGMENT_64 quá ngắn (%d)"
+                               % cmdsize)
+            segname = cmds[pos + 8:pos + 24].split(
+                b"\x00", 1)[0].decode("ascii", "replace")
+            nsects = struct.unpack_from("<I", cmds, pos + 64)[0]
+            if nsects > _MAX_MACHO_NSECTS:
+                raise PB3Error("E_CORRUPT",
+                               "Mach-O: nsects %d bất thường" % nsects)
+            for i in range(nsects):
+                off = pos + 72 + 80 * i
+                if off + 80 > pos + cmdsize:
+                    raise PB3Error("E_CORRUPT",
+                                   "Mach-O: section header vượt command")
+                sectname = cmds[off:off + 16].split(
+                    b"\x00", 1)[0].decode("ascii", "replace")
+                seg2 = cmds[off + 16:off + 32].split(
+                    b"\x00", 1)[0].decode("ascii", "replace")
+                _addr, size, fileoff = struct.unpack_from(
+                    "<QQI", cmds, off + 32)
+                sections.append({"segment": seg2 or segname,
+                                 "section": sectname,
+                                 "offset": slice_offset + fileoff,
+                                 "size": size})
+        pos += cmdsize
+    data_start = slice_offset + 32 + sizeofcmds
+    return sections, {"kind": kind, "cputype": cputype,
+                      "slice_offset": slice_offset,
+                      "data_start": data_start,
+                      "sections_total": len(sections)}
+
+
+def scan_macho_stream(stream, source, min_len=DEFAULT_MIN_LEN,
+                      max_results=DEFAULT_MAX_RESULTS,
+                      max_single_words=DEFAULT_MAX_SINGLE_WORDS,
+                      chunk_size=DEFAULT_CHUNK, progress_fn=None):
+    """Quét chuỗi trong Mach-O theo section (__cstring + __ustring).
+
+    Đọc 1 lượt xuôi: header + load commands trước, rồi stream nốt phần
+    còn lại theo chunk; mỗi chunk chỉ đưa phần chồng với section mục tiêu
+    vào scanner của section đó (mỗi section 1 RawScanner, cap RIÊNG
+    max_results — xem ghi chú ở chỗ tạo scanner). Không nạp cả file vào
+    RAM, không tua lại. Section mục tiêu bắt đầu trước vị trí đọc thì bỏ
+    qua (không quét nửa section — offset sẽ sai). Trả về dict như
+    scan_unity_stream + mục sections (thống kê từng section),
+    skipped_sections, kind (thin/fat)."""
+    sections, info = _read_macho_sections(stream)
+    targets = [s for s in sections
+               if (s["segment"], s["section"]) in MACHO_TEXT_SECTIONS]
+    targets.sort(key=lambda s: s["offset"])
+    pos = info["data_start"]
+    active = []
+    skipped = []
+    for s in targets:
+        if s["size"] == 0:
+            skipped.append(dict(s, reason="section rỗng (size 0)"))
+        elif s["offset"] < pos:
+            skipped.append(dict(
+                s, reason="section bắt đầu trước vị trí đọc, "
+                          "không tua lại được"))
+        else:
+            active.append(s)
+    scanners = {}
+    while True:
+        chunk = stream.read(chunk_size)
+        if not chunk:
+            break
+        cstart, cend = pos, pos + len(chunk)
+        for s in active:
+            lo = max(cstart, s["offset"])
+            hi = min(cend, s["offset"] + s["size"])
+            if lo >= hi:
+                continue
+            key = (s["segment"], s["section"])
+            sc = scanners.get(key)
+            if sc is None:
+                # Cap RIÊNG theo section (không chia chung max_results):
+                # section đầu (__cstring, ~10.000 chuỗi) mà ăn hết ngân
+                # sách chung thì section sau (__ustring) còn 0 — đo trên
+                # Tom: __ustring kept 0 thay vì 498. Mỗi section giữ tối
+                # đa max_results chuỗi; tổng kept có thể vượt max_results,
+                # xem rõ ở mục sections.
+                sc = RawScanner(min_len=min_len, max_results=max_results,
+                                max_single_words=max_single_words)
+                scanners[key] = sc
+            sc.feed(chunk[lo - cstart:hi - cstart])
+        pos = cend
+        if progress_fn is not None:
+            progress_fn(pos, None)
+    strings = []
+    single_words = []
+    total_runs = dropped_noise = merged_long = 0
+    kept_total = 0
+    truncated = False
+    single_words_truncated = False
+    section_stats = []
+    for s in active:
+        key = (s["segment"], s["section"])
+        sc = scanners.get(key)
+        stat = {"segment": s["segment"], "section": s["section"],
+                "offset": s["offset"], "size": s["size"],
+                "runs": 0, "kept": 0, "single_words": 0}
+        if sc is not None:
+            out = sc.finish()
+            total_runs += out["total_runs"]
+            dropped_noise += out["dropped_noise"]
+            merged_long += out["merged_long"]
+            truncated = truncated or out["truncated"]
+            single_words_truncated = (single_words_truncated
+                                      or out["single_words_truncated"])
+            for st in out["strings"]:
+                st["section"] = "%s,%s" % key
+                st["offset"] = s["offset"] + st["offset"]
+                strings.append(st)
+            kept_total += len(out["strings"])
+            single_words.extend(out["single_words"])
+            stat["runs"] = out["total_runs"]
+            stat["kept"] = len(out["strings"])
+            stat["single_words"] = len(out["single_words"])
+        section_stats.append(stat)
+    single_words = single_words[:max_single_words]
+    note = ("Mach-O %s: quét theo section __TEXT,__cstring + "
+            "__TEXT,__ustring; __objc_methname/__objc_classname/__const "
+            "không quét (chỉ tên selector/class/con trỏ, không phải text "
+            "người dùng); mỗi section giữ tối đa %d chuỗi nhiều từ "
+            "(cap riêng theo section)" % (info["kind"], max_results))
+    return {"label": "macho", "mode": "macho", "source": source,
+            "strings": strings, "kept": kept_total,
+            "single_words": single_words,
+            "single_words_kept": len(single_words),
+            "single_words_note": "chuỗi 1 từ",
+            "total_runs": total_runs, "dropped_noise": dropped_noise,
+            "merged_long": merged_long, "truncated": truncated,
+            "single_words_truncated": single_words_truncated,
+            "sections": section_stats,
+            "scanned_sections": ["%s,%s" % (s["segment"], s["section"])
+                                 for s in active],
+            "skipped_sections": skipped,
+            "sections_total": info["sections_total"],
+            "kind": info["kind"], "note": note}
+
+
+def scan_macho_bytes(data, source, min_len=DEFAULT_MIN_LEN,
+                     max_results=DEFAULT_MAX_RESULTS,
+                     max_single_words=DEFAULT_MAX_SINGLE_WORDS,
+                     chunk_size=DEFAULT_CHUNK, progress_fn=None):
+    """Quét Mach-O từ bytes đã có sẵn (vd member trong container không
+    phải ZIP). File thường và member ZIP dùng scan_macho_stream để khỏi
+    nạp cả file."""
+    return scan_macho_stream(io.BytesIO(data), source, min_len=min_len,
+                             max_results=max_results,
+                             max_single_words=max_single_words,
+                             chunk_size=chunk_size, progress_fn=progress_fn)
+
+
 def scan_unity_stream(stream_or_path, source, min_len=DEFAULT_MIN_LEN,
                      max_results=DEFAULT_MAX_RESULTS,
                      max_single_words=DEFAULT_MAX_SINGLE_WORDS,
@@ -469,11 +780,13 @@ def scan_target(path, entry=None, min_len=DEFAULT_MIN_LEN,
     - global-metadata.dat của IL2CPP (magic 0xFAB11BAF) -> đọc literal
       CHÍNH XÁC theo bảng literal (mode "il2cpp"): literal nằm liền nhau
       nên quét byte-run nối chúng lại và bỏ run dài.
+    - Mach-O (magic 0xFEEDFACF thin 64-bit / 0xCAFEBABE FAT) -> quét
+      theo section __TEXT,__cstring + __TEXT,__ustring (mode "macho"):
+      quét thô cả file chỉ ra byte code, không ra text người dùng.
     - File thường / entry trong ZIP -> quét byte thô theo khối
       (mode "raw").
     Không hardcode theo game/build: chỉ dựa vào magic + cấu trúc Unity.
     """
-    from core.errors import PB3Error
     from sdk import il2cpp as il2cpp_sdk
     from sdk import unity as unity_sdk
     kw = {"min_len": min_len, "max_results": max_results,
@@ -485,6 +798,11 @@ def scan_target(path, entry=None, min_len=DEFAULT_MIN_LEN,
     if entry is None:
         with open(path, "rb") as fh:
             head = fh.read(8)
+            if _is_macho_magic(head[:4]):
+                # Streaming ngay trên handle đã mở (seek về 0) — khỏi
+                # nạp cả file 89 MB vào RAM.
+                fh.seek(0)
+                return scan_macho_stream(fh, str(path), **kw)
         if head[:7] == unity_sdk.UNITYFS_MAGIC:
             out = scan_unity_stream(path, str(path), **kw)
         elif head[:4] == il2cpp_sdk.IL2CPP_MAGIC_BYTES:
@@ -517,6 +835,11 @@ def scan_target(path, entry=None, min_len=DEFAULT_MIN_LEN,
                 data = zf.read(entry)
                 return il2cpp_sdk.extract_literals(
                     io.BytesIO(data), "%s::%s" % (path, entry), **kw_il2cpp)
+            if _is_macho_magic(mhead[:4]):
+                # Streaming member ZIP (không zf.read cả 89 MB).
+                with zf.open(entry, "r") as fh:
+                    return scan_macho_stream(
+                        fh, "%s::%s" % (path, entry), **kw)
         out = scan_zip_member(path, entry, **kw_raw)
         out["mode"] = "raw"
         return out
@@ -533,6 +856,8 @@ def scan_target(path, entry=None, min_len=DEFAULT_MIN_LEN,
         import io
         return il2cpp_sdk.extract_literals(io.BytesIO(data), src,
                                            **kw_il2cpp)
+    if _is_macho_magic(data[:4]):
+        return scan_macho_bytes(data, src, **kw)
     out = scan_bytes(data, src, **kw_raw)
     out["mode"] = "raw"
     return out

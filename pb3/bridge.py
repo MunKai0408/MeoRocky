@@ -184,6 +184,8 @@ def raw_scan(path, entry=None, min_len=None, max_results=None):
     - bundle UnityFS -> quét payload đã giải nén (mode "unity-bundle");
     - global-metadata.dat IL2CPP -> đọc literal chính xác theo bảng
       literal (mode "il2cpp", metadata v31/v39 đã xác minh);
+    - Mach-O (thin 64-bit / FAT) -> quét theo section __TEXT,__cstring
+      + __TEXT,__ustring (mode "macho");
     - còn lại -> quét byte thô (mode "raw").
     min_len: độ dài chuỗi tối thiểu (mặc định 4).
     """

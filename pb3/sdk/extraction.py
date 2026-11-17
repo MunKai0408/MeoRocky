@@ -2240,7 +2240,8 @@ def run_extraction(req: ExtractionRequest) -> ExtractionResult:
             outcome = _outcome_for(table, rec, item["full"], loc, entries)
             outcome.sha256 = file_sha
             outcome.origin_kind = _origin_kind_for(
-                item["full"], item["layer"], rec.plugin_id)
+                item["full"], item["layer"], rec.plugin_id,
+                flavor=(table.schema_hint or {}).get("flavor"))
             result.files.append(outcome)
             result.total_entries += len(outcome.kv)
             result.generated_keys.extend(
@@ -2266,7 +2267,8 @@ def run_extraction(req: ExtractionRequest) -> ExtractionResult:
                     outcome = _outcome_for(table, rec, item["full"], loc, entries)
                     outcome.sha256 = file_sha
                     outcome.origin_kind = _origin_kind_for(
-                        item["full"], item["layer"], rec.plugin_id)
+                        item["full"], item["layer"], rec.plugin_id,
+                        flavor=(table.schema_hint or {}).get("flavor"))
                     result.files.append(outcome)
                     result.total_entries += len(outcome.kv)
                     result.generated_keys.extend(
@@ -2494,17 +2496,30 @@ def _normalize_table(table: LocTable, rec, full_path: str) -> None:
 _NON_LOCALE_PLUGINS = frozenset({"apple_plist"})
 
 
-def _origin_kind_for(full_path: str, layer, plugin_id: str) -> str:
+def _origin_kind_for(full_path: str, layer, plugin_id: str,
+                     flavor: Optional[str] = None) -> str:
     """origin_kind của một outcome (BUG#2).
 
     Ưu tiên bảng origin của lớp virtual (_build_layers đã gắn thẻ từng
     file ảo: language_source / string_table / generic_flat / text_asset).
     File thường (không nằm trong lớp virtual): generic_strings là dò chuỗi
     thô -> generic_flat; plugin cấu hình (apple_plist) -> other; còn lại
-    là file locale có cấu trúc -> text_asset."""
+    là file locale có cấu trúc -> text_asset.
+
+    Ngoại lệ (follow-up dò text 2026-11-17): file .strings dạng bplist
+    (flavor "strings-bplist") là chuỗi vỏ app iOS (quyền mic/camera,
+    Game Center, IAP...), KHÔNG phải text game -> origin_kind "other",
+    không gộp vào file locale chính. Nếu gộp sẽ làm vỡ chuẩn đã chốt
+    (9K en.json 2252 key byte-identical vs mẫu sẽ thành 2253 key vì
+    InfoPlist.strings có 1 key; PB3 2348 -> 2349). File .strings dạng
+    text giữ nguyên "text_asset" (vẫn gộp như trước, vd CSJ 32 key của
+    Tom). flavor lấy từ table.schema_hint ở chỗ parse; đường checkpoint
+    (resume) không có flavor nên giữ hành vi cũ ở đó."""
     origin_map = getattr(layer, "origin_map", None) if layer is not None else None
     if origin_map and full_path in origin_map:
         return origin_map[full_path]
+    if flavor == "strings-bplist":
+        return "other"
     if plugin_id == "generic_strings":
         return "generic_flat"
     if plugin_id in _NON_LOCALE_PLUGINS:
