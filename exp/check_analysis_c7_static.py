@@ -83,8 +83,8 @@ else:
 
 # 4. Manifest.
 files = json.loads((SITE / "pb3" / "files.json").read_text())["files"]
-if len(files) != 100:
-    fails.append("files.json co %d file, ky vong 100" % len(files))
+if len(files) != 101:
+    fails.append("files.json co %d file, ky vong 101" % len(files))
 if "pb3/sdk/patch_pack.py" not in files:
     fails.append("files.json thieu pb3/sdk/patch_pack.py")
 tests = json.loads((SITE / "pb3" / "tests.json").read_text())["files"]

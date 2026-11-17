@@ -95,8 +95,8 @@ for old in ("pool 2 worker song song",
 
 # 5. Manifest sau phan D (them sdk/font_list.py + tests/test_font_unify.py).
 files = json.loads((SITE / "pb3" / "files.json").read_text())["files"]
-if len(files) != 100:
-    fails.append("files.json co %d file, ky vong 100" % len(files))
+if len(files) != 101:
+    fails.append("files.json co %d file, ky vong 101" % len(files))
 tests = json.loads((SITE / "pb3" / "tests.json").read_text())["files"]
 if len(tests) != 175:
     fails.append("tests.json co %d file, ky vong 175" % len(tests))
