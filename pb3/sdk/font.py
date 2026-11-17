@@ -10,11 +10,14 @@ Phạm vi đợt tổng cuối — nhóm font, chế độ (1)–(4):
   font trong bundle Unity (chỉ liệt kê + cảnh báo, không sửa object).
 
 GIỚI HẠN TRUNG THỰC (xem handoff/final_font.md):
-- Chỉ gộp được font TrueType có outline glyf (sfnt 0x00010000/"true").
-  Font CFF/OpenType (.otf, "OTTO") đọc được cmap nhưng KHÔNG gộp được;
-  font collection (.ttc) đọc/gộp được THEO FACE (parse_font/merge_glyphs
+- Gộp được font TrueType có outline glyf (sfnt 0x00010000/"true") VÀ
+  font CFF/OpenType (.otf, "OTTO") không CID (xem sdk/cff.py: chuyển
+  outline quadratic donor -> Type 2 cubic + dựng lại bảng CFF; font
+  CID-keyed, charset mặc định, post 1.0/2.5 vẫn từ chối rõ ràng).
+  Font collection (.ttc) đọc/gộp được THEO FACE (parse_font/merge_glyphs
   nhận face_index; face khác giữ nguyên bytes, face đã gộp nối thêm ở
-  cuối file — xem mục TTC; face CFF vẫn không gộp được).
+  cuối file — xem mục TTC; face CFF không CID gộp được, face CID thì
+  vẫn từ chối).
 - Atlas SDF của TextMeshPro TÁI TẠO ĐƯỢC (thử nghiệm, xem sdk/sdf.py +
   sdk/tmp_sdf.py + bridge tmp_sdf_regen): tạo atlas mới từ font nhúng
   (cùng kích thước/padding/pointSize, fail-closed nếu không xếp vừa),
@@ -854,9 +857,10 @@ def verify_font(data: bytes, where: str = "font",
         if whole != _CHECKSUM_MAGIC:
             issues.append("checksum toàn font %08X != %08X" % (whole, _CHECKSUM_MAGIC))
     try:
-        locs = _loca_offsets(data, info)
-        if any(locs[i] > locs[i + 1] for i in range(len(locs) - 1)):
-            issues.append("loca: offset không đơn điệu")
+        if info.has_glyf:
+            locs = _loca_offsets(data, info)
+            if any(locs[i] > locs[i + 1] for i in range(len(locs) - 1)):
+                issues.append("loca: offset không đơn điệu")
     except (PB3Error, struct.error, IndexError) as exc:
         issues.append("loca: %s" % getattr(exc, "message_vi", str(exc)))
     return issues
@@ -1023,8 +1027,14 @@ def merge_glyphs(target: bytes, donor: bytes, codepoints: Iterable[int], *,
                  target_face: int = 0, donor_face: int = 0) -> MergeResult:
     """Gộp glyph cho `codepoints` từ donor vào target; trả font mới (bytes).
 
-    Chỉ font TrueType có outline glyf. Glyph composite được copy kèm toàn bộ
-    component (đệ quy), id component được viết lại theo bảng gộp. `progress_fn`
+    Đích TrueType: copy outline glyf + loca + hmtx + entry cmap, dựng lại
+    các bảng, tính lại checksum — xử lý cả glyph đơn và glyph composite.
+    Đích CFF (.otf, không CID): chuyển outline quadratic donor sang
+    Type 2 cubic + dựng lại bảng CFF (xem sdk/cff.py); donor OTF thì
+    copy charstring verbatim khi không gọi subr. Đích TTF + donor OTF
+    thì từ chối (cubic→quadratic là xấp xỉ hao hụt).
+    Glyph composite (đích TTF) được copy kèm toàn bộ component (đệ quy),
+    id component được viết lại theo bảng gộp. `progress_fn`
     được gọi (đã xong, tổng) sau mỗi glyph đã copy.
     TTC: `target_face`/`donor_face` chọn face (mặc định face 0); face đích
     đã gộp được nối thêm ở cuối file, các face khác giữ nguyên bytes —
@@ -1039,13 +1049,21 @@ def merge_glyphs(target: bytes, donor: bytes, codepoints: Iterable[int], *,
                        face_index=target_face if t_is_ttc else None)
         d = parse_font(donor, where=where + " (font nguồn)",
                        face_index=donor_face if d_is_ttc else None)
-        if t.kind != "ttf" or not t.has_glyf:
+        if t.kind == "ttf" and not t.has_glyf:
             raise _err("E_UNSUPPORTED_FORMAT",
-                       "face đích không phải TrueType có outline glyf (kind=%s) — không gộp được"
+                       "face đích TrueType không có outline glyf — không gộp được",
+                       where=where)
+        if t.kind not in ("ttf", "otf"):
+            raise _err("E_UNSUPPORTED_FORMAT",
+                       "face đích không phải TrueType/CFF (kind=%s) — không gộp được"
                        % t.kind, where=where)
-        if d.kind != "ttf" or not d.has_glyf:
+        if d.kind == "ttf" and not d.has_glyf:
             raise _err("E_UNSUPPORTED_FORMAT",
-                       "face nguồn không phải TrueType có outline glyf (kind=%s) — không gộp được"
+                       "face nguồn TrueType không có outline glyf — không gộp được",
+                       where=where)
+        if d.kind not in ("ttf", "otf"):
+            raise _err("E_UNSUPPORTED_FORMAT",
+                       "face nguồn không phải TrueType/CFF (kind=%s) — không gộp được"
                        % d.kind, where=where)
         t_bytes = _face_to_standalone(target, t.face_offset, where) if t_is_ttc else target
         d_bytes = _face_to_standalone(donor, d.face_offset,
@@ -1073,10 +1091,21 @@ def merge_glyphs(target: bytes, donor: bytes, codepoints: Iterable[int], *,
         return res
     t = parse_font(target, where=where)
     d = parse_font(donor, where=where + " (font nguồn)")
+    if t.kind == "otf":
+        # Dich CFF: chuyen quadratic->Type 2 cubic + gop bang CFF
+        # (xem sdk/cff.py); donor TTF hoac OTF (copy charstring).
+        from sdk import cff as _cff
+        return _cff.merge_cff_glyphs(target, donor, codepoints,
+                                     progress_fn=progress_fn, where=where)
     if t.kind != "ttf" or not t.has_glyf:
         raise _err("E_UNSUPPORTED_FORMAT",
                    "font đích không phải TrueType có outline glyf (kind=%s) — không gộp được"
                    % t.kind, where=where)
+    if d.kind == "otf":
+        raise _err("E_UNSUPPORTED_FORMAT",
+                   "font nguồn CFF (.otf) vào đích TrueType — chưa hỗ trợ "
+                   "chuyển outline cubic→quadratic (xấp xỉ hao hụt)",
+                   where=where)
     if d.kind != "ttf" or not d.has_glyf:
         raise _err("E_UNSUPPORTED_FORMAT",
                    "font nguồn không phải TrueType có outline glyf (kind=%s) — không gộp được"

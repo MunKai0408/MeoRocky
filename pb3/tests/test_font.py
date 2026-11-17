@@ -247,14 +247,19 @@ class TestMerge(TmpCase):
         self.assertTrue(any("font nguồn cũng thiếu" in w for w in res.warnings))
         self.assertEqual(res.added, [])
 
-    def test_merge_rejects_otf_and_ttc(self):
+    def test_merge_rejects_otf_stub_and_ttc(self):
+        # OTF "gia" (chi doi magic, khong co bang CFF): tu choi vi thieu
+        # bang CFF (E_CORRUPT), khong phai vi khong ho tro OTF — font
+        # OTF that co bang CFF thi gop duoc (xem test_cff_merge.py).
         target = fx.build_font_missing_vietnamese()
         donor = fx.build_font_full_vietnamese()
         with self.assertRaises(PB3Error) as cm:
             fs.merge_glyphs(fx.build_otf_stub(), donor, [0x1EA0])
-        self.assertEqual(cm.exception.code, "E_UNSUPPORTED_FORMAT")
+        self.assertEqual(cm.exception.code, "E_CORRUPT")
         with self.assertRaises(PB3Error) as cm:
             fs.merge_glyphs(target, fx.build_otf_stub(), [0x1EA0])
+        # Donor OTF bi tu choi o buoc dispatch (dich TTF + donor OTF)
+        # truoc khi doc bang CFF — van la tu choi ro rang, khong lang le.
         self.assertEqual(cm.exception.code, "E_UNSUPPORTED_FORMAT")
         with self.assertRaises(PB3Error):
             fs.merge_glyphs(target, fx.build_ttc_stub(), [0x1EA0])
@@ -459,6 +464,30 @@ class TestRebuildReplace(TmpCase):
             self.assertTrue(fs.coverage(data).is_full)
             self.assertEqual(fs.verify_font(data), [])
         self.assertTrue(Path(out_dir).is_dir())
+
+    def test_rebuild_merges_otf_and_skips_cid(self):
+        # Dich vu (iSH/CLI): font OTF khong CID duoc gop nhu TTF; font
+        # CID-keyed bi bo qua voi ly do ro, khong pha ca luot gop.
+        game = self.tmp / "game-otf"
+        (game / "fonts").mkdir(parents=True)
+        (game / "fonts" / "Game.otf").write_bytes(
+            fx.build_otf([0x41], name="Game"))
+        (game / "fonts" / "CJK.otf").write_bytes(
+            fx.build_otf([0x41], name="CJK", cid=True))
+        (game / "fonts" / "Game.ttf").write_bytes(
+            fx.build_font_missing_vietnamese())
+        app = _fake_app(self.tmp)
+        out_dir = str(self.tmp / "out-otf")
+        res = ft.rebuild_fonts(str(game), donor_bytes=fx.build_font_full_vietnamese(),
+                               app=app, allow_write=True, out_dir=out_dir)
+        self.assertEqual(len(res.changed), 2)
+        changed_names = {Path(c[0]).name for c in res.changed}
+        self.assertEqual(changed_names, {"Game.otf", "Game.ttf"})
+        for p in res.written:
+            self.assertTrue(fs.coverage(Path(p).read_bytes()).is_full)
+        skipped = {Path(s[0]).name: s[1] for s in res.skipped}
+        self.assertIn("CJK.otf", skipped)
+        self.assertIn("E_UNSUPPORTED_FORMAT", skipped["CJK.otf"])
 
     def test_rebuild_main_font_mode2(self):
         game = self._game_dir()
