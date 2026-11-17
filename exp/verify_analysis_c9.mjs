@@ -10,7 +10,7 @@
 //
 //  A. Tĩnh: node --check (app.js, sw.js, worker-pool.js) +
 //     check_analysis_c9_static.py (N cấu hình được, chuỗi cũ đã hết,
-//     files.json=95 / tests.json=166, CACHE_VERSION v22).
+//     files.json=95 / tests.json=167, CACHE_VERSION v23).
 //  B. Unit WorkerPool thật (site/worker-pool.js) với Worker GIẢ trong Node:
 //     B1 size 1 -> đúng 1 Worker, 3 job chậm chạy TUẦN TỰ trên slot 0;
 //     B2 size 2 -> đúng 2 Worker, 2 job chậm chạy CHỒNG NHAU (song song);
@@ -81,7 +81,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     else detail = "check_analysis_c9_static.py xanh: N cấu hình được 1–2 " +
       "(mặc định 2, tự động 1 khi deviceMemory ≤ 4, localStorage " +
       "pb3_pool_size, pool tôn trọng N, chuỗi cũ đã hết) + files.json=95 / " +
-      "tests.json=166 + CACHE_VERSION v22-20261117 + tiếng Việt đủ dấu";
+      "tests.json=167 + CACHE_VERSION v23-20261117 + tiếng Việt đủ dấu";
   } catch (e) { ok = false; detail = "không đọc được JSON: " + (r.stdout || "") + (r.stderr || ""); }
   rec("static_c9_checks", ok, detail, performance.now() - t0);
 }

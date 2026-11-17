@@ -7,7 +7,7 @@
 //
 // Section:
 //  1. Unit Python (tests.test_font_unify, 13 test) + tĩnh:
-//     files.json=95 / tests.json=166 / sw.js CACHE_VERSION v22, node --check,
+//     files.json=95 / tests.json=167 / sw.js CACHE_VERSION v23, node --check,
 //     check_analysis_font_unify_static.py 0 fails.
 //  2. Fixture IPA tổng hợp (CPython bridge): 5 font (TTF thiếu 4, TTF đủ,
 //     OTF, TMP thiếu 42, Font nhúng) -> đúng hành động từng loại; TTF đã
@@ -67,13 +67,13 @@ if (want(1)) {
   const testsJson = JSON.parse(fs.readFileSync(SITE + "/pb3/tests.json", "utf8"));
   const swJs = fs.readFileSync(SITE + "/sw.js", "utf8");
   rec("static_counts_and_cache",
-    filesJson.files.length === 95 && testsJson.files.length === 166 &&
+    filesJson.files.length === 95 && testsJson.files.length === 167 &&
     filesJson.files.includes("pb3/sdk/font_list.py") &&
     testsJson.files.includes("pb3/tests/test_font_unify.py") &&
-    swJs.includes('CACHE_VERSION = "v22-20261117"') && !swJs.includes("v19-20261116") &&
+    swJs.includes('CACHE_VERSION = "v23-20261117"') && !swJs.includes("v19-20261116") &&
     swJs.includes('"pb3/sdk/font_list.py"'),
     "files.json=" + filesJson.files.length + " (kỳ vọng 95) · tests.json=" + testsJson.files.length +
-    " (kỳ vọng 166) · sw.js v22-20261117: " + swJs.includes('CACHE_VERSION = "v22-20261117"') +
+    " (kỳ vọng 167) · sw.js v23-20261117: " + swJs.includes('CACHE_VERSION = "v23-20261117"') +
     " · precache có font_list.py: " + swJs.includes('"pb3/sdk/font_list.py"'), performance.now() - t);
   t = performance.now();
   const c = sh("node --check " + SITE + "/app.js && node --check " + SITE + "/worker.js && node --check " + SITE + "/sw.js && python3 -m py_compile " + SITE + "/pb3/bridge.py " + SITE + "/pb3/sdk/font_list.py " + SITE + "/pb3/tests/test_font_unify.py", EXP);
