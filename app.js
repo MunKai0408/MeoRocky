@@ -2173,6 +2173,107 @@ function applyJobTM(job, tm) {
   }
   job.items = rest;
 }
+// ---- Tên ngôn ngữ hiển thị (T2) ----
+const LANG_NAMES = {
+  en: "tiếng Anh", zh: "tiếng Trung", "zh-CN": "tiếng Trung (giản thể)",
+  "zh-TW": "tiếng Trung (phồn thể)", ja: "tiếng Nhật", ko: "tiếng Hàn",
+  de: "tiếng Đức", fr: "tiếng Pháp", es: "tiếng Tây Ban Nha",
+  pt: "tiếng Bồ Đào Nha", ru: "tiếng Nga", th: "tiếng Thái",
+  id: "tiếng Indonesia", ms: "tiếng Malaysia", it: "tiếng Ý",
+  nl: "tiếng Hà Lan", tr: "tiếng Thổ Nhĩ Kỳ", pl: "tiếng Ba Lan",
+  vi: "tiếng Việt", cs: "tiếng Séc", sk: "tiếng Slovakia",
+  ro: "tiếng Romania", hu: "tiếng Hungary", sv: "tiếng Thụy Điển",
+  da: "tiếng Đan Mạch", no: "tiếng Na Uy", fi: "tiếng Phần Lan",
+  uk: "tiếng Ukraina", el: "tiếng Hy Lạp", ar: "tiếng Ả Rập",
+  he: "tiếng Do Thái", tl: "tiếng Tagalog",
+};
+function langName(code) { return LANG_NAMES[code] || code; }
+// ---- Từ điển riêng theo game (T2) ----
+// Lưu localStorage theo game: pb3_glossary_<gameKey>. Ưu tiên cao nhất:
+// từ điển game > TM > Google/dịch máy. Entry do user thêm/sửa/xóa, hoặc
+// học từ bản dịch vừa xong (user bấm nút mới học, không tự học ngầm).
+// Chỉ áp dụng khi src/dst khớp đúng cặp đang dịch — từ điển game khác
+// cặp thì không gửi sang worker.
+function glossaryGameKey() {
+  const input = $("glossary-game");
+  let name = input && input.value ? input.value.trim() : "";
+  if (!name && state.file && state.file.name) {
+    name = state.file.name.replace(/\.(ipa|zip)$/i, "");
+  }
+  if (!name) name = "game";
+  return name.toLowerCase().replace(/[^a-z0-9\u00c0-\u024f\u1e00-\u1eff]+/gi, "-").replace(/^-+|-+$/g, "") || "game";
+}
+function glossaryStorageKey(from, to) {
+  return "pb3_glossary_" + glossaryGameKey() + "_" + (from || "en") + "_" + (to || "vi");
+}
+function loadGameGlossary(from, to) {
+  const f = from || (($("translate-from") && $("translate-from").value) || "en");
+  const t = to || (($("translate-to") && $("translate-to").value) || "vi");
+  try {
+    const raw = localStorage.getItem(glossaryStorageKey(f, t));
+    if (!raw) return null;
+    const g = JSON.parse(raw);
+    if (!g || g.version !== 1 || typeof g.entries !== "object" || !g.entries) return null;
+    return g;
+  } catch (e) { return null; }
+}
+function saveGameGlossary(g) {
+  try { localStorage.setItem(glossaryStorageKey(g.src, g.dst), JSON.stringify(g)); } catch (e) { /* đầy: bỏ qua */ }
+}
+function loadGameGlossaryFor(from, to) {
+  const g = loadGameGlossary();
+  if (!g || g.src !== from || g.dst !== to) return null;
+  return g;
+}
+// Dùng từ điển game cho các key còn lại trong job (value khớp chính xác
+// -> ghi results luôn, TRƯỚC TM). Đếm vào job.glossaryCount.
+function applyJobGlossary(job, glossary) {
+  if (!job.items.length || !glossary || !glossary.entries) return;
+  const entries = glossary.entries;
+  const rest = [];
+  for (const pair of job.items) {
+    const hit = entries[pair[1]];
+    if (hit != null && hit !== "") {
+      job.results[pair[0]] = hit;
+      job.glossaryCount = (job.glossaryCount || 0) + 1;
+    } else rest.push(pair);
+  }
+  job.items = rest;
+}
+// Đồng bộ ô "Ngôn ngữ đích" ở cổng (bước 3) với lần dịch gần nhất.
+function syncGateTargetLang() {
+  const sel = $("gate-target-lang");
+  if (!sel || !state.lastTranslated || !state.lastTranslated.to) return;
+  const to = state.lastTranslated.to;
+  if ([...sel.options].some((o) => o.value === to)) sel.value = to;
+}
+// Vẽ lại hộp từ điển game: nhãn nguồn/đích, danh sách mục, nút học.
+function refreshGlossaryBox() {
+  const from = ($("translate-from") && $("translate-from").value) || "en";
+  const to = ($("translate-to") && $("translate-to").value) || "vi";
+  const srcEl = $("glossary-src-label"), dstEl = $("glossary-dst-label");
+  if (srcEl) srcEl.textContent = langName(from);
+  if (dstEl) dstEl.textContent = langName(to);
+  const input = $("glossary-game");
+  if (input && !input.value.trim() && state.file && state.file.name) {
+    input.value = state.file.name.replace(/\.(ipa|zip)$/i, "");
+  }
+  const g = loadGameGlossary();
+  const list = $("glossary-list"), info = $("glossary-info");
+  const learnBtn = $("btn-glossary-learn");
+  if (learnBtn) learnBtn.disabled = !(state.lastTranslated && state.lastTranslated.translated && (state.lastTranslatedTm || []).length);
+  if (!list) return;
+  if (!g || !g.entries || Object.keys(g.entries).length === 0) {
+    list.innerHTML = "";
+    if (info) info.textContent = "Chưa có từ điển cho game này. Thêm mục ở trên, hoặc bấm “Lưu bản dịch vừa xong vào từ điển” sau khi dịch xong.";
+    return;
+  }
+  const keys = Object.keys(g.entries).sort();
+  list.innerHTML = keys.map((k) =>
+    "<div class=\"row\"><code>" + esc(k) + "</code><span>→</span><code>" + esc(g.entries[k]) + "</code>" +
+    "<button class=\"secondary\" data-glossary-del=\"" + esc(k) + "\">Xóa</button></div>").join("");
+  if (info) info.textContent = "Từ điển “" + (g.game || glossaryGameKey()) + "” (" + langName(g.src) + " → " + langName(g.dst) + "): " + keys.length + " mục.";
+}
 function currentTranslateSourceName() {
   const sel = $("translate-source-select");
   if (sel && sel.value) return sel.value;
@@ -2240,7 +2341,7 @@ async function startTranslateJob(text, to, from) {
     to, from, status: "running",
     items: entries, results: {}, tm: [],
     order: entries.map(([k]) => k),
-    total: entries.length, tmCount: 0,
+    total: entries.length, tmCount: 0, glossaryCount: 0,
     // Số liệu bỏ qua cộng dồn qua các chunk (bridge báo theo từng chunk):
     skippedCount: 0, skippedByReason: {}, skippedByLang: {},
     skippedKeysSample: [],
@@ -2289,6 +2390,12 @@ async function runTranslateGoogleJob(job, to, credit) {
   let selfCheckWrong = [];
   try {
     const tm = await buildTranslateTM(to, from);
+    // Từ điển game TRƯỚC TM (T2): entry của user thắng cả TM lẫn Google.
+    // Cũng gửi kèm sang worker (đối số thứ 5) để đường Google áp dụng
+    // cho đoạn trong chunk (bridge tra trước khi gửi Google).
+    const glossary = loadGameGlossaryFor(from, to);
+    const glossaryJson = glossary ? JSON.stringify(glossary) : null;
+    if (glossary) applyJobGlossary(job, glossary);
     // TM của chính job này (chunk trước dịch xong) cũng dùng cho chunk sau
     // — khỏi gửi lại value trùng ở chunk khác (dedupe của bridge chỉ
     // trong 1 lần gọi).
@@ -2306,7 +2413,7 @@ async function runTranslateGoogleJob(job, to, credit) {
       chunkIdx++;
       state.translateChunk = { idx: chunkIdx, total: chunksTotal };
       const { parsed } = await runOp("Dịch (Google)", "translate_json_google",
-        [JSON.stringify(chunkObj), to, false, from]);
+        [JSON.stringify(chunkObj), to, false, from, glossaryJson]);
       // Key chưa dịch xong (hủy giữa chunk / Google lỗi) KHÔNG ghi vào
       // results — đưa về đầu hàng đợi để dịch lại khi resume, thay vì
       // ghi nhận là "đã xong" rồi bỏ qua vĩnh viễn.
@@ -2394,7 +2501,11 @@ async function runTranslateGoogleJob(job, to, credit) {
     };
     job.lastTranslatedAt = state.lastTranslated.at;
     job.provenance = state.lastTranslated.provenance;
+    // Cặp nguồn→dịch thật sự đã dịch (để nút "Lưu vào từ điển game" học).
+    state.lastTranslatedTm = (job.tm || []).slice();
     await saveTranslateJob(job);
+    syncGateTargetLang();
+    refreshGlossaryBox();
     // Cổng tải: chỉ cho tải khi job xong HẾT và tự kiểm tra sạch.
     const missingCount = selfCheckMissing.length;
     const wrongCount = selfCheckWrong.length;
@@ -2410,11 +2521,11 @@ async function runTranslateGoogleJob(job, to, credit) {
     // Báo cáo trung thực (mục A, Joseph 21:28): tổng dòng nguồn / đã
     // dịch / bỏ qua kèm lý do / mất / ngôn ngữ khác bị đổi. Không bao
     // giờ báo "xong" khi còn dòng chưa dịch không lý do.
-    const srcLabel = from === "zh" ? "tiếng Trung" : "tiếng Anh";
+    const srcLabel = langName(from);
     info += "Nguồn " + srcLabel + ": " + sourceSegments + " đoạn · Đã dịch " +
       doneCount + "/" + job.total + " key" +
       " (Google: " + googleCount + " đoạn · từ điển offline: " + glossaryCount +
-      " đoạn · bộ nhớ dịch: " + job.tmCount + " chuỗi · khử trùng lặp: " + deduped +
+      " đoạn · từ điển game: " + (job.glossaryCount || 0) + " chuỗi · bộ nhớ dịch: " + job.tmCount + " chuỗi · khử trùng lặp: " + deduped +
       " đoạn · batch: " + batchRequests + " request, từng chuỗi: " + singleRequests + ").";
     const skipBits = Object.entries(job.skippedByReason || {})
       .map(([r, n]) => r + " ×" + n).join(", ");
@@ -2504,9 +2615,11 @@ $("btn-translate-run").addEventListener("click", async () => {
     const btn = $("btn-translate-run");
     btn.disabled = true;
     try {
-      const { parsed } = await runOp("Dịch offline", "translate_json", [text, to, credit, from]);
+      const glossary = loadGameGlossaryFor(from, to);
+      const glossaryJson = glossary ? JSON.stringify(glossary) : null;
+      const { parsed } = await runOp("Dịch offline", "translate_json", [text, to, credit, from, glossaryJson]);
       $("translate-output").value = JSON.stringify(parsed.translated, null, 2);
-      const srcLabel = from === "zh" ? "tiếng Trung" : "tiếng Anh";
+      const srcLabel = langName(from);
       const missing = (parsed.self_check && parsed.self_check.missing_keys) || [];
       const wrong = (parsed.self_check && parsed.self_check.wrong_lang_changed) || [];
       state.lastTranslated = {
@@ -2527,7 +2640,7 @@ $("btn-translate-run").addEventListener("click", async () => {
         total: parsed.total || doneKeys, done: doneKeys,
       };
       let info = "Dịch bằng từ điển offline (" + srcLabel + " → " +
-        (to === "vi" ? "tiếng Việt" : "tiếng Anh") + "): " + parsed.total + " key.";
+        langName(to) + "): " + parsed.total + " key.";
       info += " Chưa dịch được " + parsed.untranslated + " chuỗi (từ điển không biết — giữ nguyên, không tính là xong).";
       info += " Bỏ qua " + (parsed.skipped_count || 0) + " chuỗi không thuộc " + srcLabel + ".";
       info += " Mất: " + missing.length + " key · Ngôn ngữ khác bị đổi: " + wrong.length + " key.";
@@ -2536,7 +2649,17 @@ $("btn-translate-run").addEventListener("click", async () => {
       if (parsed.credit_key) info += " Đã gắn credit 'Việt Hoá Bởi Bear' vào key: " + parsed.credit_key + ".";
       if ((parsed.warnings || []).length) info += " Cảnh báo: " + parsed.warnings.join("; ");
       if (state.translateCheck.complete) info += " Bản dịch đã lưu trong phiên, sẵn sàng ép lại vào file gốc.";
+      if ((parsed.glossary_count || 0) > 0) info += " Từ điển game: " + parsed.glossary_count + " chuỗi.";
       $("translate-info").textContent = info;
+      // Cặp nguồn→dịch thật sự đã dịch (để nút "Lưu vào từ điển game" học).
+      try {
+        const srcObj = JSON.parse(text);
+        state.lastTranslatedTm = Object.keys(parsed.translated)
+          .filter((k) => srcObj[k] != null && parsed.translated[k] !== srcObj[k])
+          .map((k) => [srcObj[k], parsed.translated[k]]);
+      } catch (e) { state.lastTranslatedTm = []; }
+      syncGateTargetLang();
+      refreshGlossaryBox();
     } catch (e) { /* đã báo lỗi */ }
     finally { btn.disabled = false; }
     return;
@@ -2561,6 +2684,85 @@ $("btn-translate-cancel").addEventListener("click", () => {
   if (worker) worker.postMessage({ op: "cancel_translate" });
   $("translate-info").textContent = "Đang hủy… (dừng sau batch hiện tại, giữ lại phần đã dịch)";
 });
+// ---- Từ điển riêng theo game: thêm/sửa/xóa/xuất/nhập/học (T2) ----
+$("translate-from").addEventListener("change", refreshGlossaryBox);
+$("translate-to").addEventListener("change", refreshGlossaryBox);
+$("glossary-game").addEventListener("change", refreshGlossaryBox);
+$("btn-glossary-add").addEventListener("click", () => {
+  const from = ($("translate-from") && $("translate-from").value) || "en";
+  const to = ($("translate-to") && $("translate-to").value) || "vi";
+  const src = ($("glossary-src").value || "").trim();
+  const dst = ($("glossary-dst").value || "").trim();
+  if (!src || !dst) { showError("Nhập cả chuỗi gốc và bản dịch rồi mới thêm vào từ điển."); return; }
+  const g = loadGameGlossary(from, to) || { version: 1, game: glossaryGameKey(), src: from, dst: to, entries: {} };
+  const isNew = g.entries[src] == null;
+  g.entries[src] = dst;
+  g.game = glossaryGameKey();
+  saveGameGlossary(g);
+  $("glossary-src").value = ""; $("glossary-dst").value = "";
+  refreshGlossaryBox();
+  $("glossary-info").textContent = (isNew ? "Đã thêm " : "Đã cập nhật ") + "“" + src + "” → “" + dst + "” vào từ điển game (" + langName(from) + " → " + langName(to) + ", " + Object.keys(g.entries).length + " mục).";
+});
+$("glossary-list").addEventListener("click", (ev) => {
+  const key = ev.target && ev.target.getAttribute && ev.target.getAttribute("data-glossary-del");
+  if (key == null) return;
+  const from = ($("translate-from") && $("translate-from").value) || "en";
+  const to = ($("translate-to") && $("translate-to").value) || "vi";
+  const g = loadGameGlossary(from, to);
+  if (!g || g.entries[key] == null) return;
+  delete g.entries[key];
+  saveGameGlossary(g);
+  refreshGlossaryBox();
+  $("glossary-info").textContent = "Đã xóa “" + key + "” khỏi từ điển game (" + Object.keys(g.entries).length + " mục còn lại).";
+});
+$("btn-glossary-export").addEventListener("click", () => {
+  const from = ($("translate-from") && $("translate-from").value) || "en";
+  const to = ($("translate-to") && $("translate-to").value) || "vi";
+  const g = loadGameGlossary(from, to);
+  if (!g || !Object.keys(g.entries).length) { showError("Chưa có từ điển cho game này để xuất."); return; }
+  download(glossaryGameKey() + "-glossary-" + from + "-" + to + ".json", JSON.stringify(g, null, 2));
+});
+$("btn-glossary-import").addEventListener("click", () => { $("glossary-import-file").click(); });
+$("glossary-import-file").addEventListener("change", async (ev) => {
+  const file = ev.target.files && ev.target.files[0];
+  ev.target.value = "";
+  if (!file) return;
+  try {
+    const g = JSON.parse(await file.text());
+    if (!g || g.version !== 1 || typeof g.entries !== "object" || !g.entries ||
+        typeof g.src !== "string" || typeof g.dst !== "string" ||
+        Object.values(g.entries).some((v) => typeof v !== "string")) {
+      showError("File từ điển không đúng định dạng (cần {\"version\": 1, \"src\", \"dst\", \"entries\": {\"gốc\": \"dịch\"}}).");
+      return;
+    }
+    g.game = glossaryGameKey();
+    saveGameGlossary(g);
+    // Chuyển cặp dịch sang đúng cặp của từ điển vừa nhập để áp dụng ngay.
+    const fromSel = $("translate-from"), toSel = $("translate-to");
+    if (fromSel && [...fromSel.options].some((o) => o.value === g.src)) fromSel.value = g.src;
+    if (toSel && [...toSel.options].some((o) => o.value === g.dst)) toSel.value = g.dst;
+    refreshGlossaryBox();
+    $("glossary-info").textContent = "Đã nhập từ điển “" + g.game + "” (" + langName(g.src) + " → " + langName(g.dst) + ", " + Object.keys(g.entries).length + " mục).";
+  } catch (e) { showError("Không đọc được file từ điển: " + e.message); }
+});
+$("btn-glossary-learn").addEventListener("click", () => {
+  const lt = state.lastTranslated;
+  const pairs = state.lastTranslatedTm || [];
+  if (!lt || !pairs.length) { showError("Chưa có bản dịch vừa xong để học — hãy dịch 1 file trước."); return; }
+  const from = lt.from, to = lt.to;
+  const g = loadGameGlossary(from, to) || { version: 1, game: glossaryGameKey(), src: from, dst: to, entries: {} };
+  let added = 0, updated = 0;
+  for (const [src, dst] of pairs) {
+    if (typeof src !== "string" || typeof dst !== "string" || !src || !dst || src === dst) continue;
+    if (g.entries[src] == null) added++; else if (g.entries[src] !== dst) updated++;
+    g.entries[src] = dst;
+  }
+  g.game = glossaryGameKey();
+  saveGameGlossary(g);
+  refreshGlossaryBox();
+  $("glossary-info").textContent = "Đã học " + added + " mục mới, cập nhật " + updated + " mục vào từ điển “" + g.game + "” (" + langName(from) + " → " + langName(to) + ", " + Object.keys(g.entries).length + " mục). Sửa/xóa từng mục ở trên nếu cần.";
+});
+refreshGlossaryBox();
 // Cổng tải (mục A, Joseph 21:28): tự kiểm tra lần dịch gần nhất mà
 // thấy thiếu key hoặc ngôn ngữ khác bị đổi thì CHẶN tải file thiếu,
 // hiện rõ số dòng + ví dụ + hướng "Tiếp tục dịch" — thay vì im lặng
@@ -3746,6 +3948,8 @@ async function gateRun() {
   const files = (fileKey && state.fileSentFor === fileKey)
     ? extras : inputFileArgs().concat(extras);
   const pressedPath = state.gatePressed ? ("/tmp/input/gate-pressed__" + state.gatePressed.name) : null;
+  const gateTargetLang = ($("gate-target-lang") && $("gate-target-lang").value) || "vi";
+  const gateSourceLocale = (state.lastTranslated && state.lastTranslated.from) || "en";
   try {
     const { parsed } = await runOp("Kiểm tra trước khi giao", "delivery_gate",
       [inputPath(), JSON.stringify(src.translations),
@@ -3753,7 +3957,7 @@ async function gateRun() {
        src.provenance ? JSON.stringify(src.provenance) : null,
        pressedPath, allowlist ? JSON.stringify(allowlist) : null,
        fontPath, Object.keys(choices).length ? JSON.stringify(choices) : null,
-       partial],
+       partial, gateSourceLocale, gateTargetLang],
       files);
     state.gate = { verdict: parsed.verdict, key: key, result: parsed };
     gateRenderResult(parsed);
