@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Kiem tra tinh muc 8: sdk/plan.py chi stdlib + Python 3.9; manifest
-(files.json 95, tests.json 168); sw.js precache co sdk/plan.py va
-CACHE_VERSION v28-20261117 (C3 them fixtures/selftest.zip); bridge co 3 op plan_*. In JSON {"fails": [...]}.
+(files.json 98, tests.json 169); sw.js precache co sdk/plan.py va
+CACHE_VERSION v29-20261117 (C3 them fixtures/selftest.zip); bridge co 3 op plan_*. In JSON {"fails": [...]}.
 """
 import ast
 import json
@@ -36,13 +36,13 @@ except SyntaxError as e:
 
 # 2. Manifest.
 files = json.loads((SITE / "pb3" / "files.json").read_text())["files"]
-if len(files) != 95:
-    fails.append("files.json co %d file, ky vong 95" % len(files))
+if len(files) != 98:
+    fails.append("files.json co %d file, ky vong 98" % len(files))
 if "pb3/sdk/plan.py" not in files:
     fails.append("files.json thieu pb3/sdk/plan.py")
 tests = json.loads((SITE / "pb3" / "tests.json").read_text())["files"]
-if len(tests) != 168:
-    fails.append("tests.json co %d file, ky vong 168" % len(tests))
+if len(tests) != 169:
+    fails.append("tests.json co %d file, ky vong 169" % len(tests))
 if "pb3/tests/test_plan.py" not in tests:
     fails.append("tests.json thieu pb3/tests/test_plan.py")
 
@@ -50,8 +50,8 @@ if "pb3/tests/test_plan.py" not in tests:
 sw = (SITE / "sw.js").read_text(encoding="utf-8")
 if '"pb3/sdk/plan.py"' not in sw:
     fails.append("sw.js precache thieu pb3/sdk/plan.py")
-if 'CACHE_VERSION = "v28-20261117"' not in sw:
-    fails.append("sw.js CACHE_VERSION khong phai v28-20261117")
+if 'CACHE_VERSION = "v29-20261117"' not in sw:
+    fails.append("sw.js CACHE_VERSION khong phai v29-20261117")
 
 # 4. bridge co 3 op + khong goi mang trong plan.py.
 bridge = (SITE / "pb3" / "bridge.py").read_text(encoding="utf-8")

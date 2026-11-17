@@ -113,7 +113,7 @@ function sh(cmd, opts = {}) {
   };
   const bad = Object.entries(checks).filter(([, v]) => !v).map(([k]) => k);
   const man = JSON.parse(fs.readFileSync(SITE + "/pb3/tests.json", "utf8"));
-  rec("test_html", bad.length === 0 && man.files.length === 168, // 168 = 167 + 1 (M1 thêm tests/test_mb_write.py, 2026-11-17)
+  rec("test_html", bad.length === 0 && man.files.length === 169, // 169 = 168 + 1 (deep-extract thêm tests/test_deep_extract.py, 2026-11-17)
     Object.entries(checks).map(([k, v]) => `${k}=${v}`).join(" ") + ` | tests.json entries=${man.files.length}`,
     performance.now() - t0);
 }

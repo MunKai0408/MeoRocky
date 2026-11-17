@@ -379,6 +379,15 @@
     </div>
     <button id="btn-unity-run">Inspect</button>
     <p id="unity-ipa-hint" class="warn" hidden></p>
+    <div class="row">
+      <button id="btn-unity-deep" class="secondary">Xem sâu toàn bộ file</button>
+    </div>
+    <div class="row">
+      <input type="text" id="deep-raw-entry" placeholder="Đường dẫn entry trong IPA/ZIP — vd: .../global-metadata.dat" style="flex:1;min-width:220px">
+      <button id="btn-unity-rawscan" class="secondary">Trích sâu entry</button>
+    </div>
+    <p class="note">“Xem sâu” liệt kê từng bundle/.assets trong file (tên, kích thước, version, nén, số object, nguồn ngôn ngữ, lý do pipeline bỏ qua). “Trích sâu” là chế độ last-resort, chỉ chạy khi bấm nút: kết quả ghi nhãn unverified (il2cpp-literals / unverified-raw-scan), tách riêng khỏi file locale chính — không trộn vào en.json/zh.json. Với IPA, nhập đường dẫn 1 entry: global-metadata.dat để đọc literal IL2CPP chính xác, hoặc data.unity3d để quét payload bundle đã giải nén.</p>
+    <div id="unity-deep-result"></div>
     <details>
       <summary>Tùy chọn nâng cao</summary>
       <p class="note">Inspect không có tùy chọn nào thêm — mọi bundle/.assets đều được đọc
@@ -435,6 +444,7 @@
     <div class="row">
       <button id="btn-extract-select-all" class="secondary" disabled>Chọn tất cả</button>
       <button id="btn-extract-deselect-all" class="secondary" disabled>Bỏ chọn tất cả</button>
+      <button id="btn-extract-run-top">Trích xuất</button>
     </div>
     <div id="extract-file-list"><p class="note">Chưa có danh sách file — mở tab này khi đã chọn file IPA/ZIP.</p></div>
     <button id="btn-extract-list" class="secondary">Tải lại danh sách file</button>
@@ -1033,7 +1043,7 @@
   </div>
 </div>
 
-<!-- Hộp thoại cảnh báo file lớn (Mục C4): hiện TRƯỚC khi đọc file >400MB
+<!-- Hộp thoại cảnh báo file lớn (Mục C4): hiện TRƯỚC khi đọc file >140MB
      vào RAM; "Tiếp tục" mới mở file, "Hủy" thì dừng hẳn, không chạy ngầm. -->
 <div id="large-file-modal" class="modal" hidden role="alertdialog" aria-labelledby="large-file-title">
   <div class="modal-card">
