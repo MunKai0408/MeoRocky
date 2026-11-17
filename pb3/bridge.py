@@ -126,20 +126,82 @@ def boot():
 
 
 def list_entries(path):
-    """Liệt kê entry của container (ZIP/IPA/bundle) — inventory bước 1."""
+    """Liệt kê entry của container (ZIP/IPA/bundle) — inventory bước 1.
+
+    LƯỜI (lazy): chỉ đọc 2 KB đầu để nhận diện + central directory của
+    ZIP — KHÔNG nạp cả file vào RAM như trước (file Tom 210 MB từng làm
+    RAM đỉnh Python vọt lên 227 MB chỉ để liệt kê; đo [ĐÃ ĐO THẬT] bằng
+    ru_maxrss: lazy còn ~29 MB). VFS mở theo đường dẫn (ZipVFS lười);
+    file Unity độc lập >64 MB dùng SingleFileVFS lười (đã có từ trước).
+    Output giữ nguyên định dạng cũ ({path, size, kind}).
+    """
     try:
         from core.limits import Limits
         from sdk import containers, discovery as disc
 
         _check_size(path)
-        data = open(path, "rb").read()
-        kind = containers.detect_container_kind(data)
-        vfs = containers.open_vfs_bytes(data, source_name=os.path.basename(path))
+        with open(path, "rb") as fh:
+            head = fh.read(2048)
+        kind = containers.detect_container_kind(head)
+        vfs = disc.open_source_vfs(path, Limits())
         inv = disc.inventory(vfs, Limits())
         entries = [{"path": e.path, "size": int(e.size), "kind": e.kind}
                    for e in inv]
         return json.dumps({"ok": True, "kind": kind, "total": len(entries),
                            "entries": entries}, ensure_ascii=False)
+    except Exception as e:  # noqa: BLE001
+        return _err(e)
+
+
+def inspect_deep(path, entry=None):
+    """Xem sâu (deep inspect): liệt kê từng bundle/.assets trong file
+    (tên, kích thước, UnityFS version, compression, số object theo loại,
+    nguồn ngôn ngữ tìm thấy, lý do pipeline trích xuất bỏ qua nếu có).
+
+    Đọc bundle theo luồng (không ôm cả payload); file trong ZIP/IPA đọc
+    theo từng entry. Chỉ đọc, không sửa. entry: chỉ xem sâu 1 entry Unity
+    (None = xem tất cả).
+    """
+    try:
+        from sdk import inspect as insp
+
+        _check_size(path)
+        out = insp.inspect_container(path, entry=entry)
+        out["ok"] = True
+        return json.dumps(out, ensure_ascii=False)
+    except Exception as e:  # noqa: BLE001
+        return _err(e)
+
+
+def raw_scan(path, entry=None, min_len=None, max_results=None):
+    """Trích sâu (raw-string scan, P1-5) — LAST RESORT, labelled unverified.
+
+    Quét chuỗi thô theo khối (streaming, không nạp cả file vào RAM).
+    Chỉ chạy khi user bật tường minh; output ghi nhãn unverified và
+    TÁCH RIÊNG khỏi file locale chính (extract không bao giờ gọi op này).
+    entry: quét 1 entry trong ZIP/IPA; None = quét cả file. Mục tiêu
+    được tự nhận diện bằng magic (không hardcode theo game):
+    - bundle UnityFS -> quét payload đã giải nén (mode "unity-bundle");
+    - global-metadata.dat IL2CPP -> đọc literal chính xác theo bảng
+      literal (mode "il2cpp", metadata v31/v39 đã xác minh);
+    - còn lại -> quét byte thô (mode "raw").
+    min_len: độ dài chuỗi tối thiểu (mặc định 4).
+    """
+    try:
+        from sdk import rawscan
+
+        _check_size(path)
+        kw = {}
+        if min_len is not None:
+            kw["min_len"] = int(min_len)
+        if max_results is not None:
+            kw["max_results"] = int(max_results)
+        kw["progress_fn"] = lambda done, total: _emit(
+            "raw_scan", done, total if total is not None else -1)
+        out = rawscan.scan_target(path, entry=(str(entry) if entry else None),
+                                  **kw)
+        out["ok"] = True
+        return json.dumps(out, ensure_ascii=False)
     except Exception as e:  # noqa: BLE001
         return _err(e)
 
@@ -219,15 +281,15 @@ def unity_inspect(path):
     (UI hiện hướng dẫn trích xuất trước).
     """
     try:
+        from core.limits import Limits
         from sdk import containers, discovery as disc
 
         _check_size(path)
         name = os.path.basename(path)
-        data = open(path, "rb").read()
-        if containers.detect_container_kind(data) == "zip":
-            from core.limits import Limits
-
-            vfs = containers.open_vfs_bytes(data, source_name=name)
+        with open(path, "rb") as fh:
+            head = fh.read(2048)
+        if containers.detect_container_kind(head) == "zip":
+            vfs = containers.open_vfs(path, source_name=name)
             inv = disc.inventory(vfs, Limits())
             bundles = [{"path": e.path, "size": int(e.size)}
                        for e in inv
@@ -239,6 +301,7 @@ def unity_inspect(path):
                 "bundles": bundles[:200], "bundles_total": len(bundles),
                 "total_entries": len(inv),
             }, ensure_ascii=False)
+        data = open(path, "rb").read()
         out = {"ok": True, "is_container": False}
         out.update(_parse_unity_bytes(data, name))
         return json.dumps(out, ensure_ascii=False)
@@ -248,16 +311,17 @@ def unity_inspect(path):
 
 def unity_inspect_entry(path, entry):
     """Inspect 1 bundle/.assets BÊN TRONG file ZIP/IPA: đọc entry đó ra
-    rồi parse (không parse cả file ZIP). entry là đường dẫn trong
-    container (vd Payload/9Kings.app/Data/sharedassets0.assets)."""
+    rồi parse (không parse cả file ZIP; cũng không nạp cả file IPA vào
+    RAM như trước — VFS lười chỉ đọc đúng entry cần). entry là đường dẫn
+    trong container (vd Payload/9Kings.app/Data/sharedassets0.assets)."""
     try:
-        from sdk import containers
+        from core.limits import Limits
+        from sdk import containers, discovery as disc
 
         _check_size(path)
-        data = open(path, "rb").read()
-        vfs = containers.open_vfs_bytes(
-            data, source_name=os.path.basename(path))
-        raw = vfs.read(entry)
+        vfs = disc.open_source_vfs(path, Limits())
+        nested = containers.NestedVFS(vfs, limits=Limits())
+        raw = bytes(nested.read(entry, None))
         out = {"ok": True, "is_container": False, "entry": entry}
         out.update(_parse_unity_bytes(raw, os.path.basename(entry)))
         return json.dumps(out, ensure_ascii=False)

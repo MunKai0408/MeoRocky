@@ -98,6 +98,7 @@
   "pb3/tests/test_compress.py",
   "pb3/tests/test_conformance.py",
   "pb3/tests/test_container.py",
+  "pb3/tests/test_deep_extract.py",
   "pb3/tests/test_engine_detect.py",
   "pb3/tests/test_errors.py",
   "pb3/tests/test_extraction.py",
