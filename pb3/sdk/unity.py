@@ -1,14 +1,15 @@
 """Backend Unity (Claude 05; đặc tả §6, decisions #66+).
 
 Phạm vi: UnityFS v6/v7/v8/v9 (đọc + ghi; Zstd chỉ đọc
-trên web qua fzstd — xem C5), SerializedFile v15–23 (metadata, object
+trên web qua fzstd — xem C5), SerializedFile v15–26 (metadata, object
 table, TextAsset, chuỗi ngắn/dài), hybrid backend AUTO / LIBRARY /
 NATIVE (UnityPy + LZ4 + Python thuần), planner, patcher
 (PATCH_INPLACE / REBUILD_SECTION / REBUILD_ALL), diffverify +
 allow-list + backup/versioning/rollback.
 
-Layout đối chiếu UnityPy 1.25.4 (BundleFile.py, SerializedFile.py,
-ObjectReader.py, TypeTreeNode.py, CompressionHelper.py):
+Layout đối chiếu UnityPy master (BundleFile.py, SerializedFile.py,
+ObjectReader.py, TypeTreeNode.py, CompressionHelper.py) — xem thêm ghi chú
+v24+ ở SerializedFile (SUPPORTED_SF_VERSIONS):
 - UnityFS: big-endian; header = signature, version, unity version,
   unity revision, total size u64, comp/uncomp blocks-info size, flags;
   blocks info = hash 16 byte + số block + (unc, comp, flags u16) +
@@ -18,6 +19,19 @@ ObjectReader.py, TypeTreeNode.py, CompressionHelper.py):
   v17+ không; byte_start u64 chỉ từ v22; type tree v23+ có content hash
   16 byte + kích thước blob, blob mở đầu bằng magic "mhtt" + format
   version (size 0 = type đó không có type tree).
+- SerializedFile v24+ (đối chiếu UnityPy master, commit af1503d —
+  AssetStudio/AssetRipper/UABE đều dừng ở v22, không có spec công khai):
+  v24/v25 KHÔNG đổi layout so với v23 (UnityPy không có nhánh 24/25 nào:
+  không đổi header, type, object table, script, external, ref type);
+  v26 thêm MỘT mục sau ref types: i32 số shared subtree + từng
+  TypeTreeNodeInfoHandler (hash 16B + u32 size + info "mhtt" như type
+  thường); node có m_TypeFlags & 32 thì children lấy từ subtree chung
+  theo ref_hashes[m_RefTypeHash] (xem _resolve_shared_subtrees).
+  TypeTreeNodeInfo v23+ (UnityPy TypeTreeNodeInfo.from_reader): sau node
+  blob LUÔN có u32 ref_hash_count + ref_hashes 16 byte (kể cả count = 0);
+  fixture v23 cũ của repo thiếu phần đuôi này nên parser chấp nhận cả 2
+  dạng (phân biệt bằng serialized_size, kiểm tra chặt) — xem
+  _parse_typetree_blob. v27+ chưa có bằng chứng layout -> fail-closed.
 - UnityFS v8 cùng layout header với v7 (căn 16 sau header); cờ mã hóa /
   padding chọn theo unityRevision (UnityPy: version_engine), KHÔNG theo
   unityVersion (thường là "5.x.x").
@@ -76,8 +90,10 @@ UNITY_VERSION = "2019.4.40f1"  # mặc định khi dựng bundle mới (giữ ng
 UNITY6_PLAYER_VERSION = "5.x.x"     # unityVersion trong header bundle Unity 6
 UNITY6_REVISION = "6000.0.23f1"     # unityRevision (engine) của fixture v8/v23
 SUPPORTED_BUNDLE_VERSIONS = (6, 7, 8, 9)  # v9: đọc + ghi (M-formats)
-# SerializedFile: chỉ 15-23 (object table đã kiểm chứng; <15 quá cũ, >23 chưa có fixture).
-SUPPORTED_SF_VERSIONS = (15, 16, 17, 18, 19, 20, 21, 22, 23)
+# SerializedFile: 15-26 (object table đã kiểm chứng; <15 quá cũ, >26 chưa
+# có bằng chứng layout — fail-closed). v24/25 layout = v23, v26 thêm mục
+# shared subtrees sau ref types (đối chiếu UnityPy master af1503d).
+SUPPORTED_SF_VERSIONS = (15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26)
 
 # Mã nén block (bit thấp 6 của flags). 5 = zstd: quy ước mở rộng của PB3
 # (xem ghi chú v9/Zstd ở đầu file); UnityPy master không có mã này.
@@ -121,7 +137,7 @@ def support_matrix():
         {"format": "Zstd (block bundle, mã nén 5)", "read": "có — CHỈ trên web BearTea (qua fzstd, cầu nối JS)",
          "write": "không (ghi lại bằng block không nén, cờ 0)",
          "backend": "fzstd 0.1.1 (MIT, vendored site/fzstd/)", "maturity": "M2"},
-        {"format": "SerializedFile v15-23 (.assets)", "read": "có (metadata, object table, TextAsset)",
+        {"format": "SerializedFile v15-26 (.assets)", "read": "có (metadata, object table, TextAsset; v23+ type tree có ref hashes, v26 shared subtrees)",
          "write": "có (patch TextAsset: PATCH_INPLACE / REBUILD_SECTION)",
          "backend": "Python thuần", "maturity": "M2"},
         {"format": "LZ4 block / LZ4HC", "read": "có", "write": "có",
@@ -135,7 +151,7 @@ def support_matrix():
         {"format": "UnityPy (object phức tạp)", "read": "khi cài được",
          "write": "khi cài được", "backend": "UnityPy 1.25.4 (iSH đã chứng minh)",
          "maturity": "M2"},
-        {"format": "SerializedFile v<15 / v>23, UnityWeb/UnityRaw, LZHAM, bundle mã hóa",
+        {"format": "SerializedFile v<15 / v>26, UnityWeb/UnityRaw, LZHAM, bundle mã hóa",
          "read": "không", "write": "không",
          "backend": "chưa có (E_UNSUPPORTED_FORMAT / E_ENCRYPTED)", "maturity": "M0"},
     ]
@@ -1460,6 +1476,13 @@ class TypeTreeNode:
     level: int
     meta_flag: int
     children: List["TypeTreeNode"] = field(default_factory=list)
+    # v19+: m_TypeFlags (bit 32 = node tham chiếu shared subtree) và
+    # m_RefTypeHash (chỉ số vào ref_hashes của type chứa node). Chỉ dùng để
+    # resolve shared subtree v26 (xem _resolve_shared_subtrees); ghi lại
+    # type tree luôn dùng raw_typetree nguyên vẹn nên 2 trường này không
+    # ảnh hưởng đường ghi.
+    type_flags: int = 0
+    ref_type_hash: Optional[int] = None
 
 
 @dataclass
@@ -1475,6 +1498,9 @@ class SerializedType:
     ref_names: Optional[Tuple[str, str, str]] = None
     # v23+: content hash của type tree (XXH3, 16 byte); ghi lại nguyên vẹn.
     type_tree_content_hash: bytes = b"\x00" * 16
+    # v23+: ref hashes sau node blob trong TypeTreeNodeInfo (UnityPy) —
+    # hash các shared subtree mà node flag-32 của type này tham chiếu.
+    ref_hashes: List[bytes] = field(default_factory=list)
 
 
 @dataclass
@@ -1490,7 +1516,7 @@ class SerializedObject:
 
 @dataclass
 class SerializedFile:
-    version: int  # header version (15-23)
+    version: int  # header version (15-26)
     unity_version: str = ""
     target_platform: int = 0
     enable_type_tree: bool = False
@@ -1499,6 +1525,11 @@ class SerializedFile:
     script_types: List[Tuple[int, int]] = field(default_factory=list)
     externals: List[Dict] = field(default_factory=list)
     ref_types: List[SerializedType] = field(default_factory=list)
+    # v26+: mục shared subtrees — handler bytes nguyên vẹn (hash 16B +
+    # u32 size + info), theo thứ tự trong file; ghi lại nguyên vẹn khi
+    # rebuild (xem build_serialized). Bảng đã parse phục vụ resolve nằm ở
+    # _shared_subtree_map (hash -> (node|None, ref_hashes)).
+    shared_subtrees: List[bytes] = field(default_factory=list)
     user_information: str = ""
     data_offset: int = 0
     metadata_size: int = 0
@@ -1512,6 +1543,11 @@ class SerializedFile:
     # cache text_assets() (lazy; SerializedFile không đổi sau khi parse)
     _text_cache: Optional[List] = field(default=None, repr=False, compare=False)
     _by_path_id: Optional[dict] = field(default=None, repr=False, compare=False)
+    # v26+: bảng shared subtree đã parse (hash -> (node|None, ref_hashes)),
+    # chỉ dùng để resolve node flag-32; không dùng khi ghi (ghi dùng
+    # shared_subtrees nguyên vẹn).
+    _shared_subtree_map: Optional[dict] = field(default=None, repr=False,
+                                                compare=False)
     where: str = field(default="assets", repr=False, compare=False)
 
     def get_object(self, path_id):
@@ -2796,11 +2832,18 @@ def string_table_element_template(sf, path_id, m_id, localized):
     return None
 
 
-def _parse_typetree_blob(reader, version, where):
+def _parse_typetree_blob(reader, version, where, serialized_size=None):
     """Blob type tree (v>=12): node_count, stringbuffer, node 24/32 byte.
 
-    v23+ (UnityPy 1.25.4 TypeTreeNode.parse_blob): blob mở đầu bằng magic
-    "mhtt" + format version (i32, phải bằng version) trước node_count."""
+    v23+ (UnityPy master TypeTreeNodeInfo): blob mở đầu bằng magic
+    "mhtt" + format version (i32, phải bằng version) trước node_count, và
+    KẾT THÚC bằng u32 ref_hash_count + ref_hashes 16 byte (kể cả count=0).
+    `serialized_size` (độ dài info đã khai ở handler) dùng để kiểm tra
+    chặt phần đuôi: sau node blob, phần còn lại phải là đúng 0 byte (dạng
+    legacy của fixture v23 cũ trong repo — builder cũ không ghi đuôi ref
+    hashes) hoặc đúng 4 + 16*count byte; còn lại -> E_CORRUPT.
+    Trả (root|None, raw_blob, ref_hashes). raw_blob gồm toàn bộ info từ
+    "mhtt" tới hết ref hashes (để ghi lại nguyên vẹn)."""
     start = reader.pos
     if version >= 23:
         magic = reader.read(4)
@@ -2820,11 +2863,31 @@ def _parse_typetree_blob(reader, version, where):
     node_size = struct.calcsize("<" + fmt)
     raw_nodes = reader.read(node_size * node_count)
     strbuf = reader.read(buf_size)
+    ref_hashes = []
+    if version >= 23 and serialized_size is not None:
+        remaining = serialized_size - (reader.pos - start)
+        if remaining == 0:
+            # Dạng legacy (fixture v23 cũ của repo): không có đuôi ref hash.
+            pass
+        elif remaining >= 4 and (remaining - 4) % 16 == 0:
+            count = reader.i32()
+            if count != (remaining - 4) // 16:
+                raise PB3Error("E_CORRUPT",
+                               "type tree v23: ref_hash_count %d không khớp "
+                               "phần còn lại %d byte" % (count, remaining),
+                               where=where)
+            ref_hashes = [reader.read(16) for _ in range(count)]
+        else:
+            raise PB3Error("E_CORRUPT",
+                           "type tree v23: phần còn lại %d byte sau node blob "
+                           "không phải ref hashes" % remaining, where=where)
     raw_blob = reader._b[start:reader.pos]
     nodes = []
     for values in struct.iter_unpack("<" + fmt, raw_nodes):
         ver, level, tflags, type_off, name_off, bsize, index, meta = values[:8]
-        nodes.append((ver, level, tflags, type_off, name_off, bsize, index, meta))
+        ref_idx = values[8] if len(values) > 8 else None
+        nodes.append((ver, level, tflags, type_off, name_off, bsize, index,
+                      meta, ref_idx))
 
     def _str(off):
         if off & 0x80000000:
@@ -2839,9 +2902,10 @@ def _parse_typetree_blob(reader, version, where):
     stack = [fake]
     parent = fake
     prev = fake
-    for ver, level, tflags, type_off, name_off, bsize, index, meta in nodes:
+    for ver, level, tflags, type_off, name_off, bsize, index, meta, ref_idx in nodes:
         node = TypeTreeNode(_str(type_off), _str(name_off), bsize, index,
-                            level, meta, [])
+                            level, meta, [], type_flags=tflags,
+                            ref_type_hash=ref_idx)
         if level > prev.level:
             stack.append(parent)
             parent = prev
@@ -2855,7 +2919,83 @@ def _parse_typetree_blob(reader, version, where):
         parent.children.append(node)
         prev = node
     root = fake.children[0] if fake.children else None
-    return root, raw_blob
+    return root, raw_blob, ref_hashes
+
+
+def _parse_typetree_info(reader, version, where):
+    """Đọc 1 TypeTreeNodeInfoHandler (v23+): hash 16B + u32 size + info.
+
+    Trả (hash, raw_handler_bytes, node|None, ref_hashes). size < 8 nghĩa
+    là handler không mang info (node = None — subtree của nó nằm ở type
+    khác / bảng shared v26); raw_handler_bytes giữ nguyên vẹn để ghi lại
+    byte-identical (gồm cả hash + size)."""
+    start = reader.pos
+    h = reader.read(16)
+    size = reader.i32()
+    if size < 0 or size > 10000000:
+        raise PB3Error("E_CORRUPT", "type tree handler: size %d lạ" % size,
+                       where=where)
+    if size >= 8:
+        info_start = reader.pos
+        node, _raw_info, ref_hashes = _parse_typetree_blob(
+            reader, version, where, size)
+        if reader.pos - info_start != size:
+            raise PB3Error("E_CORRUPT",
+                           "type tree handler: info dài %d, khai %d"
+                           % (reader.pos - info_start, size), where=where)
+    else:
+        node, ref_hashes = None, []
+    return h, reader._b[start:reader.pos], node, ref_hashes
+
+
+def _resolve_shared_subtrees(sf, where):
+    """Resolve node flag-32 ở v26 — ảnh gương UnityPy
+    SerializedFile._resolve_shared_subtrees.
+
+    Mỗi type/ref-type có info: duyệt cây node; node có type_flags & 32 thì
+    children = children của subtree chung có hash =
+    ref_hashes[ref_type_hash], tra trong bảng shared subtrees của file
+    (subtree tự nó lại resolve bằng ref_hashes của chính nó). Thiếu hash,
+    chỉ số ngoài khoảng, hoặc chu trình tham chiếu -> E_CORRUPT fail-closed
+    (không lặng lẽ để children rỗng). Chỉ gọi ở v26 (UnityPy cũng vậy);
+    v23-25 không có bảng shared nên node flag-32 giữ children inline."""
+    table = sf._shared_subtree_map or {}
+    cache = {}
+
+    def resolve_node(node, ref_hashes, resolving):
+        for child in list(node.children):
+            resolve_node(child, ref_hashes, resolving)
+        if node.type_flags & 32:
+            idx = node.ref_type_hash
+            if idx is None or idx < 0 or idx >= len(ref_hashes):
+                raise PB3Error("E_CORRUPT",
+                               "shared subtree v26: node %r tham chiếu "
+                               "ref_hashes[%s] không hợp lệ"
+                               % (node.name, idx), where=where)
+            h = ref_hashes[idx]
+            if h in resolving:
+                raise PB3Error("E_CORRUPT",
+                               "shared subtree v26: chu trình tham chiếu "
+                               "hash %s" % h.hex(), where=where)
+            if h not in cache:
+                entry = table.get(h)
+                if entry is None:
+                    raise PB3Error("E_CORRUPT",
+                                   "shared subtree v26: hash %s không có "
+                                   "trong bảng shared subtrees"
+                                   % h.hex(), where=where)
+                sub_node, sub_hashes = entry
+                if sub_node is None:
+                    cache[h] = []
+                else:
+                    cache[h] = resolve_node(sub_node, sub_hashes,
+                                            resolving | {h}).children
+            node.children = cache[h]
+        return node
+
+    for typ in list(sf.types) + list(sf.ref_types):
+        if typ.node is not None:
+            resolve_node(typ.node, typ.ref_hashes, set())
 
 
 def _parse_serialized_type(reader, version, enable_type_tree, is_ref_type, where):
@@ -2873,29 +3013,22 @@ def _parse_serialized_type(reader, version, enable_type_tree, is_ref_type, where
         typ.old_type_hash = reader.read(16)
     if enable_type_tree:
         if version >= 23:
-            # UnityPy 1.25.4 (SerializedType.read): v23+ có content hash
-            # (XXH3, 16 byte) + kích thước blob đã serialize; size 0 nghĩa
-            # là type này không có type tree (node = None).
-            typ.type_tree_content_hash = reader.read(16)
-            serialized_size = reader.i32()
-            if serialized_size < 0 or serialized_size > 10000000:
-                raise PB3Error("E_CORRUPT",
-                               "type tree v23: serialized size %d lạ"
-                               % serialized_size, where=where)
-            if serialized_size:
-                blob_start = reader.pos
-                typ.node, typ.raw_typetree = _parse_typetree_blob(reader, version,
-                                                                  where)
-                if reader.pos - blob_start != serialized_size:
-                    raise PB3Error("E_CORRUPT",
-                                   "type tree v23: blob dài %d, khai %d"
-                                   % (reader.pos - blob_start, serialized_size),
-                                   where=where)
-            else:
-                typ.node = None
-                typ.raw_typetree = b""
+            # UnityPy master (SerializedType + TypeTreeNodeInfoHandler):
+            # content hash (16 byte) + kích thước info; size >= 8 mới có
+            # info (tối thiểu 4 magic + 4 version), size < 8 nghĩa là type
+            # này không mang type tree (node = None). raw_typetree = info
+            # bytes (từ "mhtt" tới hết ref hashes) để ghi lại nguyên vẹn.
+            h, raw_handler, node, ref_hashes = _parse_typetree_info(
+                reader, version, where)
+            typ.type_tree_content_hash = h
+            typ.node = node
+            # info bytes = handler trừ 16 hash + 4 size (rỗng khi size < 8).
+            typ.raw_typetree = (raw_handler[20:] if len(raw_handler) > 20
+                                else b"")
+            typ.ref_hashes = ref_hashes
         elif version >= 12 or version == 10:
-            typ.node, typ.raw_typetree = _parse_typetree_blob(reader, version, where)
+            typ.node, typ.raw_typetree, _refs = _parse_typetree_blob(
+                reader, version, where)
         else:
             raise PB3Error("E_UNSUPPORTED_FORMAT",
                            "type tree kiểu cũ (v<12) chưa hỗ trợ", where=where)
@@ -2990,9 +3123,11 @@ def _parse_object_table_fast(r, sf, version, object_count, data, data_offset, wh
 
 
 def parse_serialized(data, limits=None, where="assets"):
-    """Đọc SerializedFile v15-23: header, metadata, object table.
+    """Đọc SerializedFile v15-26: header, metadata, object table.
 
-    Header 4 số đầu LUÔN big-endian; phần sau theo cờ endian."""
+    Header 4 số đầu LUÔN big-endian; phần sau theo cờ endian. v24/25
+    layout = v23; v26 thêm mục shared subtrees sau ref types (xem ghi chú
+    v24+ ở đầu file)."""
     data = bytes(data)
     lim = limits or Limits()
     if len(data) < 20:
@@ -3086,6 +3221,21 @@ def parse_serialized(data, limits=None, where="assets"):
             sf.ref_types.append(_parse_serialized_type(r, version,
                                                        sf.enable_type_tree, True,
                                                        where))
+    if version >= 26:
+        # Mục shared subtrees (UnityPy master, chỉ v26+): i32 count +
+        # từng handler; userInformation nằm SAU mục này nên phải đọc
+        # đúng thứ tự, nếu không userInformation sẽ đọc sai.
+        shared_count = r.i32()
+        if shared_count < 0 or shared_count > 100000:
+            raise PB3Error("E_CORRUPT", "số shared subtree lạ", where=where)
+        sf.shared_subtrees = []
+        sf._shared_subtree_map = {}
+        for _ in range(shared_count):
+            h, raw_handler, node, ref_hashes = _parse_typetree_info(
+                r, version, where)
+            sf.shared_subtrees.append(raw_handler)
+            sf._shared_subtree_map[h] = (node, ref_hashes)
+        _resolve_shared_subtrees(sf, where)
     if version >= 5:
         sf.user_information = r.string_to_null()
     return sf
@@ -3159,6 +3309,12 @@ def build_serialized(sf, object_data, *, version=None, unity_version=None):
         meta2.pack("i", len(sf.ref_types))
         for typ in sf.ref_types:
             _write_serialized_type(meta2, sf, typ, True, version)
+    if version >= 26:
+        # Mục shared subtrees: ghi lại handler bytes nguyên vẹn (hash +
+        # size + info) theo thứ tự gốc; count 0 vẫn ghi i32 0.
+        meta2.pack("i", len(sf.shared_subtrees))
+        for handler in sf.shared_subtrees:
+            meta2.write(handler)
     if version >= 5:
         meta2.string_to_null(sf.user_information)
     meta_bytes = meta2.bytes()
