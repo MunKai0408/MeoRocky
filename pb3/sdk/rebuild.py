@@ -8,13 +8,13 @@ lap lon (sdk/unity.rebuild_bundle_streaming). Duong RAM hien co giu
 nguyen cho file nho; bundle trong ZIP/IPA (bytes da trong RAM) giu
 duong RAM.
 
-PHAM VI v1 (G1 — quyet dinh theo bang chung, xem bao cao P0-1): CHI ghi
-TextAsset JSON dang dict. Khong co duong ghi MonoBehaviour an toan +
-kiem chung duoc trong cay (apply_edits chi ghi TextAsset qua apply_patch;
-monobehaviour_texts chi doc, khong co writer truong MonoBehaviour nao),
-nen moi key MonoBehaviour/StringTable vao `unmatched` voi reason
-`monobehaviour`, dem ro, KHONG im lang bo, KHONG tuyen bo du tieu chi
-vong tron cho nhom key nay.
+PHAM VI v1 (G1 — quyet dinh theo bang chung, xem bao cao P0-1) + M1:
+ghi TextAsset JSON dang dict VA MonoBehaviour/StringTable co duong ghi
+kiem chung (bang ngon ngu I2 byte-walk + StringTable co type tree, qua
+apply_monobehaviour_patch REBUILD_SECTION). Generic MonoBehaviour (scan
+path / field le, khong co trong output trich xuat da gop) van vao
+`unmatched` voi reason `monobehaviour`, dem ro, KHONG im lang bo,
+KHONG tuyen bo du tieu chi vong tron cho nhom key nay.
 
 KHOA REBUILD_ALL: giu nguyen — sdk/unity.py MATURITY="M2", apply_patch
 tu choi REBUILD_ALL du confirm=True. (E) chi dung REBUILD_SECTION.
@@ -443,7 +443,8 @@ def _collect_mb_keys(sfs):
       truc; truoc P0-3 cac term nay xuat hien duoi dang key generic).
     - Key generic cua _mb_generic_kv (ca 2 che do split) tren item
       generic cua tung sf. Chi dung de PHAN LOAI unmatched (khong dung
-      de anh xa ghi — (E) v1 khong ghi MB).
+      de anh xa ghi — generic MB chua ghi duoc o v1; LS + ST da ghi duoc
+      qua M1).
     """
     from sdk.extraction import _mb_generic_kv
 
@@ -607,22 +608,25 @@ def _write_rebuild_outputs(source_name, patched_units, out_dir, zip_path,
 def build_rebuild_preview(source_bytes, *, source_name, translations,
                           provenance=None, choices=None, backend=None,
                           limits=None, progress_fn=None, src_path=None,
-                          force_streaming=False):
+                          force_streaming=False, source_locale="en"):
     """Xem truoc (E): nhom -> plan moi don vi -> ap thu trong RAM (hoac
     tinh replacements cho duong streaming) -> phan loai key khong ep
-    duoc. Khong ghi file nao. Ket qua cung shape voi apply_rebuild."""
+    duoc. Khong ghi file nao. Ket qua cung shape voi apply_rebuild.
+    source_locale: cot ngon ngu goc de ghi vao MonoBehaviour (mac dinh
+    "en")."""
     return apply_rebuild(
         source_bytes, source_name=source_name, translations=translations,
         provenance=provenance, choices=choices, dry_run=True, confirm=False,
         backend=backend, limits=limits, progress_fn=progress_fn,
-        src_path=src_path, force_streaming=force_streaming)
+        src_path=src_path, force_streaming=force_streaming,
+        source_locale=source_locale)
 
 
 def apply_rebuild(source_bytes, *, source_name, translations,
                   provenance=None, choices=None, dry_run=True, confirm=False,
                   backend=None, limits=None, progress_fn=None, src_path=None,
                   force_streaming=False, out_dir=REBUILD_OUT_DIR,
-                  zip_path=REBUILD_ZIP_PATH):
+                  zip_path=REBUILD_ZIP_PATH, source_locale="en"):
     """Dieu phoi (E): preview (dry_run) hoac ap that (dry_run=False +
     confirm=True). Loi toan cuc raise (bridge tra _err); loi tung don
     vi vao refused, khong fail ca dot."""
@@ -663,6 +667,28 @@ def apply_rebuild(source_bytes, *, source_name, translations,
     planned_keys = set()
     sfs_by_unit: Dict[str, Any] = {}
     total_changes = 0
+    # M1 (G1): build mb_index 1 lan truoc Vong 1 tu SF cua TAT CA don vi
+    # (SharedTableData thuong nam o bundle khac StringTable — vd 9 Kings:
+    # shared o localization-assets-shared, ST o localization-string-tables
+    # — nen phai quet truoc, khong doi toi khi gap tung don vi). Liet ke
+    # that bai thi mb_index = {} (ST chi ghi entry da co, khong chen
+    # duoc key thieu; LS khong can mb_index).
+    mb_index: Dict[str, Dict[str, int]] = {}
+    try:
+        for (vpath, _kind) in _enumerate_units(source_bytes, be, lim):
+            key = vpath or "<file>"
+            if key not in sfs_by_unit:
+                try:
+                    sfs_by_unit[key] = _unit_sfs(source_bytes, vpath, be, lim)
+                except PB3Error:
+                    pass
+    except PB3Error:
+        pass
+    try:
+        mb_index = _plan.build_mb_shared_index(
+            [sf for lst in sfs_by_unit.values() for sf in lst])
+    except Exception:
+        mb_index = {}
     # Vong 1: lap plan moi don vi.
     unit_plans = []  # (group_unit, vpath, kind, plan)
     for group_unit in sorted(groups, key=lambda g: "" if g is None else str(g)):
@@ -691,7 +717,8 @@ def apply_rebuild(source_bytes, *, source_name, translations,
                 plan = _plan.build_plan(
                     source_bytes, grp["translations"],
                     source_bundle=source_name, entry=vpath,
-                    mode="REBUILD_SECTION", backend=be, limits=lim)
+                    mode="REBUILD_SECTION", backend=be, limits=lim,
+                    source_locale=source_locale, mb_index=mb_index)
             except ValueError:
                 continue  # don vi nay khong co key nao trung -> bo qua lang le o day, key se phan loai sau
             except PB3Error as exc:

@@ -1762,6 +1762,8 @@ _MB_RUN_RE = re.compile(
     rb"(?:[\x20-\x7E]|[\xC2-\xDF][\x80-\xBF]|[\xE0-\xEF][\x80-\xBF]{2}"
     rb"|[\xF0-\xF4][\x80-\xBF]{3}){3,}")
 _MB_HEADER_SIZE = 28  # PPtr m_GameObject (12) + m_Enabled (1) + đệm 3 + PPtr m_Script (12)
+# Đường dẫn field bảng I2 dạng "terms[i].values[j]" (dùng cho writer LS).
+_MB_PATH_RE = re.compile(r"^(\w+)\[(\d+)\]\.(\w+)\[(\d+)\]$")
 
 
 def _typetree_align4(pos):
@@ -1845,6 +1847,94 @@ def read_typetree_value(data, node, pos, endian="<"):
             raise PB3Error("E_CORRUPT", "đọc vượt quá dữ liệu (8 byte tại %d)"
                            % pos, where=where)
         return struct.unpack_from(endian + "q", data, pos)[0], pos + 8
+    raise PB3Error("E_CORRUPT", "node lá byte_size=%d (%s) chưa hiểu"
+                   % (node.byte_size, node.name), where=where)
+
+
+def write_typetree_value(writer, node, value, endian="<"):
+    """Ghi 1 giá trị theo node type tree — ảnh gương của read_typetree_value.
+
+    writer: _Writer (đang ở vị trí tương đối đầu object). value phải đúng
+    hình dạng read_typetree_value trả (dict/list/str/bytes/int/None):
+    struct -> dict, mảng -> list, chuỗi/byte[] -> str/bytes, lá số -> int
+    (float/double giữ nguyên bit pattern dạng int như lúc đọc).
+    Ghi đúng thứ tự + căn 4 như lúc đọc nên round-trip (đọc -> ghi, không
+    đổi) cho ra đúng bytes gốc. Không ghi trailing bytes (bên gọi tự giữ
+    raw[end:] sau khi ghi). Sai hình dạng -> PB3Error E_CORRUPT (không
+    đoán, không cắt cụt)."""
+    where = "MonoBehaviour"
+    if node.children:
+        if _typetree_is_array(node):
+            _size_node, elem = node.children[0].children
+            writer.align(4)
+            if elem.byte_size == 1 and not elem.children:
+                if isinstance(value, str):
+                    raw = value.encode("utf-8")
+                elif isinstance(value, (bytes, bytearray)):
+                    raw = bytes(value)
+                else:
+                    raise PB3Error("E_CORRUPT",
+                                   "node %r: mảng byte cần str/bytes, nhận %s"
+                                   % (node.name, type(value).__name__),
+                                   where=where)
+                writer.pack("i", len(raw))
+                writer.write(raw)
+                writer.align(4)
+                return
+            if not isinstance(value, list):
+                raise PB3Error("E_CORRUPT",
+                               "node %r: mảng cần list, nhận %s"
+                               % (node.name, type(value).__name__),
+                               where=where)
+            writer.pack("i", len(value))
+            for item in value:
+                writer.align(4)
+                write_typetree_value(writer, elem, item, endian)
+            return
+        if not isinstance(value, dict):
+            raise PB3Error("E_CORRUPT",
+                           "node %r: struct cần dict, nhận %s"
+                           % (node.name, type(value).__name__), where=where)
+        for c in node.children:
+            writer.align(4)
+            if c.name not in value:
+                raise PB3Error("E_CORRUPT",
+                               "node %r: thiếu field %r khi ghi"
+                               % (node.name, c.name), where=where)
+            write_typetree_value(writer, c, value[c.name], endian)
+        return
+    if node.byte_size == 0:
+        return
+    if node.byte_size == 1:
+        if isinstance(value, bool):
+            value = 1 if value else 0
+        if not isinstance(value, int) or not 0 <= value <= 255:
+            raise PB3Error("E_CORRUPT",
+                           "node %r: byte cần int 0-255, nhận %r"
+                           % (node.name, value), where=where)
+        writer.write(bytes([value]))
+        return
+    if node.byte_size == 2:
+        if not isinstance(value, int):
+            raise PB3Error("E_CORRUPT",
+                           "node %r: i16 cần int, nhận %r"
+                           % (node.name, value), where=where)
+        writer.pack("h", value)
+        return
+    if node.byte_size == 4:
+        if not isinstance(value, int):
+            raise PB3Error("E_CORRUPT",
+                           "node %r: i32 cần int, nhận %r"
+                           % (node.name, value), where=where)
+        writer.pack("i", value)
+        return
+    if node.byte_size == 8:
+        if not isinstance(value, int):
+            raise PB3Error("E_CORRUPT",
+                           "node %r: i64 cần int, nhận %r"
+                           % (node.name, value), where=where)
+        writer.pack("q", value)
+        return
     raise PB3Error("E_CORRUPT", "node lá byte_size=%d (%s) chưa hiểu"
                    % (node.byte_size, node.name), where=where)
 
@@ -2005,6 +2095,162 @@ def parse_language_source_bytes(raw, endian="<"):
     except (PB3Error, struct.error, ValueError, UnicodeDecodeError,
             IndexError, TypeError):
         return None
+
+
+def _ls_value_slots(raw, endian="<"):
+    """Vị trí từng chuỗi giá trị trong bảng I2 (byte-walk).
+
+    Đi đúng layout của parse_language_source_bytes, trả list slot theo
+    thứ tự xuất hiện: (term_index, lang_index, len_pos, str_start,
+    str_end_padded) với len_pos là vị trí i32 độ dài, str_start là đầu
+    chuỗi, str_end_padded là cuối vùng chuỗi đã căn 4 (đầu slot sau).
+    Không khớp layout -> None (bên gọi từ chối ghi)."""
+    try:
+        data = bytes(raw)
+        name = read_monobehaviour_name(data, endian)
+        if name is None:
+            return None
+        body_start = _MB_HEADER_SIZE + 4 + len(name.encode("utf-8"))
+        body_start += (-body_start) % 4
+        r = _Reader(data, endian, where="language_source")
+        r.pos = body_start
+        r.i32()
+        r.i32()
+        r.i32()
+        n_terms = r.i32()
+        if n_terms < 1 or n_terms > _LS_MAX_TERMS:
+            return None
+        slots = []
+        n_langs = None
+        for ti in range(n_terms):
+            _term = r.aligned_string()
+            r.i32()  # TermType
+            lang_count = r.i32()
+            if n_langs is None:
+                if lang_count < 1 or lang_count > _LS_MAX_LANGS:
+                    return None
+                n_langs = lang_count
+            elif lang_count != n_langs:
+                return None
+            for li in range(n_langs):
+                len_pos = r.pos
+                v = r.aligned_string()
+                # aligned_string đọc i32 + bytes + đệm: cuối vùng = pos sau khi đọc.
+                slots.append((ti, li, len_pos, len_pos + 4, r.pos))
+            flag_count = r.i32()
+            if flag_count != n_langs:
+                return None
+            r.read(flag_count)
+            r.align(4)
+            touch_count = r.i32()
+            if touch_count < 0 or touch_count > _LS_MAX_TOUCH:
+                return None
+            for _i in range(touch_count):
+                r.aligned_string()
+        return slots
+    except (PB3Error, struct.error, ValueError, UnicodeDecodeError,
+            IndexError, TypeError):
+        return None
+
+
+def write_language_source_bytes(raw, changes, endian="<"):
+    """Ghi lại bảng ngôn ngữ I2 KHÔNG có type tree (byte-walk).
+
+    changes: [{field_path, before, after}] với field_path dạng
+    "terms[i].values[j]" (i = chỉ số term, j = chỉ số cột ngôn ngữ).
+    Chỉ thay đúng các slot chuỗi đã chỉ định bằng segment-splice (giữ
+    nguyên mọi byte khác: flags, touch, ngôn ngữ, trailing). Chuỗi mới
+    phải là str, không chứa NUL, không vượt _LS_MAX_VALUE_CHARS.
+    Trả bytes mới; verify bằng cách parse lại (parse_language_source_bytes)
+    và đối chiếu từng giá trị đổi + toàn bộ giá trị không đổi.
+    Không khớp layout / term/cột lạ / before không khớp -> PB3Error."""
+    data = bytes(raw)
+    info = parse_language_source_bytes(data, endian)
+    if info is None:
+        raise PB3Error("E_UNSUPPORTED_FORMAT",
+                       "object không phải bảng ngôn ngữ I2 (byte-walk)",
+                       where="language_source")
+    slots = _ls_value_slots(data, endian)
+    if slots is None:
+        raise PB3Error("E_CORRUPT",
+                       "không xác định được vị trí chuỗi giá trị trong bảng I2",
+                       where="language_source")
+    by_slot = {(ti, li): (lp, ss, se) for (ti, li, lp, ss, se) in slots}
+    terms = info["terms"]
+    # Kiểm tra + chuẩn bị thay thế (theo thứ tự vị trí để splice 1 lần).
+    repl = {}  # len_pos -> bytes mới của cả slot (i32 + chuỗi + đệm)
+    for ch in changes or []:
+        fp = ch.get("field_path") or ""
+        m = _MB_PATH_RE.match(fp)
+        if not m or m.group(1) != "terms" or m.group(3) != "values":
+            raise PB3Error("E_CONFIG_INVALID",
+                           "field_path bảng I2 phải dạng terms[i].values[j], nhận %r"
+                           % fp, where="language_source")
+        ti, li = int(m.group(2)), int(m.group(4))
+        if ti < 0 or ti >= len(terms):
+            raise PB3Error("E_CONFIG_INVALID",
+                           "terms[%d] ngoài bảng I2 (%d term)"
+                           % (ti, len(terms)), where="language_source")
+        n_langs = len(info["languages"])
+        if li < 0 or li >= n_langs:
+            raise PB3Error("E_CONFIG_INVALID",
+                           "values[%d] ngoài bảng I2 (%d cột ngôn ngữ)"
+                           % (li, n_langs), where="language_source")
+        cur = terms[ti]["values"][li]
+        if ch.get("before") is not None and ch["before"] != cur:
+            raise PB3Error("E_CONFIG_INVALID",
+                           "terms[%d].values[%d] hiện là %r, khác before %r "
+                           "(dữ liệu đã đổi so với lúc lập plan)"
+                           % (ti, li, cur, ch["before"]),
+                           where="language_source")
+        new = ch.get("after")
+        if not isinstance(new, str) or "\x00" in new:
+            raise PB3Error("E_CONFIG_INVALID",
+                           "giá trị mới cho terms[%d].values[%d] phải là "
+                           "chuỗi không chứa NUL" % (ti, li),
+                           where="language_source")
+        raw_b = new.encode("utf-8")
+        if len(new) > _LS_MAX_VALUE_CHARS:
+            raise PB3Error("E_CONFIG_INVALID",
+                           "giá trị mới cho terms[%d].values[%d] dài %d ký tự, "
+                           "vượt giới hạn %d"
+                           % (ti, li, len(new), _LS_MAX_VALUE_CHARS),
+                           where="language_source")
+        lp, _ss, _se = by_slot[(ti, li)]
+        w = _Writer(endian)
+        w.aligned_string(new)
+        repl[lp] = w.bytes()
+    if not repl:
+        return data
+    out = bytearray()
+    pos = 0
+    for (ti, li, lp, ss, se) in slots:
+        if lp not in repl:
+            continue
+        out += data[pos:lp]
+        out += repl[lp]
+        pos = se
+    out += data[pos:]
+    new_data = bytes(out)
+    # Verify: parse lại + đối chiếu.
+    after = parse_language_source_bytes(new_data, endian)
+    if after is None:
+        raise PB3Error("E_VERIFY_FAILED",
+                       "bảng I2 sau khi ghi parse lại lỗi",
+                       where="language_source")
+    if after["languages"] != info["languages"] or len(after["terms"]) != len(terms):
+        raise PB3Error("E_VERIFY_FAILED",
+                       "bảng I2 sau khi ghi đổi cấu trúc (ngôn ngữ/số term)",
+                       where="language_source")
+    for ch in changes or []:
+        m = _MB_PATH_RE.match(ch["field_path"])
+        ti, li = int(m.group(2)), int(m.group(4))
+        if after["terms"][ti]["values"][li] != ch["after"]:
+            raise PB3Error("E_VERIFY_FAILED",
+                           "terms[%d].values[%d] sau khi ghi là %r, khác %r"
+                           % (ti, li, after["terms"][ti]["values"][li],
+                              ch["after"]), where="language_source")
+    return new_data
 
 
 def _ls_field(d, *names):
@@ -2190,6 +2436,349 @@ def read_monobehaviour_object(sf, path_id):
             val["m_Script"] = val.pop(names[2])
             val["m_Name"] = val.pop(names[3])
     return val
+
+
+def _mb_path_parts(path):
+    """'a.b[2].c' -> ['a', 'b', 2, 'c']; '[+]' cuối = append phần tử mới.
+    Sai cú pháp -> ValueError."""
+    if not isinstance(path, str) or not path:
+        raise ValueError("field_path phải là chuỗi không rỗng")
+    parts = []
+    i = 0
+    n = len(path)
+    while i < n:
+        ch = path[i]
+        if ch == ".":
+            i += 1
+            continue
+        if ch == "[":
+            j = path.index("]", i)
+            inner = path[i + 1:j]
+            if inner == "+":
+                parts.append("+")
+            else:
+                try:
+                    parts.append(int(inner))
+                except ValueError:
+                    raise ValueError("field_path %r: chỉ số mảng %r không hợp lệ"
+                                     % (path, inner))
+            i = j + 1
+            continue
+        j = i
+        while j < n and path[j] not in ".[":
+            j += 1
+        if j == i:
+            raise ValueError("field_path %r sai cú pháp" % path)
+        parts.append(path[i:j])
+        i = j
+    if not parts:
+        raise ValueError("field_path %r sai cú pháp" % path)
+    return parts
+
+
+def _mb_path_get(container, parts, where="MonoBehaviour"):
+    """Lấy giá trị lá theo đường dẫn (dict/list). Không tìm thấy -> PB3Error."""
+    cur = container
+    for p in parts:
+        try:
+            if isinstance(p, int):
+                if not isinstance(cur, list) or p < 0 or p >= len(cur):
+                    raise IndexError
+                cur = cur[p]
+            else:
+                if not isinstance(cur, dict) or p not in cur:
+                    raise KeyError(p)
+                cur = cur[p]
+        except (IndexError, KeyError, TypeError):
+            raise PB3Error("E_CONFIG_INVALID",
+                           "không tìm thấy field %r trong object MonoBehaviour"
+                           % ".".join(str(x) for x in parts), where=where)
+    return cur
+
+
+def _mb_path_set(container, parts, new_value, where="MonoBehaviour"):
+    """Đặt giá trị lá theo đường dẫn (đã đi qua _mb_path_get để kiểm tra)."""
+    cur = container
+    for p in parts[:-1]:
+        cur = cur[p] if isinstance(p, int) else cur[p]
+    last = parts[-1]
+    if isinstance(last, int):
+        cur[last] = new_value
+    else:
+        cur[last] = new_value
+
+
+def _typetree_default(node):
+    """Giá trị mặc định cho 1 node type tree (dùng khi chèn phần tử mảng mới):
+    chuỗi/byte[] -> "", mảng khác -> [], struct -> dict con, lá số -> 0,
+    lá byte_size 0 -> None."""
+    if node.children:
+        if _typetree_is_array(node):
+            _size_node, elem = node.children[0].children
+            if elem.byte_size == 1 and not elem.children:
+                return ""
+            return []
+        return {c.name: _typetree_default(c) for c in node.children}
+    if node.byte_size == 0:
+        return None
+    return 0
+
+
+def write_monobehaviour_object_bytes(sf, path_id, changes):
+    """Trả bytes mới của 1 MonoBehaviour CÓ type tree sau khi áp changes.
+
+    changes: [{field_path, before, after, element?}] với field_path theo
+    dạng _flatten_typetree_strings ("a.b[2].c"; chấp nhận cả tên chuẩn
+    m_GameObject/m_Enabled/m_Script/m_Name lẫn tên gốc của 4 field đầu).
+    Chỉ cho phép đổi lá chuỗi (str/bytes); before phải khớp giá trị hiện
+    tại (không khớp -> từ chối, không đoán).
+    field_path dạng "arr[+]" (kèm "element" là dict phần tử đầy đủ) sẽ
+    CHÈN 1 phần tử mới vào cuối mảng (dùng cho StringTable thiếu entry).
+    Trả (new_bytes, applied) với applied = [{field_path, before, after}].
+    Round-trip không đổi (changes rỗng) cho ra đúng bytes gốc (giữ nguyên
+    trailing bytes raw[end:]). Lỗi -> PB3Error."""
+    o = sf.get_object(path_id)
+    if o.class_id != 114:
+        raise PB3Error("E_CONFIG_INVALID", "object %d không phải MonoBehaviour"
+                       % path_id, where=sf.where + "::%d" % path_id)
+    typ = sf.types[o.type_id]
+    if typ.node is None:
+        raise PB3Error("E_UNSUPPORTED_FORMAT",
+                       "MonoBehaviour path_id=%d không có type tree (dùng "
+                       "đường byte-walk riêng cho bảng I2, hoặc scan-path "
+                       "chưa hỗ trợ ghi)" % path_id,
+                       where=sf.where + "::%d" % path_id)
+    raw = sf.object_bytes(path_id)
+    val, end = read_typetree_value(raw, typ.node, 0, sf.endian)
+    if not isinstance(val, dict):
+        raise PB3Error("E_CORRUPT",
+                       "MonoBehaviour path_id=%d: gốc type tree không phải struct"
+                       % path_id, where=sf.where + "::%d" % path_id)
+    # read_monobehaviour_object đổi tên 4 field đầu thành m_GameObject/
+    # m_Enabled/m_Script/m_Name; writer đọc bằng tên GỐC nên dịch ngược
+    # các tên chuẩn đó về tên gốc (đường dẫn từ monobehaviour_write_targets
+    # dùng tên chuẩn; các field khác không đổi).
+    rename = {}
+    children = typ.node.children
+    if len(children) >= 4:
+        c0, c1, c2, c3 = children[0], children[1], children[2], children[3]
+        pptr = (lambda c: len(c.children) == 2
+                and [g.name for g in c.children] == ["m_FileID", "m_PathID"])
+        if (pptr(c0) and c1.byte_size == 1 and not c1.children
+                and pptr(c2) and isinstance(val.get(c3.name), str)):
+            rename = {"m_GameObject": c0.name, "m_Enabled": c1.name,
+                      "m_Script": c2.name, "m_Name": c3.name}
+    applied = []
+    for ch in changes or []:
+        fp = ch.get("field_path") or ""
+        try:
+            parts = _mb_path_parts(fp)
+        except ValueError as exc:
+            raise PB3Error("E_CONFIG_INVALID", str(exc),
+                           where=sf.where + "::%d" % path_id)
+        if rename:
+            parts = [rename.get(p, p) if isinstance(p, str) else p
+                     for p in parts]
+        if parts and parts[-1] == "+":
+            # Chèn phần tử mới vào cuối mảng.
+            arr = _mb_path_get(val, parts[:-1],
+                               where=sf.where + "::%d" % path_id)
+            if not isinstance(arr, list):
+                raise PB3Error("E_CONFIG_INVALID",
+                               "field_path %r: đích chèn không phải mảng"
+                               % fp, where=sf.where + "::%d" % path_id)
+            element = ch.get("element")
+            if not isinstance(element, dict):
+                raise PB3Error("E_CONFIG_INVALID",
+                               "field_path %r: chèn phần tử cần 'element' "
+                               "là dict đầy đủ" % fp,
+                               where=sf.where + "::%d" % path_id)
+            arr.append(copy.deepcopy(element))
+            applied.append({"field_path": fp, "before": None,
+                            "after": ch.get("after")})
+            continue
+        cur = _mb_path_get(val, parts, where=sf.where + "::%d" % path_id)
+        if not isinstance(cur, (str, bytes)):
+            raise PB3Error("E_CONFIG_INVALID",
+                           "field_path %r: giá trị hiện tại không phải chuỗi "
+                           "(%s) — chỉ ghi được lá chuỗi"
+                           % (fp, type(cur).__name__),
+                           where=sf.where + "::%d" % path_id)
+        if ch.get("before") is not None and ch["before"] != cur:
+            raise PB3Error("E_CONFIG_INVALID",
+                           "field_path %r hiện là %r, khác before %r (dữ liệu "
+                           "đã đổi so với lúc lập plan)"
+                           % (fp, cur, ch["before"]),
+                           where=sf.where + "::%d" % path_id)
+        new = ch.get("after")
+        if not isinstance(new, str):
+            raise PB3Error("E_CONFIG_INVALID",
+                           "field_path %r: giá trị mới phải là chuỗi, nhận %s"
+                           % (fp, type(new).__name__),
+                           where=sf.where + "::%d" % path_id)
+        if isinstance(cur, bytes):
+            new_val = new.encode("utf-8")
+        else:
+            new_val = new
+        _mb_path_set(val, parts, new_val)
+        applied.append({"field_path": fp, "before": cur, "after": new})
+    w = _Writer(sf.endian)
+    write_typetree_value(w, typ.node, val, sf.endian)
+    head = w.bytes()
+    # Verify trong writer: parse lại head, đối chiếu toàn bộ dict đã sửa
+    # (kiểm tra layout/căn của writer khớp reader; độ dài head được phép
+    # khác end gốc khi chuỗi đổi độ dài — trailing giữ nguyên sau head mới).
+    check, check_end = read_typetree_value(head, typ.node, 0, sf.endian)
+    if check != val or check_end != len(head):
+        raise PB3Error("E_CORRUPT",
+                       "ghi MonoBehaviour path_id=%d: parse lại head sau khi "
+                       "ghi không khớp dict đã sửa (writer lệch layout)"
+                       % path_id, where=sf.where + "::%d" % path_id)
+    return head + raw[end:], applied
+
+
+def monobehaviour_write_targets(sf, source_locale="en", shared_index=None):
+    """Liệt kê chuỗi ghi được trong mọi MonoBehaviour của 1 SerializedFile.
+
+    Trả list {path_id, kind, name, key, field_path, before, element?}:
+    - language_source (không type tree, byte-walk): mỗi term -> values[cột
+      của source_locale]; key = tên term; field_path "terms[i].values[j]".
+      Không có cột source_locale -> bỏ qua object kèm lý do trong notes.
+    - string_table (có type tree): mỗi entry -> m_Localized; key =
+      "Collection/Key" (tra ngược từ shared_index {collection: {key: m_Id}});
+      field_path "m_TableData[i].m_Localized". Entry thiếu trong shared_index
+      thì bỏ qua (không đặt được tên key).
+    - generic (có type tree): mọi lá chuỗi theo _flatten_typetree_strings
+      (key = field_path); chỉ để dùng trực tiếp — build_plan v1 KHÔNG lập
+      entry generic (key không khớp output trích xuất đã gộp).
+    - SharedTableData / Locale / language_source CÓ type tree: bỏ qua ở v1
+      (xem NOTES.md) — target không liệt kê, plan phân loại monobehaviour.
+    shared_index: {collection: {key: m_Id}} (từ mọi SharedTableData trong
+    source); thiếu thì StringTable vẫn liệt kê nhưng key là None (plan bỏ qua).
+    Trả (targets, notes) với notes = [lý do bỏ qua]."""
+    targets = []
+    notes = []
+    rev = {}
+    if shared_index:
+        for coll, keys in (shared_index or {}).items():
+            for k, mid in (keys or {}).items():
+                rev[mid] = (coll, k)
+    for o in sf.objects:
+        if o.class_id != 114:
+            continue
+        try:
+            typ = sf.types[o.type_id]
+        except IndexError:
+            continue
+        if typ.node is not None:
+            try:
+                val = read_monobehaviour_object(sf, o.path_id)
+            except PB3Error:
+                continue
+            name = val.get("m_Name") if isinstance(val.get("m_Name"), str) else ""
+            if "m_TableData" in val and "m_LocaleId" in val:
+                loc = val.get("m_LocaleId")
+                code = loc.get("m_Code") if isinstance(loc, dict) else None
+                if code != source_locale:
+                    continue
+                for i, e in enumerate(val.get("m_TableData") or []):
+                    if not (isinstance(e, dict)
+                            and isinstance(e.get("m_Id"), int)
+                            and isinstance(e.get("m_Localized"), str)):
+                        continue
+                    hit = rev.get(e["m_Id"])
+                    if hit is None:
+                        continue
+                    coll, key = hit
+                    targets.append({"path_id": o.path_id, "kind": "string_table",
+                                    "name": name or "", "key": "%s/%s" % (coll, key),
+                                    "field_path": "m_TableData[%d].m_Localized" % i,
+                                    "before": e["m_Localized"]})
+                continue
+            if "m_Entries" in val and "m_TableCollectionName" in val:
+                continue  # SharedTableData: key, không phải text dịch
+            if "m_Identifier" in val:
+                continue  # Locale: không phải text dịch
+            ls = language_source_from_fields(val)
+            if ls is not None:
+                notes.append("MonoBehaviour path_id=%d: bảng ngôn ngữ CÓ type "
+                             "tree — đường ghi typetree cho bảng này chưa hỗ trợ "
+                             "ở v1 (chỉ hỗ trợ byte-walk)" % o.path_id)
+                continue
+            fields = {}
+            _flatten_typetree_strings(val, "", fields)
+            for fp, s in fields.items():
+                targets.append({"path_id": o.path_id, "kind": "generic",
+                                "name": name or "", "key": fp,
+                                "field_path": fp, "before": s})
+        else:
+            try:
+                raw = sf.object_bytes(o.path_id)
+            except PB3Error:
+                continue
+            ls = parse_language_source_bytes(raw, sf.endian)
+            if ls is None:
+                continue
+            name = ls.get("name") or ""
+            langs = ls.get("languages") or []
+            col = None
+            for idx, lang in enumerate(langs):
+                if lang.get("code") == source_locale:
+                    col = idx
+                    break
+            if col is None:
+                notes.append("MonoBehaviour path_id=%d (%s): bảng I2 không có "
+                             "cột %r — không ghi được" % (o.path_id, name, source_locale))
+                continue
+            for i, term in enumerate(ls.get("terms") or []):
+                vals = term.get("values") or []
+                if col >= len(vals):
+                    continue
+                targets.append({"path_id": o.path_id, "kind": "language_source",
+                                "name": name, "key": term.get("term"),
+                                "field_path": "terms[%d].values[%d]" % (i, col),
+                                "before": vals[col]})
+    return targets, notes
+
+
+def string_table_element_template(sf, path_id, m_id, localized):
+    """Dict phần tử m_TableData mới cho 1 StringTable (để chèn entry thiếu).
+
+    Mẫu: deep-copy entry đầu tiên (giữ nguyên cấu trúc m_Metadata...),
+    đổi m_Id/m_Localized. Bảng rỗng (0 entry): dựng mặc định từ node
+    phần tử của m_TableData (_typetree_default). Không đúng cấu trúc
+    (không phải StringTable / thiếu m_Id/m_Localized) -> None."""
+    try:
+        o = sf.get_object(path_id)
+        typ = sf.types[o.type_id]
+    except (PB3Error, IndexError):
+        return None
+    if typ.node is None:
+        return None
+    try:
+        val = read_monobehaviour_object(sf, path_id)
+    except PB3Error:
+        return None
+    rows = val.get("m_TableData")
+    if isinstance(rows, list) and rows:
+        el = copy.deepcopy(rows[0])
+        if not isinstance(el, dict) or "m_Id" not in el \
+                or "m_Localized" not in el:
+            return None
+        el["m_Id"] = m_id
+        el["m_Localized"] = localized
+        return el
+    for c in typ.node.children:
+        if c.name == "m_TableData" and _typetree_is_array(c):
+            elem_node = c.children[0].children[1]
+            el = _typetree_default(elem_node)
+            if not isinstance(el, dict) or "m_Id" not in el \
+                    or "m_Localized" not in el:
+                return None
+            el["m_Id"] = m_id
+            el["m_Localized"] = localized
+            return el
+    return None
 
 
 def _parse_typetree_blob(reader, version, where):
@@ -3299,6 +3888,328 @@ def apply_patch(req):
         size_before=len(data), size_after=len(out_bytes),
         old_script_len=len(script_b), new_script_len=len(new_script_b),
         occurrences=occurrences)
+    return PatchResult(output_bytes=out_bytes, unit=unit, write_mode_used=mode,
+                       report=report, verified=True, verify_details=verify_details)
+
+
+@dataclass
+class MbPatchRequest:
+    """Yêu cầu patch 1 MonoBehaviour (language_source / string_table / generic).
+
+    data: bytes file gốc (bundle hoặc assets độc lập). kind: "bundle"|"assets".
+    entry: tên entry trong bundle (bắt buộc khi kind="bundle").
+    path_id: path_id của MonoBehaviour cần ghi.
+    changes: [{field_path, before, after, element?}] — field_path theo
+      monobehaviour_write_targets ("terms[i].values[j]" cho bảng I2,
+      "m_TableData[i].m_Localized" cho StringTable, "a.b[2].c" cho generic;
+      "arr[+]" kèm "element" để chèn phần tử mảng mới).
+    write_mode: chỉ "REBUILD_SECTION" ở v1 (PATCH_INPLACE chưa hỗ trợ cho
+      MonoBehaviour — object đổi độ dài khi chuỗi đổi; REBUILD_SECTION
+      dựng lại data section, giữ nguyên metadata ngoài object table).
+    backend/limits/temp_dir/from_container/apply/verify: như PatchRequest."""
+    data: bytes
+    kind: str
+    entry: Optional[str] = None
+    path_id: int = 0
+    changes: Optional[List[dict]] = None
+    write_mode: str = "REBUILD_SECTION"
+    backend: Optional[UnityBackend] = None
+    limits: Optional[Limits] = None
+    temp_dir: Optional[str] = None
+    from_container: bool = False
+    apply: bool = True
+    verify: bool = True
+
+
+def _verify_mb_values(sf, path_id, changes):
+    """Kiểm tra giá trị từng change sau khi ghi (đọc lại object, đối chiếu).
+
+    Typetree: đọc bằng read_monobehaviour_object (tên chuẩn) rồi đi theo
+    field_path; "arr[+]" kiểm tra phần tử cuối mảng khớp subset "element".
+    Bảng I2: parse_language_source_bytes, đối chiếu terms[i].values[j].
+    Trả (ok, [chi tiết])."""
+    details = []
+    ok = True
+    o = sf.get_object(path_id)
+    typ = sf.types[o.type_id]
+    raw = sf.object_bytes(path_id)
+    if typ.node is not None:
+        try:
+            val = read_monobehaviour_object(sf, path_id)
+        except PB3Error as exc:
+            return False, ["object %d đọc lại lỗi: %s" % (path_id, exc.code)]
+        # Đếm trước tổng số append theo từng mảng: phần tử của change append
+        # thứ j (theo thứ tự changes) nằm ở vị trí len(arr)-total+j.
+        append_total = {}
+        for ch in changes or []:
+            fp = ch.get("field_path") or ""
+            try:
+                parts = _mb_path_parts(fp)
+            except ValueError:
+                continue
+            if parts and parts[-1] == "+":
+                key = tuple(str(p) for p in parts[:-1])
+                append_total[key] = append_total.get(key, 0) + 1
+        append_seen = {}
+        for ch in changes or []:
+            fp = ch.get("field_path") or ""
+            try:
+                parts = _mb_path_parts(fp)
+            except ValueError as exc:
+                return False, ["field_path %r sai cú pháp: %s" % (fp, exc)]
+            if parts and parts[-1] == "+":
+                try:
+                    arr = _mb_path_get(val, parts[:-1],
+                                       where=sf.where + "::%d" % path_id)
+                except PB3Error:
+                    ok = False
+                    details.append("field_path %r: không tìm thấy mảng đích "
+                                   "sau khi ghi" % fp)
+                    continue
+                if not isinstance(arr, list) or not arr:
+                    ok = False
+                    details.append("field_path %r: mảng đích rỗng sau khi ghi"
+                                   % fp)
+                    continue
+                key = tuple(str(p) for p in parts[:-1])
+                idx = append_seen.get(key, 0)
+                append_seen[key] = idx + 1
+                pos = len(arr) - append_total[key] + idx
+                last = arr[pos] if 0 <= pos < len(arr) else None
+                if last is None:
+                    ok = False
+                    details.append("field_path %r: không tìm thấy phần tử chèn "
+                                   "thứ %d sau khi ghi" % (fp, idx))
+                    continue
+                element = ch.get("element") or {}
+                bad = [k for k, v in element.items()
+                       if not (isinstance(last, dict) and last.get(k) == v)]
+                if bad:
+                    ok = False
+                    details.append("field_path %r: phần tử chèn sau khi ghi "
+                                   "khác ở field %s" % (fp, bad))
+                elif ch.get("after") is not None and isinstance(last, dict):
+                    loc = last.get("m_Localized")
+                    if loc is not None and loc != ch["after"]:
+                        ok = False
+                        details.append("field_path %r: m_Localized sau khi ghi "
+                                       "là %r, khác %r" % (fp, loc, ch["after"]))
+                continue
+            try:
+                cur = _mb_path_get(val, parts,
+                                   where=sf.where + "::%d" % path_id)
+            except PB3Error:
+                ok = False
+                details.append("field_path %r: không tìm thấy sau khi ghi" % fp)
+                continue
+            want = ch.get("after")
+            if isinstance(cur, bytes):
+                cur = cur.decode("utf-8", "replace")
+            if cur != want:
+                ok = False
+                details.append("field_path %r sau khi ghi là %r, khác %r"
+                               % (fp, cur, want))
+        return ok, details
+    info = parse_language_source_bytes(raw, sf.endian)
+    if info is None:
+        return False, ["object %d: bảng I2 sau khi ghi parse lại lỗi" % path_id]
+    for ch in changes or []:
+        fp = ch.get("field_path") or ""
+        m = _MB_PATH_RE.match(fp)
+        if not m:
+            ok = False
+            details.append("field_path %r không đúng dạng terms[i].values[j]"
+                           % fp)
+            continue
+        ti, li = int(m.group(2)), int(m.group(4))
+        terms = info.get("terms") or []
+        if ti >= len(terms) or li >= len(terms[ti].get("values") or []):
+            ok = False
+            details.append("field_path %r ngoài bảng I2 sau khi ghi" % fp)
+            continue
+        cur = terms[ti]["values"][li]
+        if cur != ch.get("after"):
+            ok = False
+            details.append("terms[%d].values[%d] sau khi ghi là %r, khác %r"
+                           % (ti, li, cur, ch.get("after")))
+    return ok, details
+
+
+def _mb_object_kind(sf, path_id):
+    """Phân loại MonoBehaviour: language_source / string_table / generic."""
+    o = sf.get_object(path_id)
+    typ = sf.types[o.type_id]
+    raw = sf.object_bytes(path_id)
+    if typ.node is None:
+        if parse_language_source_bytes(raw, sf.endian) is not None:
+            return "language_source"
+        return "generic"
+    try:
+        val = read_monobehaviour_object(sf, path_id)
+    except PB3Error:
+        return "generic"
+    if "m_TableData" in val and "m_LocaleId" in val:
+        return "string_table"
+    return "generic"
+
+
+def apply_monobehaviour_patch(req):
+    """Patch 1 MonoBehaviour bằng REBUILD_SECTION; trả PatchResult (đã verify).
+
+    Đơn vị đầu ra nhỏ nhất như apply_patch: assets độc lập -> chính file
+    đó; trong bundle -> chỉ bundle đó (KHÔNG đóng gói lại IPA ngoài).
+    V1 chỉ hỗ trợ REBUILD_SECTION; PATCH_INPLACE/REBUILD_ALL bị từ chối
+    với lý do rõ ràng. Verify 2 lớp: cấu trúc (_verify_assets: chỉ đúng
+    object đổi, metadata giữ nguyên, thứ tự giữ nguyên) + giá trị từng
+    change (_verify_mb_values: đọc lại object, đối chiếu từng field).
+    Không đạt -> E_VERIFY_FAILED, bản ứng viên giữ tại temp_dir nếu có."""
+    if req.write_mode != "REBUILD_SECTION":
+        raise PB3Error("E_WRITE_DISABLED",
+                       "MonoBehaviour v1 chỉ hỗ trợ REBUILD_SECTION "
+                       "(nhận %s); PATCH_INPLACE/REBUILD_ALL chưa hỗ trợ "
+                       "cho MonoBehaviour" % req.write_mode,
+                       where=req.entry or req.kind)
+    backend = req.backend or UnityBackend("AUTO", req.limits)
+    lim = req.limits or backend.limits
+    data = bytes(req.data)
+    changes = req.changes or []
+    if not changes:
+        raise PB3Error("E_CONFIG_INVALID", "patch MonoBehaviour cần changes "
+                       "không rỗng", where=req.entry or req.kind)
+    if req.path_id is None:
+        raise PB3Error("E_CONFIG_INVALID", "patch MonoBehaviour cần path_id "
+                       "(path_id là i64 có dấu, âm vẫn hợp lệ)",
+                       where=req.entry or req.kind)
+    if req.kind == "bundle":
+        if not req.entry:
+            raise PB3Error("E_CONFIG_INVALID", "patch trong bundle cần tên entry",
+                           where=req.kind)
+        bundle = parse_bundle(data, backend, lim, where="bundle")
+        if bundle.version >= 9:
+            raise PB3Error(
+                "E_UNSUPPORTED_FORMAT",
+                "bundle UnityFS v9 chỉ đọc — chưa hỗ trợ patch (ghi lại "
+                "bundle v9 chưa được hỗ trợ)",
+                message_vi="Bundle UnityFS v9 chỉ đọc — chưa hỗ trợ patch.",
+                where="bundle")
+        before_snap = _snapshot_bundle(bundle)
+        assets_bytes = bundle.get_entry(req.entry)
+        sf = parse_serialized(assets_bytes, lim, where=req.entry)
+        unit = "bundle"
+    elif req.kind == "assets":
+        bundle = None
+        before_snap = None
+        sf = parse_serialized(data, lim, where="assets")
+        assets_bytes = data
+        unit = "assets"
+    else:
+        raise PB3Error("E_CONFIG_INVALID", "kind phải là bundle|assets", where=req.kind)
+    pid = req.path_id
+    try:
+        o = sf.get_object(pid)
+    except PB3Error:
+        raise PB3Error("E_CONFIG_INVALID", "không có object path_id=%d" % pid,
+                       where=req.entry or req.kind)
+    if o.class_id != 114:
+        raise PB3Error("E_CONFIG_INVALID",
+                       "object path_id=%d không phải MonoBehaviour (class %d)"
+                       % (pid, o.class_id), where=req.entry or req.kind)
+    old_obj_data = sf.object_bytes(pid)
+    name = read_monobehaviour_name(old_obj_data, sf.endian) or ""
+    kind = _mb_object_kind(sf, pid)
+    if sf.types[o.type_id].node is not None:
+        new_obj_data, applied = write_monobehaviour_object_bytes(sf, pid, changes)
+    else:
+        new_obj_data = write_language_source_bytes(old_obj_data, changes, sf.endian)
+        applied = [{"field_path": ch.get("field_path"), "before": ch.get("before"),
+                    "after": ch.get("after")} for ch in changes]
+    pad_note = []
+    mode = "REBUILD_SECTION"
+    if req.apply:
+        new_assets = _rebuild_assets_section(sf, pid, {pid: new_obj_data})
+    else:
+        new_assets = assets_bytes
+    if unit == "bundle":
+        new_entries = []
+        for e in bundle.entries:
+            new_entries.append((e.name, e.flags,
+                                new_assets if e.name == req.entry
+                                else bundle.get_entry(e.name)))
+        rebuild_compression = ("none" if bundle.compression_name == "zstd"
+                               else bundle.compression_name)
+        out_bytes = build_bundle(new_entries, version=bundle.version,
+                                 unity_version=bundle.unity_version,
+                                 unity_revision=bundle.unity_revision,
+                                 compression=rebuild_compression,
+                                 blocks_info_at_end=bundle.blocks_info_at_end,
+                                 extra_data_flags=bundle.data_flags & FLAG_OLD_WEB,
+                                 pad_block_data=bundle.uses_padding,
+                                 backend=backend, limits=lim)
+    else:
+        out_bytes = new_assets
+    # ---- diffverify: cấu trúc + giá trị (chỉ khi đã áp dụng; dry-run
+    # apply=False thì output = input, không có gì để verify)
+    verify_details = []
+    verified = True
+    if req.verify and req.apply:
+        if unit == "assets":
+            after_sf = parse_serialized(out_bytes, lim, where="assets::after")
+        else:
+            after_bundle = parse_bundle(out_bytes, backend, lim,
+                                        where="bundle::after")
+            after_assets = after_bundle.get_entry(req.entry)
+            after_sf = parse_serialized(after_assets, lim,
+                                        where="bundle::after::assets")
+        ok, details = _verify_assets(_snapshot_assets(sf), after_sf, {pid},
+                                     {}, mode)
+        verify_details.extend(details)
+        verified = ok
+        ok2, details2 = _verify_mb_values(after_sf, pid, changes)
+        verify_details.extend(details2)
+        verified = verified and ok2
+        if unit == "bundle":
+            after_snap = _snapshot_bundle(after_bundle)
+            changed_entries = {n for n in before_snap["entries"]
+                               if before_snap["entries"].get(n)
+                               != after_snap["entries"].get(n)}
+            changed_entries.update(n for n in after_snap["entries"]
+                                   if n not in before_snap["entries"])
+            if changed_entries != {req.entry}:
+                verified = False
+                verify_details.append("entry bundle đổi %s != dự kiến {%s}"
+                                      % (sorted(changed_entries), req.entry))
+            if before_snap["order"] != after_snap["order"]:
+                verified = False
+                verify_details.append("thứ tự entry bundle thay đổi")
+    if not verified:
+        if req.temp_dir:
+            import os
+            os.makedirs(req.temp_dir, exist_ok=True)
+            tmp_path = os.path.join(req.temp_dir, "patch-failed.bin")
+            with open(tmp_path, "wb") as fh:
+                fh.write(out_bytes)
+            verify_details.append("bản ứng viên giữ tại %s" % tmp_path)
+        raise PB3Error("E_VERIFY_FAILED",
+                       "xác minh sau khi ghi không đạt: %s" % "; ".join(verify_details),
+                       where="path_id=%d" % pid)
+    if not req.apply:
+        verify_details.append("dry-run: chưa áp dụng (output = input)")
+        verified = False
+    if req.from_container and unit == "bundle":
+        pad_note.append("đơn vị là bundle trong container/IPA: sau khi thay file "
+                        "cần ký lại (re-sign) gói ngoài thì game mới nhận "
+                        "(đặc tả 11.1); PB3 không tự ký lại.")
+    report = PatchReport(
+        target="%s%s path_id=%d (%s, %s)" % (unit, ("::" + req.entry) if req.entry else "",
+                                            pid, name, kind),
+        write_mode=req.write_mode, write_mode_used=mode,
+        backend_mode=backend.mode,
+        backend_decisions=_dedupe(backend.decisions),
+        warnings=pad_note,
+        changed=[req.entry] if unit == "bundle" else ["path_id=%d" % pid],
+        size_before=len(data), size_after=len(out_bytes),
+        old_script_len=len(old_obj_data), new_script_len=len(new_obj_data),
+        occurrences=len(applied))
     return PatchResult(output_bytes=out_bytes, unit=unit, write_mode_used=mode,
                        report=report, verified=True, verify_details=verify_details)
 
