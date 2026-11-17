@@ -144,6 +144,49 @@
   lần (kích hoạt SW mới), rồi tải lại lần nữa (hoặc đóng tab/mở lại) để
   chạy code mới; nếu vẫn ra kết quả cũ thì xóa dữ liệu trang rồi mở lại.
 
+### Sắp thứ tự key StringTable theo asset (khớp file mẫu byte-identical) — XONG 2026-11-17 [ĐÃ ĐO THẬT] (nhánh `fix/st-order`, chưa gộp vào main — chờ PR/duyệt)
+
+- Vấn đề: sau BUG#2, nội dung 9 Kings v1.0.6 đã khớp mẫu 100% (2.252
+  key/locale) nhưng thứ tự 102 key StringTable (dạng `Collection/Key`,
+  vị trí 2150–2251) còn lệch mẫu: collection xếp theo chữ cái
+  (Buildings, CommonTexts, Kings, Policies, Spells, Troops) thay vì
+  (Policies, Buildings, CommonTexts, Kings, Spells, Troops); trong
+  Buildings/Spells, nhóm key `_desc` lệch vị trí.
+- Nguyên nhân gốc [ĐÃ ĐO THẬT] (đo trên IPA 9K v1.0.6 + file mẫu):
+  file mẫu xếp key trong mỗi collection theo **m_Id tăng dần của
+  SharedTableData** (đúng cả 6 collection; 2 collection phân biệt
+  Buildings/Spells — thứ tự asset của StringTable lẫn SharedTableData
+  đều khác mẫu, chỉ sort theo m_Id mới khớp), và xếp collection theo
+  **lần gặp đầu trong SharedTableData**. Code cũ giữ thứ tự asset của
+  bảng StringTable từng locale, `sorted(grouped.items())` xếp
+  collection theo chữ cái, và `_fill_string_table_universe` dồn key
+  điền "" xuống cuối bucket (mẫu để `Spells/Cemetery_Desc` giữa khối).
+- Sửa (`pb3/sdk/extraction.py`): helper `_st_key_sort_id` /
+  `_sort_st_bucket` / `_invert_shared_keys`; `join_string_tables_grouped`
+  sắp mỗi bucket theo m_Id (key `id_<m_Id>` sắp theo số trong tên);
+  `_fill_string_table_universe` sắp lại bucket theo m_Id sau khi điền
+  và xếp collection theo lần gặp đầu trong SharedTableData; vòng duyệt
+  grouped trong `_build_layers` bỏ `sorted()` theo chữ cái. Quy tắc
+  chung theo dữ liệu asset, không hardcode game/build. Harness
+  `exp/verify_bug2_merge.py` bổ sung check thứ tự key + md5 file thô
+  (dict == cũ không kiểm thứ tự). `CACHE_VERSION` v23→**v25-20261117**
+  (`extraction.py` nằm trong precache) + đồng bộ mọi kỳ vọng version ở
+  20 file exp. LƯU Ý: v24 đã bị PR #5 (prefetch gzip, chưa gộp) chiếm —
+  nhánh này dùng v25 để tránh hai PR cùng v24 khiến sw.js sau gộp
+  giống hệt byte với bản live và trình duyệt không cập nhật code mới;
+  khi gộp PR #5 và PR này sẽ xung đột ở sw.js + file kỳ vọng version,
+  giữ v25 khi giải quyết.
+- Kiểm chứng [ĐÃ ĐO THẬT]: trích xuất lại IPA 9K v1.0.6 bằng code sau
+  sửa, `en.json` md5 file thô **4c22c9ebcdd04cc21c7f3f4a4952e955** —
+  **giống hệt file mẫu** (byte-identical, 142.098 B); zh-TW thứ tự key
+  giống mẫu, chỉ khác đúng 26 key Policies fallback; zh-CN 2.252 key
+  cùng tập key. Harness `exp/verify_bug2_merge.py` PASS 4/4 (kèm check
+  thứ tự/md5 mới). Smoke 59/59; full suite 0 đỏ mới (xem báo cáo cuối
+  nhánh). 4 test mới trong `pb3/tests/test_bug2_merge.py`
+  (`StringTableOrderCase`) khóa đúng 3 quy tắc thứ tự.
+- Sau khi bản v25 lên live, user trên Safari cần tải lại trang 2 lần
+  (kích hoạt SW mới rồi chạy code mới) như các bản trước.
+
 ### P0-3 (trích xuất cấu trúc bảng ngôn ngữ + StringTable, lọc rác, conflicts) — XONG 2026-11-17 [ĐÃ ĐO THẬT] (commit `f88934c5`, PR #3, gộp vào main `fead921f`)
 
 - Parser cấu trúc bảng ngôn ngữ của game (`pb3/sdk/unity.py`, kind mới
