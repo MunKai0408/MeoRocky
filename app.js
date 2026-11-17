@@ -2596,6 +2596,10 @@ $("btn-mod-patch-pack").addEventListener("click", async () => {
 // Thẻ "Thay Text" (thao tác Mod thật duy nhất trên web): cuộn tới ô nhập
 // chuỗi cũ. Các thẻ còn lại là nút disabled, không có handler.
 $("btn-mod-op-text").addEventListener("click", () => {
+  // Form "Thay 1 chuỗi" nằm trong mục "Nâng cao" (details, mặc định đóng):
+  // mở ra trước rồi mới cuộn tới ô nhập, không thì scrollIntoView không thấy gì.
+  const adv = $("mod-advanced");
+  if (adv && !adv.open) adv.open = true;
   const m = $("mod-old");
   if (m) {
     try { if (typeof m.scrollIntoView === "function") m.scrollIntoView({ block: "center" }); } catch (e) { /* cuộn chỉ là phụ */ }
