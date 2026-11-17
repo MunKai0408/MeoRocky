@@ -70,10 +70,10 @@ if (want(1)) {
     filesJson.files.length === 95 && testsJson.files.length === 167 &&
     filesJson.files.includes("pb3/sdk/font_list.py") &&
     testsJson.files.includes("pb3/tests/test_font_unify.py") &&
-    swJs.includes('CACHE_VERSION = "v23-20261117"') && !swJs.includes("v19-20261116") &&
+    swJs.includes('CACHE_VERSION = "v24-20261117"') && !swJs.includes("v19-20261116") &&
     swJs.includes('"pb3/sdk/font_list.py"'),
     "files.json=" + filesJson.files.length + " (kỳ vọng 95) · tests.json=" + testsJson.files.length +
-    " (kỳ vọng 167) · sw.js v23-20261117: " + swJs.includes('CACHE_VERSION = "v23-20261117"') +
+    " (kỳ vọng 167) · sw.js v24-20261117: " + swJs.includes('CACHE_VERSION = "v24-20261117"') +
     " · precache có font_list.py: " + swJs.includes('"pb3/sdk/font_list.py"'), performance.now() - t);
   t = performance.now();
   const c = sh("node --check " + SITE + "/app.js && node --check " + SITE + "/worker.js && node --check " + SITE + "/sw.js && python3 -m py_compile " + SITE + "/pb3/bridge.py " + SITE + "/pb3/sdk/font_list.py " + SITE + "/pb3/tests/test_font_unify.py", EXP);
