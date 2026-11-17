@@ -1259,6 +1259,7 @@ function confirmLargeFile(files) {
   const textEl = $("large-file-text");
   const btnOk = $("large-file-continue");
   const btnCancel = $("large-file-cancel");
+  const btnServer = $("btn-large-file-server");
   if (!modal || !textEl || !btnOk || !btnCancel) {
     // Không có hộp thoại trong DOM (vd trang cũ): rơi về confirm() native
     // — vẫn chặn trước khi đọc file, không đọc lén.
@@ -1279,15 +1280,30 @@ function confirmLargeFile(files) {
     const done = (decision) => {
       modal.hidden = true;
       largeFileModalState.visible = false;
-      largeFileModalState.decision = decision;
+      // Nút máy chủ đã đặt decision = "server" trước khi gọi done(false):
+      // giữ nguyên để chỗ gọi không hiện lỗi "Đã huỷ" nhầm.
+      if (largeFileModalState.decision !== "server") largeFileModalState.decision = decision;
       btnOk.removeEventListener("click", onOk);
       btnCancel.removeEventListener("click", onCancel);
+      if (btnServer) btnServer.removeEventListener("click", onServer);
       resolve(decision);
     };
     const onOk = () => done(true);
     const onCancel = () => done(false);
+    // "Xử lý trên máy chủ": không mở file trên web, nhảy sang mục máy chủ
+    // ở tab Trích xuất (user nhập tên game + Drive file ID rồi bấm chạy).
+    const onServer = () => {
+      largeFileModalState.decision = "server";
+      done(false);
+      goTool("extract");
+      const sec = $("server-section");
+      if (sec) { try { sec.scrollIntoView({ block: "start" }); } catch (e) {} }
+      const gi = $("server-game-name");
+      if (gi) gi.focus();
+    };
     btnOk.addEventListener("click", onOk);
     btnCancel.addEventListener("click", onCancel);
+    if (btnServer) btnServer.addEventListener("click", onServer);
   });
 }
 
@@ -1323,7 +1339,7 @@ async function handleChosenFile(f) {
   // Mục C4: file >140MB thì hỏi TRƯỚC KHI đọc vào RAM — "Hủy" thì dừng
   // hẳn (file cũ vẫn giữ nguyên, không boot, không đọc); "Tiếp tục" mới đọc.
   if (!(await confirmLargeFile([f]))) {
-    showError("Đã huỷ mở file lớn — dùng bản iSH cho file này nếu cần.");
+    if (largeFileModalState.decision !== "server") showError("Đã huỷ mở file lớn — dùng bản iSH cho file này nếu cần.");
     return undefined;
   }
   // Mục 5: >140MB cảnh báo rõ, >190MB khuyên mạnh dùng iSH — vẫn cho tiếp tục.
@@ -1919,6 +1935,267 @@ $("extract-result").addEventListener("click", (ev) => {
   if (sel) sel.value = name;
   loadExtractedToTranslate(name);
 });
+
+// ---- Xử lý file lớn trên máy chủ (GitHub Actions) ----
+// Trích xuất IPA lớn ngay trong web: web gọi API GitHub dispatch workflow
+// extract-large.yml, máy chủ tải IPA từ Drive (link công khai) rồi trích
+// bằng code SDK của repo, trả file JSON qua artifact. Token GitHub của
+// user CHỈ lưu trong localStorage của trình duyệt này, chỉ gửi tới
+// api.github.com, không gửi đi đâu khác, không log ra console.
+const SERVER_GH_API = "https://api.github.com/repos/MunKai0408/MeoRocky";
+const SERVER_WORKFLOW = "extract-large.yml";
+const SERVER_TOKEN_KEY = "meorocky_gh_token";
+const SERVER_RUN_KEY = "meorocky_server_run";
+const SERVER_POLL_MS = 15000;
+
+// Tách Drive file ID từ ID trần hoặc link Drive dán vào:
+// drive.google.com/file/d/<id>/..., open?id=<id>, uc?id=<id> /
+// uc?export=download&id=<id>. Trả "" khi không nhận ra.
+function serverDriveIdFromInput(v) {
+  const s = (v || "").trim();
+  if (!s) return "";
+  let m = s.match(/\/d\/([A-Za-z0-9_-]+)/);
+  if (m) return m[1];
+  m = s.match(/[?&]id=([A-Za-z0-9_-]+)/);
+  if (m) return m[1];
+  if (/^[A-Za-z0-9_-]{10,}$/.test(s)) return s;
+  return "";
+}
+
+function serverGetToken() {
+  try { return (localStorage.getItem(SERVER_TOKEN_KEY) || "").trim(); } catch (e) { return ""; }
+}
+function serverSetToken(t) {
+  try {
+    if (t) localStorage.setItem(SERVER_TOKEN_KEY, t);
+    else localStorage.removeItem(SERVER_TOKEN_KEY);
+  } catch (e) { /* localStorage không có */ }
+}
+function serverSyncTokenUI() {
+  const t = serverGetToken();
+  const st = $("server-token-state");
+  const input = $("server-gh-token");
+  if (input && !input.value && t) input.value = t;
+  if (st) {
+    st.textContent = t
+      ? "Đã lưu token (kết thúc …" + t.slice(-4) + "). Token chỉ nằm trong trình duyệt này, chỉ gửi tới api.github.com."
+      : "Chưa lưu token.";
+  }
+}
+function serverSaveRun(run) {
+  try { localStorage.setItem(SERVER_RUN_KEY, JSON.stringify(run)); } catch (e) { /* localStorage không có */ }
+}
+function serverLoadRun() {
+  try {
+    const raw = localStorage.getItem(SERVER_RUN_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch (e) { return null; }
+}
+function serverClearRun() {
+  try { localStorage.removeItem(SERVER_RUN_KEY); } catch (e) { /* localStorage không có */ }
+}
+
+// Gọi GitHub API với token của user. Trả {status, data}; data null khi
+// body rỗng (vd dispatch trả 204). Không log token bao giờ.
+async function serverGh(path, opts) {
+  const token = serverGetToken();
+  const res = await fetch(SERVER_GH_API + path, {
+    method: (opts && opts.method) || "GET",
+    headers: {
+      "Accept": "application/vnd.github+json",
+      "Authorization": "Bearer " + token,
+      "Content-Type": "application/json",
+    },
+    body: (opts && opts.body) ? JSON.stringify(opts.body) : undefined,
+  });
+  let data = null;
+  try { data = await res.json(); } catch (e) { /* 204 / body rỗng */ }
+  return { status: res.status, data };
+}
+
+let serverPollTimer = null;
+function serverStopPoll() {
+  if (serverPollTimer) { clearTimeout(serverPollTimer); serverPollTimer = null; }
+}
+function serverSchedulePoll() {
+  serverStopPoll();
+  serverPollTimer = setTimeout(serverPoll, SERVER_POLL_MS);
+}
+
+async function serverRun() {
+  clearError();
+  const game = ($("server-game-name").value || "").trim();
+  const fileId = serverDriveIdFromInput($("server-drive-input").value || "");
+  const locales = $("server-locales").value || "en,zh";
+  const token = serverGetToken();
+  if (!game) { showError("Nhập tên game trước."); return; }
+  if (!fileId) { showError("Nhập Drive file ID hoặc dán link Drive của file IPA (file phải ở chế độ “ai có link cũng xem được”)."); return; }
+  if (!token) { showError("Chưa có GitHub token — nhập token có quyền Actions (Read and write) rồi bấm “Lưu token”. Xem Hướng dẫn bên trên."); return; }
+  const st = $("server-status");
+  st.textContent = "Đang gửi lệnh chạy lên GitHub…";
+  const dispatchedAt = Date.now();
+  let r;
+  try {
+    r = await serverGh("/actions/workflows/" + SERVER_WORKFLOW + "/dispatches", {
+      method: "POST",
+      body: { ref: "main", inputs: { file_id: fileId, game_name: game, locales } },
+    });
+  } catch (e) {
+    showError("Gửi lệnh chạy lỗi mạng: " + (e && e.message ? e.message : e));
+    return;
+  }
+  if (r.status === 204) {
+    serverSaveRun({ game, fileId, locales, dispatchedAt, runId: null });
+    st.textContent = "Đã gửi lệnh chạy — đang chờ máy chủ nhận việc (hỏi lại mỗi 15 giây; đóng tab rồi mở lại vẫn xem được)…";
+    serverPoll();
+    return;
+  }
+  if (r.status === 401) { showError("Token sai hoặc đã hết hạn (401) — kiểm tra lại token rồi lưu lại."); return; }
+  if (r.status === 403) { showError("Token thiếu quyền (403) — token cần quyền Actions (Read and write) trên repo MunKai0408/MeoRocky. Xem Hướng dẫn."); return; }
+  if (r.status === 404) { showError("Không thấy workflow trên main (404) — workflow extract-large.yml chưa gộp vào main, hoặc token thiếu quyền xem repo."); return; }
+  if (r.status === 422) { showError("GitHub từ chối lệnh chạy (422): " + ((r.data && r.data.message) || "kiểm tra lại tên game / file ID.")); return; }
+  showError("Gửi lệnh chạy lỗi (HTTP " + r.status + "): " + ((r.data && r.data.message) || "thử lại sau."));
+}
+
+// Dispatch trả 204 không kèm run id — liệt kê các run workflow_dispatch
+// mới nhất rồi lấy run đầu tiên tạo sau lúc gửi lệnh.
+async function serverFindRun(dispatchedAt) {
+  const r = await serverGh("/actions/workflows/" + SERVER_WORKFLOW + "/runs?event=workflow_dispatch&branch=main&per_page=5");
+  if (r.status !== 200 || !r.data || !Array.isArray(r.data.workflow_runs)) return null;
+  for (const run of r.data.workflow_runs) {
+    const created = Date.parse(run.created_at || "");
+    if (!isNaN(created) && created >= dispatchedAt - 60000) return run;
+  }
+  return null;
+}
+
+async function serverPoll() {
+  const saved = serverLoadRun();
+  if (!saved) return;
+  const st = $("server-status");
+  try {
+    let run = null;
+    if (saved.runId) {
+      const r = await serverGh("/actions/runs/" + saved.runId);
+      if (r.status === 200) run = r.data;
+    } else {
+      run = await serverFindRun(saved.dispatchedAt);
+      if (run) { saved.runId = run.id; serverSaveRun(saved); }
+    }
+    if (!run) {
+      st.textContent = "Đã gửi lệnh chạy — máy chủ chưa nhận việc, đang chờ…";
+      serverSchedulePoll();
+      return;
+    }
+    if (run.status !== "completed") {
+      st.textContent = "Máy chủ đang " + (run.status === "queued" ? "chờ lượt chạy" : "trích xuất") +
+        " — run #" + run.run_number + " (bắt đầu " + new Date(run.created_at).toLocaleString("vi-VN") +
+        "). Hỏi lại sau 15 giây…";
+      serverSchedulePoll();
+      return;
+    }
+    serverStopPoll();
+    if (run.conclusion === "success") {
+      st.textContent = "✅ Xong! Đang lấy danh sách file kết quả…";
+      await serverShowResults(run);
+    } else if (run.conclusion === "cancelled") {
+      st.textContent = "Run đã bị hủy trên GitHub.";
+    } else {
+      st.textContent = "❌ Chạy lỗi (" + (run.conclusion || "không rõ") + "). Xem log trên GitHub: ";
+      const a = document.createElement("a");
+      a.href = run.html_url; a.target = "_blank"; a.rel = "noopener";
+      a.textContent = "mở run #" + run.run_number;
+      st.appendChild(a);
+      st.appendChild(document.createTextNode(" — thường do file chưa chia sẻ link hoặc sai file ID (xem Hướng dẫn)."));
+    }
+  } catch (e) {
+    st.textContent = "Hỏi trạng thái lỗi: " + (e && e.message ? e.message : e) + " — bấm “Kiểm tra trạng thái” để thử lại.";
+  }
+}
+
+async function serverShowResults(run) {
+  const box = $("server-results");
+  box.textContent = "";
+  const r = await serverGh("/actions/runs/" + run.id + "/artifacts?per_page=30");
+  if (r.status !== 200 || !r.data || !Array.isArray(r.data.artifacts)) {
+    box.textContent = "Lấy danh sách artifact lỗi (HTTP " + r.status + "). Mở run trên GitHub để tải tay: ";
+    const a = document.createElement("a");
+    a.href = run.html_url; a.target = "_blank"; a.rel = "noopener";
+    a.textContent = "mở run #" + run.run_number;
+    box.appendChild(a);
+    return;
+  }
+  const arts = r.data.artifacts.filter((a) => !a.expired);
+  if (!arts.length) {
+    box.textContent = "Run xong nhưng không có artifact nào (hết hạn hoặc trích ra 0 file — xem log trên GitHub).";
+    return;
+  }
+  const title = document.createElement("p");
+  title.textContent = "Kết quả (run #" + run.run_number + ") — bấm để tải (mỗi file tải về là .zip chứa đúng 1 file JSON đó):";
+  box.appendChild(title);
+  const ul = document.createElement("ul");
+  for (const a of arts) {
+    const li = document.createElement("li");
+    const b = document.createElement("button");
+    b.className = "secondary";
+    b.textContent = "⬇️ " + a.name + " (" + fmtBytes(a.size_in_bytes) + ")";
+    b.addEventListener("click", () => serverDownloadArtifact(a));
+    li.appendChild(b);
+    ul.appendChild(li);
+  }
+  box.appendChild(ul);
+  const note = document.createElement("p");
+  note.className = "note";
+  note.textContent = "File summary.json ghi số key mỗi locale, md5, thời gian tải/trích. Artifact lưu 30 ngày.";
+  box.appendChild(note);
+}
+
+async function serverDownloadArtifact(a) {
+  const token = serverGetToken();
+  const st = $("server-status");
+  st.textContent = "Đang tải " + a.name + "…";
+  try {
+    const res = await fetch(a.archive_download_url, {
+      headers: { "Authorization": "Bearer " + token, "Accept": "application/vnd.github+json" },
+    });
+    if (!res.ok) {
+      showError("Tải artifact lỗi (HTTP " + res.status + ") — token có thể đã hết hạn, lưu lại token rồi thử lại.");
+      return;
+    }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    setTimeout(() => URL.revokeObjectURL(url), 600000);
+    fireBlobDownload(url, a.name + ".zip");
+    st.textContent = "Đã tải " + a.name + ".zip.";
+  } catch (e) {
+    showError("Tải artifact lỗi: " + (e && e.message ? e.message : e));
+  }
+}
+
+$("btn-server-save-token").addEventListener("click", () => {
+  const v = ($("server-gh-token").value || "").trim();
+  if (!v) { showError("Nhập token trước khi lưu."); return; }
+  if (!/^(ghp_|github_pat_)/.test(v)) { showError("Token trông không đúng dạng GitHub (thường bắt đầu ghp_ hoặc github_pat_) — kiểm tra lại."); return; }
+  serverSetToken(v);
+  serverSyncTokenUI();
+  setStatus("Đã lưu token vào trình duyệt này.");
+});
+$("btn-server-clear-token").addEventListener("click", () => {
+  serverSetToken("");
+  const input = $("server-gh-token");
+  if (input) input.value = "";
+  serverSyncTokenUI();
+  setStatus("Đã xóa token.");
+});
+$("btn-server-run").addEventListener("click", serverRun);
+$("btn-server-refresh").addEventListener("click", () => {
+  const saved = serverLoadRun();
+  if (!saved) { $("server-status").textContent = "Chưa có lần chạy nào được lưu trong trình duyệt này."; return; }
+  serverPoll();
+});
+serverSyncTokenUI();
+// Mở lại web mà lần chạy trước chưa xong thì hỏi tiếp trạng thái.
+(function () { const saved = serverLoadRun(); if (saved) serverPoll(); })();
 
 // ---- Dịch ----
 // URL proxy dịch (Cloudflare Worker, mục 2): lưu localStorage, để trống =
@@ -4449,7 +4726,7 @@ async function handleBatchFiles(list) {
   // Mục C4: lô có file >140MB thì hỏi TRƯỚC KHI đọc file nào vào RAM —
   // "Hủy" thì dừng hẳn, lô cũ vẫn giữ nguyên, không đọc file nào.
   if (valid.length && !(await confirmLargeFile(valid))) {
-    showError("Đã huỷ mở lô file lớn — dùng bản iSH cho các file này nếu cần.");
+    if (largeFileModalState.decision !== "server") showError("Đã huỷ mở lô file lớn — dùng bản iSH cho các file này nếu cần.");
     return;
   }
   state.batchFiles = [];

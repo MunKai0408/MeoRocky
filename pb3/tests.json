@@ -89,6 +89,7 @@
   "pb3/tests/fixtures/yaml_ini/sectionless.ini",
   "pb3/tests/fixtures/zip/sample.ipa",
   "pb3/tests/helpers.py",
+  "pb3/tests/test_actions_extract.py",
   "pb3/tests/test_app_menu_cli.py",
   "pb3/tests/test_appendix_b.py",
   "pb3/tests/test_batch.py",

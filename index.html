@@ -450,6 +450,43 @@
     <button id="btn-extract-list" class="secondary">Tải lại danh sách file</button>
     <button id="btn-extract-run">Trích xuất</button>
     <div id="extract-result"></div>
+    <div id="server-section">
+      <h3>🖥️ Xử lý file lớn trên máy chủ (GitHub Actions)</h3>
+      <p class="note">File quá lớn cho Safari? Trích xuất ngay trong web này — việc trích chạy ngầm trên máy chủ GitHub, xong thì tải file JSON về, không cần mở Colab. File IPA phải để trên Google Drive ở chế độ "ai có link cũng xem được". <a href="https://github.com/MunKai0408/MeoRocky/blob/main/docs/ACTIONS_EXTRACT.md" target="_blank" rel="noopener">Hướng dẫn</a> — token GitHub chỉ lưu trong trình duyệt này, chỉ gửi tới api.github.com.</p>
+      <div class="row">
+        <label style="flex:1;min-width:200px">Tên game:
+          <input type="text" id="server-game-name" placeholder="vd: Dead Cells-3.5.15 VH" autocomplete="off">
+        </label>
+      </div>
+      <div class="row">
+        <label style="flex:1;min-width:220px">Drive file ID hoặc link Drive:
+          <input type="text" id="server-drive-input" placeholder="vd: 18zGyS-... hoặc dán nguyên link Drive" autocomplete="off">
+        </label>
+      </div>
+      <div class="row">
+        <label>Ngôn ngữ:
+          <select id="server-locales" style="width:auto">
+            <option value="en,zh" selected>Cả Anh + Trung</option>
+            <option value="en">Tiếng Anh (en)</option>
+            <option value="zh">Tiếng Trung (zh)</option>
+          </select>
+        </label>
+      </div>
+      <div class="row">
+        <label style="flex:1;min-width:220px">GitHub token (cần quyền Actions — Read and write):
+          <input type="password" id="server-gh-token" placeholder="ghp_... / github_pat_..." autocomplete="off">
+        </label>
+        <button id="btn-server-save-token" class="secondary">Lưu token</button>
+        <button id="btn-server-clear-token" class="secondary">Xóa token</button>
+      </div>
+      <p class="note" id="server-token-state">Chưa lưu token.</p>
+      <div class="row">
+        <button id="btn-server-run">▶️ Chạy trên máy chủ</button>
+        <button id="btn-server-refresh" class="secondary">Kiểm tra trạng thái</button>
+      </div>
+      <div id="server-status"></div>
+      <div id="server-results"></div>
+    </div>
   </div>
 
   <div id="tab-translate" class="card" hidden>
@@ -1184,6 +1221,10 @@
     <div class="row">
       <button id="btn-large-file-colab" class="secondary"
         onclick="window.open('https://colab.research.google.com/github/MunKai0408/MeoRocky/blob/main/colab/extract-large-ipa.ipynb','_blank','noopener')">☁️ Xử lý file lớn bằng Colab</button>
+    </div>
+    <p id="large-file-server-note">Hoặc trích ngay trong web này: việc trích chạy ngầm trên máy chủ GitHub, xong thì tải file JSON về — không cần mở Colab. Cần file IPA trên Drive ở chế độ "ai có link cũng xem được" + token GitHub có quyền Actions.</p>
+    <div class="row">
+      <button id="btn-large-file-server" class="secondary">🖥️ Xử lý trên máy chủ</button>
     </div>
   </div>
 </div>
