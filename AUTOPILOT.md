@@ -21,6 +21,8 @@
 
 ## Mục đang làm
 
+- **M1** (đường ghi MonoBehaviour + StringTable) — XONG 2026-11-17, xem "Đã xong"
+  (nhánh `feat/mb-write-g1`, gộp theo lệnh tự động của user sau khi verify đạt).
 - **BUG#2** (đường merge trích xuất) — XONG 2026-11-17, xem "Đã xong"
   (PR #4, đã gộp vào main `f1a46eb7`).
 - **Prefetch Pyodide báo sai "thiếu byte"** — XONG 2026-11-17, xem "Đã xong"
@@ -83,6 +85,13 @@
   có `Perk_Benevolent`, không lẫn giá trị cột tiếng Nhật, `en.json` có mặt.
 
 ## Đã xong
+
+### M1 — Đường ghi MonoBehaviour + StringTable (G1: mod phủ 0% → 100% key thật) — XONG 2026-11-17 [ĐÃ ĐO THẬT] (nhánh `feat/mb-write-g1`)
+
+- Vấn đề: nút "Ép lại vào file gốc" chỉ ghi được TextAsset JSON dict; cả 3 game đã đo (9K, PB3, EK2) có 0 key dạng này — 100% text thật nằm ở MonoBehaviour (bảng ngôn ngữ I2 + StringTable) nên mod phủ 0% key thật.
+- Sửa (`pb3/sdk/unity.py`, `plan.py`, `rebuild.py`, `gate.py`, `pb3/bridge.py`): writer trường string MonoBehaviour có type tree (`write_typetree_value` — ảnh gương `read_typetree_value`, giữ trailing bytes) + writer bảng I2 không type tree (`write_language_source_bytes`, segment-splice) + `apply_monobehaviour_patch` (chỉ REBUILD_SECTION, verify 2 lớp: cấu trúc + giá trị từng field) + `monobehaviour_write_targets` (LS term / ST entry; key ST thiếu trong bảng thì CHÈN entry mới `m_TableData[+]`). `build_plan` lập entry `MonoBehaviour` (before_sha/after_sha = sha object bytes); `rebuild.py` build `mb_index` {collection: {key: m_Id}} 1 lần trước Vòng 1 (SharedTableData ở bundle khác StringTable); `gate.py` mở rộng probes + verify pressed cho MB; `bridge.py` thread `source_locale` (mặc định "en" — ghi vào cột/bảng en vì chưa có cột vi). Generic MonoBehaviour (scan path) vẫn unmatched reason `monobehaviour`. Gộp: theo lệnh tự động của user sau khi verify đạt (PR + merge commit xem trên GitHub).
+- Kiểm chứng [ĐÃ ĐO THẬT]: 9K v1.0.6 en→vi ("Tiếng Việt: " + en, 2.252 key) → ép thật → vá IPA (chỉ để kiểm chứng, /tmp) → trích lại đúng 2.252 key, giá trị khớp 100%, thứ tự key khớp mẫu; delivery_gate PASS cả pre_write lẫn pressed (font hiển thị Be Vietnam Pro); file gốc sha không đổi. Harness `exp/verify_bug2_merge.py` PASS 4/4. Smoke 59/59; full suite 0 đỏ mới (branch 1.761 đạt / 102 lỗi / 27 fail / 4 bỏ qua vs main 1.743 đạt / 102 lỗi / 27 fail / 4 bỏ qua — +18 đúng 18 test mới, tập FAIL giống hệt). 18 test mới trong `pb3/tests/test_mb_write.py` (round-trip trên fixture + 1 test trên dữ liệu game thật 9K). `CACHE_VERSION` v25→**v26-20261117** + đồng bộ mọi kỳ vọng version ở 21 file exp + `tests.json` 167→168 (thêm test mới).
+- Sau khi bản v26 lên live, user trên Safari cần tải lại trang 2 lần (kích hoạt SW mới rồi chạy code mới) như các bản trước.
 
 ### BUG#2 (đường merge trích xuất: loại quét phẳng khỏi file locale, tách biến thể zh, vứt rác) — XONG 2026-11-17 [ĐÃ ĐO THẬT] (PR #4, đã gộp vào main `f1a46eb7`)
 
@@ -194,7 +203,7 @@
   để chạy code mới; dòng "3 file lỗi" phải biến mất ngay từ lần tải
   trước đầu tiên sau khi cache lạnh.
 
-### Sắp thứ tự key StringTable theo asset (khớp file mẫu byte-identical) — XONG 2026-11-17 [ĐÃ ĐO THẬT] (nhánh `fix/st-order`, chưa gộp vào main — chờ PR/duyệt)
+### Sắp thứ tự key StringTable theo asset (khớp file mẫu byte-identical) — XONG 2026-11-17 [ĐÃ ĐO THẬT] (PR #6, đã gộp vào main `0f41fad4`)
 
 - Vấn đề: sau BUG#2, nội dung 9 Kings v1.0.6 đã khớp mẫu 100% (2.252
   key/locale) nhưng thứ tự 102 key StringTable (dạng `Collection/Key`,

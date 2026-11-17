@@ -8,6 +8,8 @@ Tổng: PASS 4, FAIL 0, bỏ qua 0
 - [x] chỉ 3 file locale trong out_dir — ['en.json', 'zh-CN.json', 'zh-TW.json']
 - [x] zip chỉ chứa 3 file locale — ['en.json', 'zh-CN.json', 'zh-TW.json']
 - [x] en.json == en-build68.json (từng key/giá trị) — en=2086 key, expected=2086 key
+- [x] en.json thứ tự key giống en-build68.json — 2086/2086 vị trí key giống nhau
+- [x] en.json md5 file thô giống en-build68.json — 1a96579e039d61fd6403a873b89f0433
 - [x] en.json 2086 key — 2086
 - [x] zh-CN 2086 key — 2086
 - [x] zh-CN cùng tập key với en — 0
@@ -30,7 +32,10 @@ Tổng: PASS 4, FAIL 0, bỏ qua 0
 - [x] zh-CN.json cùng tập key với en.json — 0
 - [x] zh-TW.json cùng tập key với en.json — 0
 - [x] en.json == file mẫu en.json — khác 0 key
+- [x] en.json thứ tự key giống file mẫu — 2252/2252 vị trí key giống nhau
+- [x] en.json md5 file thô giống file mẫu — 4c22c9ebcdd04cc21c7f3f4a4952e955
 - [x] zh-TW.json == file mẫu zh-TW.json (trừ key fallback ST zh) — khác 26 key, trong đó 26 key fallback cho phép
+- [x] zh-TW.json thứ tự key giống file mẫu — 2252/2252 vị trí key giống nhau
 - [x] bridge ok — 
 
 ## pb3-v1.1.7 — PASS
