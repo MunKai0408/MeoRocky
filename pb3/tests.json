@@ -134,6 +134,7 @@
   "pb3/tests/test_hardening.py",
   "pb3/tests/test_heaps.py",
   "pb3/tests/test_ipa_loc_fixtures.py",
+  "pb3/tests/test_il2cpp_literals.py",
   "pb3/tests/test_ir.py",
   "pb3/tests/test_isolation.py",
   "pb3/tests/test_kb.py",

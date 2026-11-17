@@ -208,6 +208,228 @@ def raw_scan(path, entry=None, min_len=None, max_results=None):
         return _err(e)
 
 
+def il2cpp_table(path, entry=None, include_single_words=None):
+    """Xuất bảng dịch literals IL2CPP (đường literals -> tab Dịch).
+
+    Đọc literal chính xác từ global-metadata.dat (entry trong IPA/ZIP
+    hoặc file thường), xuất thành dict key->value thuần
+    {LIT_NNNNNN: text} + manifest {key: {literal_index, offset,
+    byte_length, source}} rồi ghi 2 file vào /tmp/pb3out để tab Dịch
+    nạp qua read_extracted như mọi file trích xuất (il2cpp-literals.json
+    + il2cpp-literals.manifest.json). Bảng là dict thuần nên
+    translate_json/translate_json_google ăn được — không còn hiện tượng
+    stringify cả list như output raw_scan. Chỉ lấy chuỗi nhiều từ mặc
+    định (single_words là tên mã, chỉ thêm khi xin tường minh).
+    """
+    try:
+        from sdk import il2cpp as il2cpp_sdk
+        from sdk import rawscan
+
+        _check_size(path)
+        out = rawscan.scan_target(
+            path, entry=(str(entry) if entry else None))
+        if out.get("mode") != "il2cpp":
+            raise ValueError(
+                "entry không phải global-metadata.dat IL2CPP (mode=%s) — "
+                "chọn đúng entry global-metadata.dat (vd .../Data/Managed/"
+                "Metadata/global-metadata.dat)." % (out.get("mode"),))
+        table, manifest = il2cpp_sdk.literals_to_table(
+            out, include_single_words=bool(include_single_words))
+        out_dir = "/tmp/pb3out"
+        os.makedirs(out_dir, exist_ok=True)
+        table_text = json.dumps(table, ensure_ascii=False, indent=1,
+                                sort_keys=True)
+        manifest_text = json.dumps(
+            {"format": "beartea-il2cpp-literals-manifest/1",
+             "source": out.get("source"),
+             "metadata_version": out.get("metadata_version"),
+             "literals_total": out.get("literals_total"),
+             "keys": manifest},
+            ensure_ascii=False, indent=1, sort_keys=True)
+        with open(os.path.join(out_dir, il2cpp_sdk.TABLE_FILE),
+                  "w", encoding="utf-8") as fh:
+            fh.write(table_text)
+        with open(os.path.join(out_dir, il2cpp_sdk.MANIFEST_FILE),
+                  "w", encoding="utf-8") as fh:
+            fh.write(manifest_text)
+        return json.dumps({
+            "ok": True, "source": out.get("source"),
+            "metadata_version": out.get("metadata_version"),
+            "literals_total": int(out.get("literals_total") or 0),
+            "literals_read": int(out.get("literals_read") or 0),
+            "table_keys": len(table),
+            "manifest_keys": len(manifest),
+            "single_words_kept": int(out.get("single_words_kept") or 0),
+            "single_words_included": bool(include_single_words),
+            "truncated": bool(out.get("truncated")),
+            "table_file": il2cpp_sdk.TABLE_FILE,
+            "manifest_file": il2cpp_sdk.MANIFEST_FILE,
+            "table_bytes": len(table_text.encode("utf-8")),
+            "note": ("Bảng dịch literals: %d key (chuỗi nhiều từ). "
+                     "Từ đơn (%d) không đưa vào bảng mặc định — phần lớn "
+                     "là tên class/method/field, không phải text hiển thị."
+                     % (len(table), out.get("single_words_kept") or 0)),
+        }, ensure_ascii=False)
+    except Exception as e:  # noqa: BLE001
+        return _err(e)
+
+
+def patch_il2cpp_literals(path, entry, table_json, manifest_json=None):
+    """Ép bản dịch literals VÀO global-metadata.dat (vá tại chỗ).
+
+    table_json: dict {LIT_NNNNNN: text_đã_dịch} (lấy từ output tab Dịch
+    sau khi dịch il2cpp-literals.json). manifest_json: manifest kèm
+    theo bảng (để verify text gốc từng key trước khi vá — sai file
+    metadata thì bỏ qua key đó, không vá mù).
+    Vá tại chỗ, fail-closed từng literal (v31: bản dịch <= gốc theo
+    byte; v39: phải đúng bằng byte; dài hơn thì bỏ qua kèm lý do) rồi
+    VERIFY bằng cách đọc lại toàn bộ literal. File gốc KHÔNG bị ghi đè
+    (xác minh sha sau khi chạy); metadata đã vá ghi ra
+    /tmp/pb3out/global-metadata.patched.dat + sidecar JSON, trả `dest`
+    để worker gửi file về tải (như mọi op có output).
+    """
+    try:
+        from sdk import il2cpp as il2cpp_sdk
+
+        _check_size(path)
+        try:
+            table = json.loads(table_json)
+        except ValueError:
+            raise ValueError("bảng dịch không phải JSON hợp lệ "
+                             "(cần dict {LIT_NNNNNN: text}).")
+        if not isinstance(table, dict) or not table:
+            raise ValueError("bảng dịch phải là object key-value không "
+                             "rỗng (LIT_NNNNNN -> text đã dịch).")
+        table = {str(k): (v if isinstance(v, str)
+                          else json.dumps(v, ensure_ascii=False))
+                 for k, v in table.items()}
+        manifest = None
+        if manifest_json:
+            try:
+                m = json.loads(manifest_json)
+            except ValueError:
+                raise ValueError("manifest không phải JSON hợp lệ.")
+            if isinstance(m, dict) and isinstance(m.get("keys"), dict):
+                manifest = m["keys"]
+            elif isinstance(m, dict):
+                manifest = m
+            else:
+                raise ValueError("manifest phải là object JSON.")
+        data, source_label = il2cpp_sdk.read_metadata_bytes(
+            path, entry=(str(entry) if entry else None))
+        # sha FILE GỐC (cả IPA — để sidecar/repack đối chiếu) khác sha
+        # MEMBER metadata (chỉ để ghi nhận): đừng lẫn 2 cái.
+        file_sha = hashlib.sha256(open(path, "rb").read()).hexdigest()
+        meta_sha = hashlib.sha256(data).hexdigest()
+        patched, report = il2cpp_sdk.apply_literal_patches(
+            data, table, manifest)
+        out_dir = "/tmp/pb3out"
+        os.makedirs(out_dir, exist_ok=True)
+        dest = os.path.join(out_dir, il2cpp_sdk.PATCHED_FILE)
+        with open(dest, "wb") as fh:
+            fh.write(patched)
+        patched_sha = hashlib.sha256(patched).hexdigest()
+        sidecar = {
+            "format": "beartea-il2cpp-patched/1",
+            "entry": (str(entry) if entry else None),
+            "source": source_label,
+            "source_file": os.path.basename(path),
+            "source_sha256": file_sha,
+            "metadata_sha256": meta_sha,
+            "patched_sha256": patched_sha,
+            "metadata_version": report["metadata_version"],
+            "patched_count": report["patched_count"],
+            "skipped_count": report["skipped_count"],
+        }
+        with open(os.path.join(out_dir, il2cpp_sdk.PATCHED_SIDECAR),
+                  "w", encoding="utf-8") as fh:
+            fh.write(json.dumps(sidecar, ensure_ascii=False, indent=1))
+        # File gốc không đổi (như repack_ipa): xác minh sha sau khi chạy.
+        if hashlib.sha256(open(path, "rb").read()).hexdigest() != file_sha:
+            raise ValueError("file gốc đã đổi trong lúc vá — từ chối "
+                             "kết quả.")
+        report.update({
+            "ok": True, "source": source_label,
+            "source_sha256": file_sha, "metadata_sha256": meta_sha,
+            "patched_sha256": patched_sha,
+            "dest": dest, "filename": il2cpp_sdk.PATCHED_FILE,
+            "patched_bytes": len(patched),
+            "note": ("Đã vá %d/%d key tại chỗ (verify đọc lại đạt). "
+                     "%d key chưa vá được — xem skipped/key_results: "
+                     "bản dịch dài hơn gốc (v31) hoặc không đúng bằng "
+                     "byte (v39) thì không vá được tại chỗ; muốn vá cả "
+                     "những key đó phải re-layout toàn bộ blob literal "
+                     "(chưa hỗ trợ)." % (report["patched_count"],
+                                         len(table),
+                                         report["skipped_count"])),
+        })
+        return json.dumps(report, ensure_ascii=False)
+    except Exception as e:  # noqa: BLE001
+        return _err(e)
+
+
+def il2cpp_repack(path, entry=None, out_dir=None):
+    """Đóng gói lại IPA với global-metadata.dat đã vá (bước sau patch).
+
+    Đọc file metadata đã vá + sidecar trong /tmp/pb3out (do op
+    patch_il2cpp_literals ghi), kiểm tra entry + sha file gốc + sha file
+    đã vá khớp sidecar, rồi dùng lại sdk.repack.repack_ipa (M2 — kiểm
+    tra 6 mục sau đóng gói, FAIL thì xóa file lỗi). File gốc KHÔNG bị
+    ghi đè; output "<game>-mod.ipa", chữ ký cũ giữ nguyên nên cần ký lại
+    như M2. out_dir chỉ để test truyền thư mục đĩa lớn (mặc định
+    /tmp/repack_out như M2 — UI không truyền).
+    """
+    try:
+        from sdk import il2cpp as il2cpp_sdk
+        from sdk import repack as _repack
+
+        _check_size(path)
+        pb3out_dir = "/tmp/pb3out"
+        sidecar_path = os.path.join(pb3out_dir, il2cpp_sdk.PATCHED_SIDECAR)
+        patched_path = os.path.join(pb3out_dir, il2cpp_sdk.PATCHED_FILE)
+        if not os.path.isfile(sidecar_path) \
+                or not os.path.isfile(patched_path):
+            raise ValueError(
+                "chưa có metadata đã vá — bấm 'Ép bản dịch literals' "
+                "trước rồi mới đóng gói lại.")
+        with open(sidecar_path, "r", encoding="utf-8") as fh:
+            sidecar = json.load(fh)
+        entry = (str(entry) if entry else None) or sidecar.get("entry")
+        if not entry:
+            raise ValueError("sidecar metadata đã vá không ghi entry — "
+                             "ép lại trước khi đóng gói.")
+        if sidecar.get("entry") != entry:
+            raise ValueError(
+                "entry metadata đã vá (%r) khác entry đang chọn (%r) — "
+                "ép lại đúng entry trước khi đóng gói."
+                % (sidecar.get("entry"), entry))
+        if sidecar.get("source_file") != os.path.basename(path):
+            raise ValueError(
+                "file IPA đã đổi sau khi ép metadata — ép lại trước khi "
+                "đóng gói.")
+        with open(patched_path, "rb") as fh:
+            patched = fh.read()
+        if hashlib.sha256(patched).hexdigest() \
+                != sidecar.get("patched_sha256"):
+            raise ValueError("file metadata đã vá đã đổi sau khi ép — "
+                             "ép lại trước khi đóng gói.")
+        data = open(path, "rb").read()
+        orig_sha = hashlib.sha256(data).hexdigest()
+        if orig_sha != sidecar.get("source_sha256"):
+            raise ValueError("file IPA gốc đã đổi sau khi ép metadata — "
+                             "ép lại trước khi đóng gói.")
+        res = _repack.repack_ipa(path, {entry: patched},
+                                 out_dir=(out_dir or _repack.REPACK_OUT_DIR))
+        if hashlib.sha256(open(path, "rb").read()).hexdigest() != orig_sha:
+            raise ValueError("file gốc đã đổi trong lúc đóng gói — từ "
+                             "chối kết quả.")
+        res["source_sha256"] = orig_sha
+        res["patched_entry"] = entry
+        return json.dumps(res, ensure_ascii=False)
+    except Exception as e:  # noqa: BLE001
+        return _err(e)
+
+
 def _sf_summary(name, sf):
     tas = []
     for pid, nm, script in sf.text_assets():
