@@ -91,13 +91,13 @@ const manifest = JSON.parse(fs.readFileSync(SITE + "/manifest.webmanifest", "utf
   const ver = (swSrc.match(/const CACHE_VERSION = "([^"]+)"/) || [])[1];
   const listMatch = swSrc.match(/const PRECACHE_URLS = \[([\s\S]*?)\];/);
   const listed = listMatch ? [...listMatch[1].matchAll(/"([^"]+)"/g)].map((m) => m[1]) : [];
-  const ok = ver === "v23-20261117" && listed.includes("fixtures/selftest.zip") &&
+  const ok = ver === "v25-20261117" && listed.includes("fixtures/selftest.zip") &&
     /const PREFETCH_CACHE = "beartea-prefetch-v1"/.test(swSrc) &&
     /pre\.match\(req\)/.test(swSrc) &&
     /prefetchCache: PREFETCH_CACHE/.test(swSrc) &&
     fs.existsSync(SITE + "/fixtures/selftest.zip");
   rec("static_sw_selftest_precache_prefetch", ok,
-    "CACHE_VERSION=" + ver + " (cần v23-20261117); precache " + listed.length +
+    "CACHE_VERSION=" + ver + " (cần v25-20261117); precache " + listed.length +
     " mục, có fixtures/selftest.zip=" + listed.includes("fixtures/selftest.zip") +
     " (file trên đĩa: " + fs.statSync(SITE + "/fixtures/selftest.zip").size +
     "B); PREFETCH_CACHE const=" + /const PREFETCH_CACHE/.test(swSrc) +
