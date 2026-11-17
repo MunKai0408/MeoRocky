@@ -21,12 +21,11 @@
 
 ## Mục đang làm
 
-- **P0-1 (E) Ép bản dịch lại vào file gốc — code + sửa lỗi + kiểm chứng XONG, đang đẩy
-  lên nhánh `auto/p0-1`.** Xem "Đã xong" bên dưới. Sau khi đẩy xong → chuyển P0-2.
+- **P0-2 (cổng kiểm tra trước khi giao, bước 6)** — sắp bắt đầu, theo brief mục 7.
 
 ## Đã xong
 
-### P0-1 (E) — XONG 2026-11-17 [ĐÃ ĐO THẬT] (commit: xem mục "Đẩy code" bên dưới)
+### P0-1 (E) — XONG 2026-11-17 [ĐÃ ĐO THẬT] (commit `41e98028`, PR #1, gộp vào main `9fb4a2ed`)
 
 - (E) triển khai đủ: bridge op duy nhất `rebuild_apply`, dry-run mặc định + confirm gate,
   nhóm theo provenance, xung đột đúng schema merge (cap 500), plan-per-unit qua executor
@@ -107,7 +106,13 @@ diff -rq -x __pycache__ -x logs -x reports -x workspace -x .pytest_cache <pristi
 
 ## Đẩy code
 
-- (Điền sau khi đẩy: nhánh, commit SHA, trạng thái PR/merge, gói handoff nếu có.)
+- P0-1 + đợt sửa-lỗi: nhánh `auto/p0-1`, commit snapshot `41e98028d3c5daf8cbb49152c9d6405a93ef3872`
+  (70 file text, từ head `3d0c80c`, sync-base đã kiểm khớp), PR #1, ĐÃ GỘP vào main
+  (`9fb4a2edf004b10d97d2fc95d3fc08df6fec9a13`) 2026-11-17. CI trên main: job `assets` vẫn
+  đỏ-từ-trước do Release `fixtures-v1` rỗng (xem "Chờ Joseph" #1); job `unit` tái hiện
+  cục bộ xanh, nguyên nhân đỏ trên CI [CHƯA KIỂM CHỨNG].
+- Gói nhị phân chưa lên repo: `handoff_p01.zip` (18 fixture/font) — Joseph đẩy theo
+  `HUONG_DAN.txt` (iSH hoặc web). Nhánh `auto/p0-1` giữ nguyên, không xóa.
 
 ## Backlog còn lại (thứ tự)
 
