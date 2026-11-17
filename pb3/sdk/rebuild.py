@@ -448,20 +448,28 @@ def _unit_sfs(source_bytes, vpath, backend, lim):
     return [_u.parse_serialized(unit_bytes, lim, where=vpath or "assets")]
 
 
-def _collect_mb_keys(sfs):
-    """Tap key MonoBehaviour co the xuat hien trong ban dich.
+def _collect_mb_info(sfs, source_locale="en", mb_index=None):
+    """1 lan quet SF: tra (terms, values).
 
-    - Term SharedTableData (key cua StringTable sau join).
-    - Ten term cua bang ngon ngu co cau truc (key sau khi trich dung cau
-      truc; truoc P0-3 cac term nay xuat hien duoi dang key generic).
-    - Key generic cua _mb_generic_kv (ca 2 che do split) tren item
-      generic cua tung sf. Chi dung de PHAN LOAI unmatched (khong dung
-      de anh xa ghi — generic MB chua ghi duoc o v1; LS + ST da ghi duoc
-      qua M1).
+    terms: tap key MonoBehaviour co the xuat hien trong ban dich — term
+      SharedTableData (ca dang phang + "Collection/Key"), ten term cua
+      bang ngon ngu co cau truc, key generic cua _mb_generic_kv (ca 2 che
+      do split), key StringTable "Collection/Key" tu mb_index (ke ca khi
+      bang ST khong nam trong cac sf nay — de phan loai chinh xac).
+    values: {key: {gia tri goc}} — term I2 o cot source_locale, entry ST o
+      locale source_locale (key "Collection/Key" tra nguoc qua mb_index),
+      gia tri generic (ca 2 che do split). Chi dung de PHAN LOAI unmatched:
+      key ma moi gia tri goc da biet deu bang ban dich -> unchanged.
     """
     from sdk.extraction import _mb_generic_kv
 
     terms = set()
+    values = {}
+    rev = {}
+    for coll, keys in (mb_index or {}).items():
+        for k, mid in (keys or {}).items():
+            rev[mid] = (coll, k)
+            terms.add("%s/%s" % (coll, k))
     for sf in sfs:
         try:
             items = sf.monobehaviour_texts()
@@ -469,7 +477,8 @@ def _collect_mb_keys(sfs):
             continue
         generic = []
         for item in items:
-            if item.get("kind") == "shared_table":
+            kind = item.get("kind")
+            if kind == "shared_table":
                 coll = item.get("collection") or ""
                 for term in (item.get("entries") or {}).values():
                     if isinstance(term, str):
@@ -479,11 +488,34 @@ def _collect_mb_keys(sfs):
                         # nhận cả dạng nhóm, không chỉ term phẳng.
                         if coll:
                             terms.add("%s/%s" % (coll, term))
-            elif item.get("kind") == "language_source":
+            elif kind == "language_source":
+                langs = item.get("languages") or []
+                col = None
+                for idx, lang in enumerate(langs):
+                    if lang.get("code") == source_locale:
+                        col = idx
+                        break
                 for term in (item.get("terms") or []):
-                    if isinstance(term.get("term"), str):
-                        terms.add(term["term"])
-            elif item.get("kind") == "generic":
+                    t = term.get("term")
+                    if isinstance(t, str):
+                        terms.add(t)
+                    if col is None:
+                        continue
+                    vals = term.get("values") or []
+                    if (isinstance(t, str) and col < len(vals)
+                            and isinstance(vals[col], str)):
+                        values.setdefault(t, set()).add(vals[col])
+            elif kind == "string_table":
+                for mid, v in (item.get("entries") or {}).items():
+                    hit = rev.get(mid)
+                    if hit is None:
+                        continue
+                    coll, k = hit
+                    terms.add("%s/%s" % (coll, k))
+                    if (item.get("locale") == source_locale
+                            and isinstance(v, str)):
+                        values.setdefault("%s/%s" % (coll, k), set()).add(v)
+            elif kind == "generic":
                 generic.append(item)
         if generic:
             for split in (False, True):
@@ -494,8 +526,19 @@ def _collect_mb_keys(sfs):
                 if split:
                     for lkv in (res.get("by_lang") or {}).values():
                         terms.update(lkv.keys())
+                        for k, v in lkv.items():
+                            values.setdefault(k, set()).add(v)
                 else:
                     terms.update((res.get("kv") or {}).keys())
+                    for k, v in (res.get("kv") or {}).items():
+                        values.setdefault(k, set()).add(v)
+    return terms, values
+
+
+def _collect_mb_keys(sfs, mb_index=None):
+    """Tap key MonoBehaviour co the xuat hien trong ban dich (xem
+    _collect_mb_info). Chi dung de PHAN LOAI unmatched."""
+    terms, _values = _collect_mb_info(sfs, mb_index=mb_index)
     return terms
 
 
@@ -537,11 +580,32 @@ def _collect_csv_values(source_bytes, backend, lim, source_locale):
     return out
 
 
-def _classify_unmatched(keys, translations, sfs, mb_terms, csv_values=None,
+def _collect_mb_values(sfs, source_locale="en", mb_index=None):
+    """{key: {gia tri goc}} cho moi key MonoBehaviour (xem _collect_mb_info).
+    Chi dung de PHAN LOAI unmatched (unchanged)."""
+    _terms, values = _collect_mb_info(sfs, source_locale=source_locale,
+                                      mb_index=mb_index)
+    return values
+
+
+def _st_key_in_index(key, mb_index):
+    """Key co phai "Collection/Key" nam trong mb_index (SharedTableData)?"""
+    if "/" not in key:
+        return False
+    coll, bare = key.split("/", 1)
+    keys = (mb_index or {}).get(coll)
+    return isinstance(keys, dict) and bare in keys
+
+
+def _classify_unmatched(keys, translations, sfs, mb_terms, mb_values=None,
+                        mb_index=None, csv_values=None,
                         source_locale="en"):
     """Phan loai key khong vao plan: unchanged / non_string_value /
-    not_json_dict / monobehaviour / not_found. Tra (unmatched, unchanged).
-
+    not_json_dict / string_table_other_unit / monobehaviour / not_found.
+    Tra (unmatched, unchanged). mb_values: {key: {gia tri goc}} — key ma
+    moi gia tri goc da biet deu bang ban dich thi unchanged (khong can ep,
+    khong phai loi). mb_index: key ST nam trong SharedTableData nhung bang
+    ST khong co trong file dang chon -> string_table_other_unit.
     csv_values (M3): {key: value} cot nguon cua file CSV doc lap — uu
     tien cao nhat (nhu extraction: CSV la nguon dau). TextAsset CSV
     trong SF cung duoc doc o day (cot source_locale)."""
@@ -587,6 +651,11 @@ def _classify_unmatched(keys, translations, sfs, mb_terms, csv_values=None,
             continue
         if any(key in s for s in nondict_scripts):
             unmatched.append({"key": key, "reason": "not_json_dict"})
+        elif mb_values and key in mb_values and mb_values[key] \
+                and all(v == translations[key] for v in mb_values[key]):
+            unchanged += 1
+        elif _st_key_in_index(key, mb_index):
+            unmatched.append({"key": key, "reason": "string_table_other_unit"})
         elif key in mb_terms:
             unmatched.append({"key": key, "reason": "monobehaviour"})
         else:
@@ -677,25 +746,32 @@ def _write_rebuild_outputs(source_name, patched_units, out_dir, zip_path,
 def build_rebuild_preview(source_bytes, *, source_name, translations,
                           provenance=None, choices=None, backend=None,
                           limits=None, progress_fn=None, src_path=None,
-                          force_streaming=False, source_locale="en"):
+                          force_streaming=False, source_locale="en",
+                          mode="REBUILD_SECTION", mb_index=None):
     """Xem truoc (E): nhom -> plan moi don vi -> ap thu trong RAM (hoac
     tinh replacements cho duong streaming) -> phan loai key khong ep
     duoc. Khong ghi file nao. Ket qua cung shape voi apply_rebuild.
     source_locale: cot ngon ngu goc de ghi vao MonoBehaviour (mac dinh
-    "en")."""
+    "en"). mode: che do ghi mac dinh cho entry MB/TextAsset
+    ("REBUILD_SECTION" mac dinh; "PATCH_INPLACE" thi entry nao vua se
+    noi tai cho, dai hon thi leo thang REBUILD_SECTION). mb_index:
+    {collection: {key: m_Id}} tu trich xuat IPA day du (tuy chon) — gop
+    voi index tu file dang chon (file thang khi trung) de phan loai key
+    StringTable o don vi khac."""
     return apply_rebuild(
         source_bytes, source_name=source_name, translations=translations,
         provenance=provenance, choices=choices, dry_run=True, confirm=False,
         backend=backend, limits=limits, progress_fn=progress_fn,
         src_path=src_path, force_streaming=force_streaming,
-        source_locale=source_locale)
+        source_locale=source_locale, mode=mode, mb_index=mb_index)
 
 
 def apply_rebuild(source_bytes, *, source_name, translations,
                   provenance=None, choices=None, dry_run=True, confirm=False,
                   backend=None, limits=None, progress_fn=None, src_path=None,
                   force_streaming=False, out_dir=REBUILD_OUT_DIR,
-                  zip_path=REBUILD_ZIP_PATH, source_locale="en"):
+                  zip_path=REBUILD_ZIP_PATH, source_locale="en",
+                  mode="REBUILD_SECTION", mb_index=None):
     """Dieu phoi (E): preview (dry_run) hoac ap that (dry_run=False +
     confirm=True). Loi toan cuc raise (bridge tra _err); loi tung don
     vi vao refused, khong fail ca dot."""
@@ -728,7 +804,7 @@ def apply_rebuild(source_bytes, *, source_name, translations,
             source_bytes, source_name=source_name, grouped=grouped,
             dry_run=dry_run, be=be, lim=lim, progress_fn=progress_fn,
             src_path=src_path, out_dir=out_dir, zip_path=zip_path,
-            warnings=warnings)
+            warnings=warnings, mode=mode, source_locale=source_locale)
 
     units_out: List[Dict[str, Any]] = []
     refused: List[Dict[str, str]] = []
@@ -741,8 +817,11 @@ def apply_rebuild(source_bytes, *, source_name, translations,
     # shared o localization-assets-shared, ST o localization-string-tables
     # — nen phai quet truoc, khong doi toi khi gap tung don vi). Liet ke
     # that bai thi mb_index = {} (ST chi ghi entry da co, khong chen
-    # duoc key thieu; LS khong can mb_index).
-    mb_index: Dict[str, Dict[str, int]] = {}
+    # duoc key thieu; LS khong can mb_index). mb_index ngoai (tu trich
+    # xuat IPA day du) gop them: du lieu cua file dang chon thang khi
+    # trung (collection, key) — de phan loai key ST o don vi khac khi chi
+    # chon 1 file .assets le.
+    mb_index_self: Dict[str, Dict[str, int]] = {}
     try:
         for (vpath, _kind) in _enumerate_units(source_bytes, be, lim):
             key = vpath or "<file>"
@@ -754,10 +833,19 @@ def apply_rebuild(source_bytes, *, source_name, translations,
     except PB3Error:
         pass
     try:
-        mb_index = _plan.build_mb_shared_index(
+        mb_index_self = _plan.build_mb_shared_index(
             [sf for lst in sfs_by_unit.values() for sf in lst])
     except Exception:
-        mb_index = {}
+        mb_index_self = {}
+    if mb_index:
+        merged_index: Dict[str, Dict[str, int]] = {}
+        for coll, keys in (mb_index or {}).items():
+            merged_index[coll] = dict(keys or {})
+        for coll, keys in (mb_index_self or {}).items():
+            merged_index.setdefault(coll, {}).update(keys or {})
+        mb_index = merged_index
+    else:
+        mb_index = mb_index_self
     # Vong 1: lap plan moi don vi.
     unit_plans = []  # (group_unit, vpath, kind, plan)
     for group_unit in sorted(groups, key=lambda g: "" if g is None else str(g)):
@@ -786,7 +874,7 @@ def apply_rebuild(source_bytes, *, source_name, translations,
                 plan = _plan.build_plan(
                     source_bytes, grp["translations"],
                     source_bundle=source_name, entry=vpath,
-                    mode="REBUILD_SECTION", backend=be, limits=lim,
+                    mode=mode, backend=be, limits=lim,
                     source_locale=source_locale, mb_index=mb_index)
             except ValueError:
                 continue  # don vi nay khong co key nao trung -> bo qua lang le o day, key se phan loai sau
@@ -859,12 +947,15 @@ def apply_rebuild(source_bytes, *, source_name, translations,
             pass
     try:
         all_sfs = [sf for lst in sfs_by_unit.values() for sf in lst]
-        mb_terms = _collect_mb_keys(all_sfs)
+        mb_terms, mb_values = _collect_mb_info(
+            all_sfs, source_locale=source_locale, mb_index=mb_index)
     except Exception:
         mb_terms = set()
+        mb_values = {}
     leftover = [k for k in translations if k not in planned_keys]
     unmatched, unchanged = _classify_unmatched(
-        leftover, translations, all_sfs, mb_terms,
+        leftover, translations, all_sfs, mb_terms, mb_values=mb_values,
+        mb_index=mb_index,
         csv_values=_collect_csv_values(source_bytes, be, lim, source_locale),
         source_locale=source_locale)
     for u in unmatched:
@@ -923,7 +1014,8 @@ def _err_text(exc):
 
 
 def _apply_streaming(source_bytes, *, source_name, grouped, dry_run, be, lim,
-                     progress_fn, src_path, out_dir, zip_path, warnings):
+                     progress_fn, src_path, out_dir, zip_path, warnings,
+                     mode="REBUILD_SECTION", source_locale="en"):
     """Duong streaming cho bundle .unity3d doc lap lon: liet ke entry
     SerializedFile bang stream (khong om payload) -> lap plan moi entry
     tu bytes entry (kind assets) -> patch tung entry CAB trong RAM
@@ -988,12 +1080,21 @@ def _apply_streaming(source_bytes, *, source_name, grouped, dry_run, be, lim,
     entry_bytes_by_name: Dict[str, bytes] = {}
     planned_keys = set()
     total_changes = 0
+    # M1 (G1): mb_index cho duong streaming (SharedTableData co the nam o
+    # entry khac StringTable trong cung bundle) — de ST chen key thieu +
+    # phan loai string_table_other_unit.
+    try:
+        mb_index_stream = _plan.build_mb_shared_index(
+            [sf for (_n, _d, sf) in sf_entries])
+    except Exception:
+        mb_index_stream = {}
     for (vpath, entry_bytes, _sf) in sf_entries:
         try:
             plan = _plan.build_plan(
                 entry_bytes, all_translations, source_bundle=source_name,
-                entry=None, mode="REBUILD_SECTION", backend=be,
-                limits=lim_stream)
+                entry=None, mode=mode, backend=be,
+                limits=lim_stream, source_locale=source_locale,
+                mb_index=mb_index_stream)
         except ValueError:
             continue  # entry nay khong co key nao trung
         except PB3Error as exc:
@@ -1116,22 +1217,27 @@ def _apply_streaming(source_bytes, *, source_name, grouped, dry_run, be, lim,
         source_name, grouped, units_out, refused, outputs, dest, zpath,
         warnings, all_translations, planned_keys,
         len(plans_by_entry), dry_run,
-        sfs=[sf for (_n, _d, sf) in sf_entries])
+        sfs=[sf for (_n, _d, sf) in sf_entries],
+        mb_index=mb_index_stream, source_locale=source_locale)
 
 
 def _streaming_result(source_name, grouped, units_out, refused, outputs,
                       dest, zpath, warnings, all_translations, planned_keys,
-                      _n_plans, dry_run, sfs=None):
+                      _n_plans, dry_run, sfs=None, mb_index=None,
+                      source_locale="en"):
     leftover = [k for k in all_translations if k not in planned_keys]
     unmatched: List[Dict[str, Any]] = []
     unchanged = 0
     if leftover and sfs:
         try:
-            mb_terms = _collect_mb_keys(sfs)
+            mb_terms, mb_values = _collect_mb_info(
+                sfs, source_locale=source_locale, mb_index=mb_index)
         except Exception:
             mb_terms = set()
+            mb_values = {}
         unmatched, unchanged = _classify_unmatched(
-            leftover, all_translations, sfs, mb_terms)
+            leftover, all_translations, sfs, mb_terms, mb_values=mb_values,
+            mb_index=mb_index)
         for u in unmatched:
             u["unit"] = source_name
     elif leftover:

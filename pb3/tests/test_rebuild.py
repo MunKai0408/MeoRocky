@@ -231,7 +231,46 @@ class TestMBClassification(unittest.TestCase):
                      (2001, 1, mb_raw)],
             types=[(49, None), (114, b"\x00" * 16)])
 
+    def _mb_sf_ambiguous(self):
+        # 2 object cung ten "MyMB", moi object 1 chuoi o 1 ngon ngu khac
+        # nhau (strong): key "MyMB.s1" anh xa 2 vi tri khac nhau -> mo ho,
+        # khong lap duoc plan (fail-closed).
+        def _aligned(text):
+            raw = text.encode("utf-8")
+            return struct.pack("<i", len(raw)) + raw + b"\x00" * ((-len(raw)) % 4)
+
+        mb_en = b"\x00" * 28 + _aligned("MyMB") + _aligned(
+            "Press start to play the game now")
+        mb_vi = (b"\x00" * 28 + _aligned("MyMB")
+                 + _aligned("Tôi yêu tiếng Việt rất nhiều"))
+        return build_serialized_file(
+            version=17,
+            objects=[(1001, 0, text_asset_data(
+                "en.json", json.dumps({"other": "zzz"},
+                                      ensure_ascii=False))),
+                     (2001, 1, mb_en),
+                     (2002, 1, mb_vi)],
+            types=[(49, None), (114, b"\x00" * 16)])
+
     def test_mb_key_in_unit_without_plan_classified_monobehaviour(self):
+        # mb-write-rest: key generic MO HO (>1 vi tri) van khong lap
+        # duoc plan -> phan loai monobehaviour, khong phai not_found.
+        sf_bytes = self._mb_sf_ambiguous()
+        sf = u.parse_serialized(sf_bytes, Limits(), where="t")
+        terms = rb._collect_mb_keys([sf])
+        self.assertTrue(terms)
+        key = sorted(terms)[0]
+        self.assertEqual(key, "MyMB.s1")
+        res = rb.apply_rebuild(
+            sf_bytes, source_name="t.assets",
+            translations={key: "[VI] " + key}, dry_run=True)
+        self.assertEqual(res["units"], [])
+        reasons = {m["key"]: m["reason"] for m in res["unmatched"]}
+        self.assertEqual(reasons.get(key), "monobehaviour")
+
+    def test_mb_generic_key_now_pressable(self):
+        # mb-write-rest: key generic KHONG mo ho gio ep duoc qua
+        # scan-path -> co unit thay doi, khong con unmatched.
         sf_bytes = self._mb_sf()
         sf = u.parse_serialized(sf_bytes, Limits(), where="t")
         terms = rb._collect_mb_keys([sf])
@@ -240,9 +279,8 @@ class TestMBClassification(unittest.TestCase):
         res = rb.apply_rebuild(
             sf_bytes, source_name="t.assets",
             translations={key: "[VI] " + key}, dry_run=True)
-        self.assertEqual(res["units"], [])
-        reasons = {m["key"]: m["reason"] for m in res["unmatched"]}
-        self.assertEqual(reasons.get(key), "monobehaviour")
+        self.assertEqual(len(res["units"]), 1)
+        self.assertEqual(res["unmatched"], [])
 
 
 class TestStreaming(unittest.TestCase):

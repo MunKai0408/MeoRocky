@@ -1894,6 +1894,9 @@ $("btn-extract-run").addEventListener("click", async () => {
     $("extract-result").innerHTML = html;
     // Giữ lại file JSON để dịch tiếp (dropdown tab Dịch, mặc định en.json).
     state.lastExtractFiles = parsed.files || [];
+    // Shared index {collection: {key: m_Id}} cho (E): de phan loai key
+    // StringTable o don vi khac khi chi ep tren 1 file .assets le.
+    state.extractSharedIndex = parsed.shared_index || null;
     const en = parsed.files.find((f) => f.locale === "en" && f.exported);
     if (en && en.exported) state.lastExtractKv = en.exported;
     refreshTranslateSourceSelect();
@@ -2301,6 +2304,7 @@ function translateProvenanceFor(name, from, to, keyCount) {
     return Object.assign({}, rec, {
       from: from || rec.from || null, to: to || rec.to || null,
       keys: typeof keyCount === "number" ? keyCount : rec.keys,
+      shared_index: state.extractSharedIndex || rec.shared_index || null,
       at,
     });
   }
@@ -2310,6 +2314,9 @@ function translateProvenanceFor(name, from, to, keyCount) {
     gameFile: state.file ? state.file.name : null,
     from: from || null, to: to || null,
     keys: typeof keyCount === "number" ? keyCount : null,
+    // Shared index {collection: {key: m_Id}} luc trich xuat (de (E) phan
+    // loai key StringTable o don vi khac) — null neu khong co.
+    shared_index: state.extractSharedIndex || null,
     at,
   };
   if (!entry) {
@@ -3566,7 +3573,8 @@ function rebuildRenderResult(parsed) {
   }
   const unmatched = parsed.unmatched || [];
   if (unmatched.length) {
-    const REASONS = { monobehaviour: "MonoBehaviour generic (scan path) / bảng ngôn ngữ CÓ type tree — chưa có đường ghi",
+    const REASONS = { monobehaviour: "key MonoBehaviour có trong game nhưng chưa ép được (ánh xạ vị trí mơ hồ hoặc mô phỏng ghi lỗi — xem skipped trong plan)",
+      string_table_other_unit: "StringTable ở đơn vị khác trong IPA (key có trong SharedTableData nhưng bảng không nằm trong file đang chọn — ép với file IPA đầy đủ)",
       not_found: "không tìm thấy trong đơn vị nào", not_json_dict: "TextAsset không phải JSON dạng dict",
       non_string_value: "giá trị gốc không phải chuỗi" };
     html += "<p>Không ép được (" + (parsed.unmatched_total || unmatched.length) + " key" +
@@ -3610,6 +3618,17 @@ function rebuildRenderResult(parsed) {
     const b = $(id); if (b) b.disabled = !hasConf;
   }
 }
+// Shared index {collection: {key: m_Id}} cho (E): lay tu provenance neu co
+// (merge sidecar: top-level; translation provenance: nested trong
+// .provenance; file JSON o tab Mod: top-level). Khong co thi null —
+// (E) van chay, chi phan loai key ST o don vi khac kem chinh xac hon.
+// KHONG lay tu state.extractSharedIndex o day: provenance da chup dung
+// index luc trich xuat/dich; index hien tai co the la cua game khac.
+function rebuildSharedIndex(prov) {
+  if (prov && prov.shared_index && typeof prov.shared_index === "object") return prov.shared_index;
+  if (prov && prov.provenance && prov.provenance.shared_index && typeof prov.provenance.shared_index === "object") return prov.provenance.shared_index;
+  return null;
+}
 async function rebuildRun(dryRun) {
   if (!state.file) { showError("Chưa chọn file. Hãy chọn file ở trên trước."); return; }
   const src = rebuildSourceData();
@@ -3637,13 +3656,17 @@ async function rebuildRun(dryRun) {
   }
   if (!(await rebuildConfirmLargeFile())) { showError("Đã huỷ — dùng bản iSH cho file này nếu cần."); return; }
   const choices = dryRun ? null : rebuildConflictChoices();
+  // Shared index cho (E) phan loai key StringTable o don vi khac (neu co
+  // trong provenance; khong co thi null — (E) tu xay tu file dang chon).
+  const mbIndex = rebuildSharedIndex(src.provenance);
   try {
     const label = dryRun ? "Xem trước ép lại (E)" : "Ép lại vào file gốc (E)";
     const { parsed } = await runOp(label, "rebuild_apply",
       [inputPath(), JSON.stringify(src.translations),
        src.provenance ? JSON.stringify(src.provenance) : null,
        choices ? JSON.stringify(choices) : null, dryRun, !dryRun,
-       dryRun ? null : JSON.stringify(state.gate.result)],
+       dryRun ? null : JSON.stringify(state.gate.result),
+       null, "REBUILD_SECTION", mbIndex ? JSON.stringify(mbIndex) : null],
       inputFileArgs(), !dryRun);
     if (dryRun) {
       st.preview = parsed;
@@ -3893,7 +3916,8 @@ function gateRenderResult(parsed) {
   }
   const unmatched = parsed.unmatched || [];
   if (unmatched.length || (parsed.unmatched_total || 0) > 0) {
-    const REASONS = { monobehaviour: "MonoBehaviour/StringTable — chưa ép được",
+    const REASONS = { monobehaviour: "key MonoBehaviour có trong game nhưng chưa ép được (ánh xạ vị trí mơ hồ hoặc mô phỏng ghi lỗi — xem skipped trong plan)",
+      string_table_other_unit: "StringTable ở đơn vị khác trong IPA (key có trong SharedTableData nhưng bảng không nằm trong file đang chọn — ép với file IPA đầy đủ)",
       not_found: "không tìm thấy trong đơn vị nào", not_json_dict: "TextAsset không phải JSON dạng dict",
       non_string_value: "giá trị gốc không phải chuỗi" };
     html += "<p>Key chưa ép (" + (parsed.unmatched_total || unmatched.length) +

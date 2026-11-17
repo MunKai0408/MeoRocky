@@ -428,6 +428,7 @@ def extract(path, source_paths=None, locales=None, merge_one_file=None):
             "total_entries": int(r.total_entries), "files": files,
             "merged_files": list(r.merged_files or []),
             "language_columns": list(r.language_columns or []),
+            "shared_index": dict(r.shared_index or {}),
             "skipped": list(r.skipped or []),
             "log": list((r.report or {}).get("log") or []),
             "errors": list(r.errors or []), "zip_path": zpath,
@@ -2003,10 +2004,14 @@ def mod_patch(path, edits_json, allow_write=False):
 # PLAN — mục 8 (sdk/plan.py): planner/executor tách rời cho Mod.
 # ======================================================================
 def plan_build(path, translations_json, entry=None, mode="REBUILD_SECTION",
-               rebuild_all=False, asset_names_json=None):
+               rebuild_all=False, asset_names_json=None,
+               mb_index_json=None):
     """Lập plan JSON từ bundle/assets: quét TextAsset JSON, đối key trong
     translations (key -> giá trị mới, như đầu ra tab Dịch) thành entry
-    mỗi asset. Không ghi file nào."""
+    mỗi asset. Không ghi file nào. mb_index_json (tùy chọn):
+    {collection: {key: m_Id}} từ trích xuất IPA đầy đủ — để plan chen
+    key StringTable thiếu + đặt tên key đúng khi chỉ lập plan trên 1
+    file .assets lẻ."""
     try:
         from sdk import plan as plan_sdk
 
@@ -2021,11 +2026,21 @@ def plan_build(path, translations_json, entry=None, mode="REBUILD_SECTION",
             asset_names = json.loads(asset_names_json)
             if not isinstance(asset_names, list):
                 raise ValueError("asset_names phải là JSON list tên asset.")
+        mb_index = None
+        if mb_index_json:
+            try:
+                mb_index = json.loads(mb_index_json)
+            except ValueError:
+                raise ValueError("mb_index_json không phải JSON hợp lệ.")
+            if not isinstance(mb_index, dict):
+                raise ValueError("mb_index_json phải là JSON object "
+                                 "{collection: {key: m_Id}}.")
         data = open(path, "rb").read()
         plan = plan_sdk.build_plan(
             data, translations, source_bundle=os.path.basename(path),
             entry=entry or None, mode=mode or "REBUILD_SECTION",
-            rebuild_all=bool(rebuild_all), asset_names=asset_names)
+            rebuild_all=bool(rebuild_all), asset_names=asset_names,
+            mb_index=mb_index)
         return json.dumps({"ok": True, "plan": plan}, ensure_ascii=False)
     except Exception as e:  # noqa: BLE001
         return _err(e)
@@ -2081,7 +2096,8 @@ def plan_undo(plan_json, path):
 
 def rebuild_apply(path, translations_json, provenance_json=None,
                   choices_json=None, dry_run=True, confirm=False,
-                  gate_verdict_json=None, source_locale="en"):
+                  gate_verdict_json=None, source_locale="en",
+                  mode="REBUILD_SECTION", mb_index_json=None):
     """(E) Ép bản dịch lại vào file gốc [bước 5, P0-1].
 
     Preview và apply là CÙNG 1 op với cờ dry_run (tiền lệ plan_apply /
@@ -2094,11 +2110,18 @@ def rebuild_apply(path, translations_json, provenance_json=None,
     lập lớn. Ghi TextAsset JSON dạng dict + TextAsset CSV (M3: file CSV
     độc lập trong ZIP + TextAsset CSV trong bundle/.assets, ghi đúng ô
     theo note vị trí) + MonoBehaviour/StringTable
-    (M1: bảng I2 byte-walk + StringTable co type tree, REBUILD_SECTION);
-    key MonoBehaviour generic (scan path) vao unmatched voi reason ro
-    rang. source_locale: cot ngon ngu goc de ghi (mac dinh "en"). File
-    gốc KHÔNG bị ghi đè; output là đơn vị nhỏ nhất đã patch, KHÔNG
-    phải IPA đóng gói lại.
+    (M1: bảng I2 byte-walk + StringTable có type tree, REBUILD_SECTION;
+    mb-write-rest: thêm bảng I2 có type tree, MonoBehaviour generic
+    scan-path, PATCH_INPLACE khi vừa); key MonoBehaviour không ép được
+    vào unmatched với reason rõ ràng (unchanged khi bản dịch bằng gốc,
+    string_table_other_unit khi bảng ST ở đơn vị khác trong IPA).
+    source_locale: cột ngôn ngữ gốc để ghi (mặc định "en"). mode: chế độ
+    ghi mặc định ("REBUILD_SECTION" mặc định; "PATCH_INPLACE" thì entry
+    nào vừa sẽ nối tại chỗ, dài hơn thì leo thang REBUILD_SECTION).
+    mb_index_json (tùy chọn): {collection: {key: m_Id}} từ trích xuất
+    IPA đầy đủ — để phân loại key StringTable ở đơn vị khác khi chỉ ép
+    trên 1 file .assets lẻ. File gốc KHÔNG bị ghi đè; output là đơn vị
+    nhỏ nhất đã patch, KHÔNG phải IPA đóng gói lại.
     Tiến độ thật kind "rebuild" qua _emit. Response: units[]/totals/
     unmatched[]/conflicts[]/refused[]/outputs/dest/zip_path + note.
     gate_verdict_json (P0-2, tùy chọn): verdict của cổng kiểm tra
@@ -2129,6 +2152,15 @@ def rebuild_apply(path, translations_json, provenance_json=None,
                 choices = json.loads(choices_json)
             except ValueError:
                 raise ValueError("choices_json không phải JSON hợp lệ.")
+        mb_index = None
+        if mb_index_json:
+            try:
+                mb_index = json.loads(mb_index_json)
+            except ValueError:
+                raise ValueError("mb_index_json không phải JSON hợp lệ.")
+            if not isinstance(mb_index, dict):
+                raise ValueError("mb_index_json phải là JSON object "
+                                 "{collection: {key: m_Id}}.")
         # JsNull (Pyodide) là falsy — dùng truthiness như plan_apply.
         dry = bool(dry_run) if dry_run is not None else True
         # dry_run=False + confirm=False: rebuild.apply_rebuild sẽ từ chối
@@ -2169,7 +2201,8 @@ def rebuild_apply(path, translations_json, provenance_json=None,
             translations=translations, provenance=provenance,
             choices=choices, dry_run=dry, confirm=bool(confirm),
             progress_fn=_pf, src_path=path,
-            source_locale=source_locale or "en")
+            source_locale=source_locale or "en",
+            mode=mode or "REBUILD_SECTION", mb_index=mb_index)
         # File gốc không đổi: xác minh sha sau khi chạy (mọi đường ghi
         # đều ra /tmp/rebuild_out, không bao giờ ghi đè nguồn).
         if hashlib.sha256(open(path, "rb").read()).hexdigest() != orig_sha:

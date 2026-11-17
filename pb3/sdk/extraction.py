@@ -237,6 +237,10 @@ class ExtractionResult:
     # file, keys, entries_before, sources, duplicates_identical, conflicts}
     # — conflicts liệt kê key trùng KHÁC giá trị (giữ bản đầu) kèm nguồn
     # từng bản; xem merge_language_outcomes().
+    # Shared index {collection: {key: m_Id}} từ mọi SharedTableData gặp lúc
+    # trích xuất — ghi vào sidecar provenance + trả trong response extract
+    # để (E) phân loại key StringTable ở đơn vị khác; không có thì {}.
+    shared_index: Dict[str, Dict[str, int]] = field(default_factory=dict)
 
 
 # ------------------------------------------------------------------ lớp VFS
@@ -571,12 +575,22 @@ def _resplit_long_chunks(chunks, modal_len):
     return out
 
 
-def _mb_generic_kv(items, split_languages=False):
+def _mb_generic_kv(items, split_languages=False, key_map_out=None):
     """Danh sách item MonoBehaviour generic -> dict kết quả.
 
     Key = "<tên object đã sanitize>.s<n>" (n là thứ tự chuỗi trong object;
     object có type tree thì key là tên field). Thứ tự key GIỮ NGUYÊN thứ tự
     trong game (không sắp xếp lại — ý 7).
+
+    key_map_out (dict tùy chọn, truyền vào sẽ được điền): {key trích xuất
+    cuối cùng: [(path_id, locator)]} — locator là ("scan", j) với object
+    không type tree (j = chỉ số slot theo thứ tự quét của
+    _scan_monobehaviour_slots) hoặc ("field", field_path) với object có
+    type tree. Dùng cho đường ghi generic: writer tìm lại đúng slot/field
+    theo key trích xuất. Điền key_map_out KHÔNG đổi bất kỳ output nào đã có
+    (kv/by_lang/kept/dropped/stats giữ nguyên). Một key có thể ánh xạ >1
+    locator (trùng key giữa các ngôn ngữ ở split=True) — bên gọi phải từ
+    chối khi mơ hồ, không đoán.
 
     split_languages=False (mặc định, tương thích ngược): trả {"kv": dict gộp,
     "by_lang": None, ...} như cũ — key trùng thêm hậu tố "#2", "#3"...
@@ -606,6 +620,7 @@ def _mb_generic_kv(items, split_languages=False):
     from sdk import langdetect as _ld
 
     kept_pairs = []  # (base_key, value, path_id, item_index)
+    pair_loc = []  # song song kept_pairs: (chỉ số trong pairs, field_path thô|None)
     dropped = 0
     for item_idx, item in enumerate(items):
         base = _sanitize_segment(item.get("name") or "") or ("mb_%d" % item.get("path_id", 0))
@@ -615,16 +630,17 @@ def _mb_generic_kv(items, split_languages=False):
             # Thứ tự chèn của dict = thứ tự trong type tree = thứ tự gốc
             # của game — KHÔNG sorted() lại (ý 7).
             for fp, v in fields.items():
-                pairs.append((re.sub(r"[^A-Za-z0-9_]+", "_", str(fp)).strip("_") or "f", v))
+                pairs.append((re.sub(r"[^A-Za-z0-9_]+", "_", str(fp)).strip("_") or "f", v, fp))
         else:
             for j, v in enumerate(item.get("strings") or []):
-                pairs.append(("s%d" % (j + 1), v))
-        for suffix, v in pairs:
+                pairs.append(("s%d" % (j + 1), v, None))
+        for j, (suffix, v, raw_fp) in enumerate(pairs):
             if not isinstance(v, str) or _mb_string_is_noise(v):
                 dropped += 1
                 continue
             kept_pairs.append(("%s.%s" % (base, suffix), v,
                                item.get("path_id", 0), item_idx))
+            pair_loc.append((j, raw_fp))
 
     kept = len(kept_pairs)
     stats: Dict[str, Any] = {"by_mechanism": {"strong": 0, "position": 0,
@@ -634,7 +650,7 @@ def _mb_generic_kv(items, split_languages=False):
     if not split_languages:
         kv: Dict[str, str] = {}
         used = set()
-        for key, v, _pid, _idx in kept_pairs:
+        for pi, (key, v, pid, _idx) in enumerate(kept_pairs):
             if key in used:
                 n = 2
                 while "%s#%d" % (key, n) in used:
@@ -642,6 +658,10 @@ def _mb_generic_kv(items, split_languages=False):
                 key = "%s#%d" % (key, n)
             used.add(key)
             kv[key] = v
+            if key_map_out is not None:
+                j, raw_fp = pair_loc[pi]
+                loc = ("field", raw_fp) if raw_fp is not None else ("scan", j)
+                key_map_out.setdefault(key, []).append((pid, loc))
         return {"kv": kv, "by_lang": None, "kept": kept, "dropped": dropped,
                 "stats": stats}
 
@@ -814,9 +834,78 @@ def _mb_generic_kv(items, split_languages=False):
                 continue
         used.add(out_key)
         bucket[out_key] = v
+        if key_map_out is not None:
+            j, raw_fp = pair_loc[pi]
+            loc = ("field", raw_fp) if raw_fp is not None else ("scan", j)
+            key_map_out.setdefault(out_key, []).append((pid, loc))
     stats["per_lang"] = {lang: len(kv) for lang, kv in sorted(by_lang.items())}
     return {"kv": {}, "by_lang": by_lang, "kept": kept, "dropped": dropped,
             "stats": stats}
+
+
+def generic_write_targets(sf):
+    """Target ghi cho MonoBehaviour generic (không phải nguồn ngôn ngữ).
+
+    Sống ở extraction (không phải unity) vì dùng _mb_generic_kv của
+    extraction; unity KHÔNG import extraction (tránh import vòng
+    unity <-> extraction — extraction đã import unity). Bên gọi
+    monobehaviour_write_targets truyền hàm này qua tham số generic_fn.
+
+    Dùng đúng cùng item list (monobehaviour_texts, chỉ kind "generic") +
+    cùng _mb_generic_kv mà extraction dùng — chạy CẢ split=False lẫn
+    split=True (web mặc định split=True, CLI mặc định split=False) rồi
+    gộp bản đồ key -> locator — nên key trích xuất ánh xạ đúng slot/field
+    cần ghi, kể cả hậu tố ổn định ".p<path_id>" (bóc theo path_id của
+    locator). Trả list {path_id, kind "generic", name, key, field_path,
+    before}: field_path = "scan[j]" (không type tree, j = chỉ số slot
+    theo thứ tự _scan_monobehaviour_slots) hoặc field_path thật (có type
+    tree). Key ánh xạ >1 locator KHÁC NHAU -> BỎ QUA (mơ hồ, không đoán —
+    vd term-key xuất hiện ở nhiều ngôn ngữ trong cùng 1 object); key ánh
+    xạ 1 locator duy nhất (kể cả trùng lặp giống hệt giữa 2 lần chạy)
+    -> target. Object nguồn ngôn ngữ (I2/StringTable/Shared/Locale)
+    không có ở đây — chúng có target riêng."""
+    items = [it for it in sf.monobehaviour_texts()
+             if it.get("kind") == "generic"]
+    if not items:
+        return []
+    by_pid = {}
+    for it in items:
+        by_pid.setdefault(it.get("path_id"), it)
+    key_map = {}
+    for split in (False, True):
+        _mb_generic_kv(items, split_languages=split,
+                       key_map_out=key_map)
+    out = []
+    for key, locs in key_map.items():
+        uniq = []
+        for loc in locs:
+            if loc not in uniq:
+                uniq.append(loc)
+        if len(uniq) != 1:
+            continue  # mơ hồ: >1 vị trí khác nhau cho cùng 1 key
+        pid, loc = uniq[0]
+        item = by_pid.get(pid)
+        if item is None:
+            continue
+        kind, val = loc
+        if kind == "scan":
+            strings = item.get("strings") or []
+            if not (0 <= val < len(strings)):
+                continue
+            before = strings[val]
+            fp = "scan[%d]" % val
+        else:
+            fields = item.get("fields") or {}
+            if val not in fields:
+                continue
+            before = fields[val]
+            fp = val
+        if not isinstance(before, str):
+            continue
+        out.append({"path_id": pid, "kind": "generic",
+                    "name": item.get("name") or "", "key": key,
+                    "field_path": fp, "before": before})
+    return out
 
 
 def _string_table_collection(name, loc):
@@ -1171,7 +1260,7 @@ def _build_layers(root_vfs, inv: List[disc.InventoryEntry], limits, backend, log
                   progress_fn: Optional[Callable[[str, int, Optional[int]], None]] = None,
                   skipped: Optional[List[Dict[str, Any]]] = None,
                   split_mono_languages: bool = False
-                  ) -> List[_Layer]:
+                  ) -> Tuple[List[_Layer], Dict[str, Dict[str, int]]]:
     """Các lớp VFS: gốc + container lồng + TextAsset Unity ảo (MemoryVFS).
 
     split_mono_languages=True (trích xuất có lọc ngôn ngữ, mục A): file
@@ -1180,6 +1269,10 @@ def _build_layers(root_vfs, inv: List[disc.InventoryEntry], limits, backend, log
     vì 1 file gộp trộn mọi ngôn ngữ; file gộp cũ chỉ còn khi không lọc
     (tương thích ngược).
 
+    Trả (layers, shared_index) — shared_index {collection: {key: m_Id}} từ
+    mọi SharedTableData gặp trong lúc quét (để sidecar provenance mang
+    theo cho (E): phân loại key StringTable ở đơn vị khác + chen key
+    thiếu; file không có SharedTableData thì {}).
     progress_fn("layers", đã_xong, tổng): báo sau mỗi entry đã xử lý xong
     (lag 1 entry: báo số entry trước đó để % luôn là việc ĐÃ xong).
 
@@ -1425,7 +1518,18 @@ def _build_layers(root_vfs, inv: List[disc.InventoryEntry], limits, backend, log
     if virtual:
         layers.append(_Layer("", MemoryVFS(virtual, limits=limits), "virtual",
                              origin_map=virtual_origin))
-    return layers
+    # Shared index {collection: {key: m_Id}} tu moi SharedTableData da gap
+    # (cho sidecar provenance -> (E)); khong co thi {}.
+    shared_index: Dict[str, Dict[str, int]] = {}
+    for item in mb_shared:
+        coll = item.get("collection") or ""
+        if not coll:
+            continue
+        d = shared_index.setdefault(coll, {})
+        for mid, key in (item.get("entries") or {}).items():
+            if isinstance(key, str) and isinstance(mid, int):
+                d[key] = mid
+    return layers, shared_index
 
 
 def _find_layer(layers: List[_Layer], full_path: str) -> Tuple[Any, str]:
@@ -1796,9 +1900,10 @@ def run_extraction(req: ExtractionRequest) -> ExtractionResult:
     # locales hoặc cứng req.locale): file ảo tách theo ngôn ngữ, không còn
     # file gộp trộn mọi ngôn ngữ. Không lọc -> file gộp cũ (tương thích ngược).
     split_mono = bool(locales) or (req.locale not in (None, "all"))
-    layers = _build_layers(root_vfs, inv, limits, backend, log,
-                           progress_fn=_progress, skipped=result.skipped,
-                           split_mono_languages=split_mono)
+    layers, shared_index = _build_layers(root_vfs, inv, limits, backend, log,
+                                         progress_fn=_progress, skipped=result.skipped,
+                                         split_mono_languages=split_mono)
+    result.shared_index = dict(shared_index or {})
     records = [r for r in req.registry.active()
                if r.manifest is not None and r.manifest.kind in ("format", "extractor")]
     log("plugin định dạng: %d (%s)"
@@ -2685,6 +2790,7 @@ def _export(req: ExtractionRequest, result: ExtractionResult, source_hash: str,
                 "file": outcome.exported,
                 "merged_from": list(outcome.merged_from),
                 "keys": dict(outcome.merge_sources),
+                "shared_index": dict(result.shared_index or {}),
                 "duplicates_identical": (stat or {}).get("duplicates_identical", 0),
                 "conflicts": (stat or {}).get("conflicts", []),
                 "conflicts_total": (stat or {}).get("conflicts_total", 0),
@@ -2925,8 +3031,8 @@ def apply_edits(*, edited_json: str, report_path: str, registry, limits=None,
         root_vfs, lim,
         on_entry=lambda done, name: _ap_safe("inventory", done, None))
     backend = unity_sdk.UnityBackend("AUTO", lim)
-    layers = _build_layers(root_vfs, inv, lim, backend, lambda m: None,
-                           progress_fn=_ap_safe)
+    layers, _shared_index = _build_layers(root_vfs, inv, lim, backend, lambda m: None,
+                                          progress_fn=_ap_safe)
     vfs_for, rel = _find_layer(layers, target["path"])
     ctx = PluginContext(vfs_for, lim, tempdir=tempdir, dry_run=not allow_write).for_plugin(rec.manifest)
     base_bytes = bytes(vfs_for.read(rel, None))

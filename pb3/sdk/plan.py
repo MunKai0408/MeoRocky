@@ -26,12 +26,15 @@ Model plan (theo phan tich Joseph 13:52, muc C5):
 - Chi TextAsset JSON dang dict moi vao plan. Asset khong phai JSON, JSON
   khong phai dict, hoac khong co key nao trung thi vao `skipped` kem ly do
   (khong bien mat lang le).
-- M1 (G1): MonoBehaviour/StringTable cung vao plan (asset_type
-  "MonoBehaviour", op REBUILD_SECTION): bang ngon ngu I2 (byte-walk) va
-  StringTable co type tree (m_TableData[].m_Localized); key StringTable
-  thieu trong bang thi CHEN entry moi (field_path "m_TableData[+]" kem
-  "element"). before_sha/after_sha = sha object bytes (khong phai script).
-  Generic MonoBehaviour (scan path / field le) chua vao plan o v1.
+- M1 (G1) + mb-write-rest: MonoBehaviour/StringTable cung vao plan
+  (asset_type "MonoBehaviour", op REBUILD_SECTION mac dinh, PATCH_INPLACE
+  khi object moi vua trong object cu): bang ngon ngu I2 (byte-walk + co
+  type tree), StringTable co type tree (m_TableData[].m_Localized),
+  MonoBehaviour generic (scan-path "scan[i]" khi khong type tree, field
+  path that khi co type tree — key anh xa dung key trich xuat qua
+  _mb_generic_kv, mo ho >1 vi tri thi bo qua); key StringTable thieu trong
+  bang thi CHEN entry moi (field_path "m_TableData[+]" kem "element").
+  before_sha/after_sha = sha object bytes (khong phai script).
 - `op` mac dinh REBUILD_SECTION (duong patch da kiem chung qua mod_patch /
   apply_patch, tu leo tu PATCH_INPLACE khi chuoi moi dai hon). Ghi CHU:
   op REBUILD_ALL (che do ghi cua Unity) VAN BI KHOA tren web — can
@@ -67,6 +70,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from core.errors import PB3Error
 from core.limits import Limits
 from sdk import unity as _u
+from sdk.extraction import generic_write_targets as _generic_write_targets
 
 PLAN_VERSION = 1
 PLAN_BACKUP_ROOT = "/tmp/plan_backup"
@@ -479,7 +483,8 @@ def build_plan(source_bytes, translations, *, source_bundle, entry=None,
     if sf is not None:
         try:
             targets, mb_notes = _u.monobehaviour_write_targets(
-                sf, source_locale, mb_index)
+                sf, source_locale, mb_index,
+                generic_fn=_generic_write_targets)
         except PB3Error:
             targets, mb_notes = [], []
         for note in mb_notes:
@@ -487,21 +492,8 @@ def build_plan(source_bytes, translations, *, source_bundle, entry=None,
                             % (unit_display, req_entry or ""),
                             "reason": note})
         by_pid: Dict[int, List[Dict[str, Any]]] = {}
-        generic_hits: List[Dict[str, Any]] = []
         for t in targets:
-            if t.get("kind") == "generic":
-                # Generic MB chua vao plan o v1 (key la field path, khong
-                # khop output trich xuat da gop) — ghi skipped neu trung
-                # translations, khong bo im lang.
-                if t.get("key") in translations:
-                    generic_hits.append(t)
-                continue
             by_pid.setdefault(int(t["path_id"]), []).append(t)
-        for t in generic_hits:
-            skipped.append({"asset_path": "%s::%s::%s"
-                            % (unit_display, req_entry or "", t.get("name") or ""),
-                            "reason": "key generic MonoBehaviour %r chua ho tro "
-                                      "ghi o v1" % t.get("key")})
         rev: Dict[int, Tuple[str, str]] = {}
         for coll, keys in (mb_index or {}).items():
             for k, mid in (keys or {}).items():
@@ -583,17 +575,40 @@ def build_plan(source_bytes, translations, *, source_bundle, entry=None,
                                           % _err_text(exc)})
                 continue
             try:
-                if tgts[0].get("kind") == "language_source":
-                    new_obj = _u.write_language_source_bytes(
-                        old_obj, changes, sf.endian)
-                else:
-                    new_obj, _applied = _u.write_monobehaviour_object_bytes(
-                        sf, pid, changes)
+                new_obj, _applied = _u.write_monobehaviour_new_bytes(
+                    sf, pid, changes)
             except PB3Error as exc:
                 skipped.append({"asset_path": asset_path,
                                 "reason": "khong mo phong duoc patch MB: %s"
                                           % _err_text(exc)})
                 continue
+            # Op theo mode: PATCH_INPLACE chi khi object moi vua trong
+            # object cu (dem NUL cuoi object, giu nguyen do dai + offset);
+            # dai hon -> leo thang REBUILD_SECTION + canh bao. Bang I2
+            # byte-walk: dem qua lon lam parse lai loi thi giu REBUILD_SECTION.
+            op = "REBUILD_SECTION"
+            if mode == "PATCH_INPLACE":
+                if len(new_obj) > len(old_obj):
+                    warnings.append(
+                        "object moi dai hon %d byte: PATCH_INPLACE khong chua "
+                        "duoc, leo thang REBUILD_SECTION"
+                        % (len(new_obj) - len(old_obj)))
+                else:
+                    padded = new_obj + b"\x00" * (len(old_obj) - len(new_obj))
+                    if (tgts[0].get("kind") == "language_source"
+                            and _u.parse_language_source_bytes(
+                                padded, sf.endian) is None):
+                        warnings.append(
+                            "dem NUL lam bang I2 vuot gioi han trailing: "
+                            "giu REBUILD_SECTION")
+                    else:
+                        if len(new_obj) < len(old_obj):
+                            warnings.append(
+                                "object moi ngan hon %d byte: khi ap se dem "
+                                "NUL cuoi object (giu nguyen do dai + offset)"
+                                % (len(old_obj) - len(new_obj)))
+                        op = "PATCH_INPLACE"
+                        new_obj = padded
             eid = hashlib.sha256(
                 ("%s|%s|%d|%s|%s|MonoBehaviour"
                  % (source_bundle, entry or "", pid, name,
@@ -603,8 +618,7 @@ def build_plan(source_bytes, translations, *, source_bundle, entry=None,
             entries.append({
                 "id": eid, "asset_path": asset_path,
                 "asset_type": "MonoBehaviour",
-                # MB v1 chi ho tro REBUILD_SECTION (khong PATCH_INPLACE).
-                "op": "REBUILD_SECTION", "object": int(pid), "kind": kind,
+                "op": op, "object": int(pid), "kind": kind,
                 "entry": req_entry, "vpath": entry,
                 "changes": changes,
                 "preview_before": {c["key"]: c["before"] for c in changes},
@@ -661,9 +675,9 @@ def validate_plan(plan):
                              "(chi TextAsset va MonoBehaviour)."
                              % (e["id"], e["asset_type"]))
         if e["asset_type"] == "MonoBehaviour" \
-                and e["op"] != "REBUILD_SECTION":
+                and e["op"] not in ("REBUILD_SECTION", "PATCH_INPLACE"):
             raise ValueError("entry %s: MonoBehaviour chi ho tro op "
-                             "REBUILD_SECTION (nhan %r)."
+                             "REBUILD_SECTION/PATCH_INPLACE (nhan %r)."
                              % (e["id"], e["op"]))
         if e["op"] not in _PLAN_OPS:
             raise ValueError("entry %s: op %r khong ho tro."
@@ -720,8 +734,8 @@ def _apply_entry_changes(kind, unit_bytes, req_entry, entry, backend, lim,
     doi dung / o khac giu nguyen. File CSV doc lap (kind "csv") ap truc
     tiep len bytes don vi; TextAsset CSV trong bundle/assets patch bang
     apply_patch nhu JSON.
-    MonoBehaviour (M1): ap qua apply_monobehaviour_patch (REBUILD_SECTION)
-    roi verify object bytes sha == after_sha. Tra (unit_bytes_moi,
+    MonoBehaviour (M1): ap qua apply_monobehaviour_patch (op theo plan:
+    PATCH_INPLACE/REBUILD_SECTION) roi verify object bytes sha == after_sha. Tra (unit_bytes_moi,
     write_mode_used). Loi verify -> PB3Error (khong ghi gi).
     progress_fn(done, total) tuy chon (P0-1): goi sau moi change khi mo
     phong (None thi khong goi, test cu khong doi)."""
