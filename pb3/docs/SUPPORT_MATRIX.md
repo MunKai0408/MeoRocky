@@ -54,12 +54,12 @@
 | UnityFS v6/v7/v8 (bundle) | có | có (dựng lại bundle, giữ compression gốc) | Python thuần + lz4/lzma | M2 |
 | UnityFS v9 (bundle) | có (chỉ đọc; BlockInfo có offset u64, block căn 16) | không (v9 chỉ đọc — dựng lại bundle v9 chưa hỗ trợ) | Python thuần | M2 |
 | Zstd (block bundle, mã nén 5) | có — CHỈ trên web BearTea (qua fzstd, cầu nối JS) | không (ghi lại bằng block không nén, cờ 0) | fzstd 0.1.1 (MIT, vendored site/fzstd/) | M2 |
-| SerializedFile v15-23 (.assets) | có (metadata, object table, TextAsset) | có (patch TextAsset: PATCH_INPLACE / REBUILD_SECTION) | Python thuần | M2 |
+| SerializedFile v15-26 (.assets) | có (metadata, object table, TextAsset; v23+ type tree có ref hashes, v26 shared subtrees) | có (patch TextAsset: PATCH_INPLACE / REBUILD_SECTION) | Python thuần | M2 |
 | LZ4 block / LZ4HC | có | có | binding lz4 (ưu tiên) / Python thuần (literal-only khi ghi) | M2 |
 | LZ4 frame | có | chỉ qua binding lz4 | binding lz4.frame (ưu tiên) / Python thuần (chỉ đọc) | M2 |
 | LZMA (Unity raw) | có | có | lzma (thư viện chuẩn) | M2 |
 | UnityPy (object phức tạp) | khi cài được | khi cài được | UnityPy 1.25.4 (iSH đã chứng minh) | M2 |
-| SerializedFile v<15 / v>23, UnityWeb/UnityRaw, LZHAM, bundle mã hóa | không | không | chưa có (E_UNSUPPORTED_FORMAT / E_ENCRYPTED) | M0 |
+| SerializedFile v<15 / v>26, UnityWeb/UnityRaw, LZHAM, bundle mã hóa | không | không | chưa có (E_UNSUPPORTED_FORMAT / E_ENCRYPTED) | M0 |
 
 ## Đã xác minh trên game thật
 
@@ -89,7 +89,7 @@ Mọi plugin/engine còn lại có fixture (chưa test game thật):
 - xml_strings
 - yaml_ini
 - zip
-- UnityFS v6/v7/v8/v9 + SerializedFile v15–23 (v9 chỉ đọc, Zstd chỉ đọc trên web, fixture)
+- UnityFS v6/v7/v8/v9 + SerializedFile v15–26 (v9 chỉ đọc, Zstd chỉ đọc trên web, fixture)
 - Godot PCK v1/v2 (đọc, fixture)
 - Unreal PAK UE4/UE5 (đọc, fixture)
 
@@ -99,7 +99,7 @@ Mọi plugin/engine còn lại có fixture (chưa test game thật):
 - **.locmeta nhị phân (Unreal)** — chưa có parser; chỉ .locres được đọc.
 - **Godot PCK v0/v3** — chỉ v1/v2 có fixture.
 - **Unreal PAK entry nén/mã hóa/Oodle** — chỉ đọc entry không nén, không mã hóa.
-- **SerializedFile v<15 / v>23** — chỉ v15–23 có fixture.
+- **SerializedFile v<15 / v>26** — chỉ v15–26 có fixture.
 - **Bundle Unity mã hóa** — báo E_ENCRYPTED, không giải mã.
 - **Cocos/Defold/GameMaker** — chỉ nhận diện, chưa trích xuất.
 
