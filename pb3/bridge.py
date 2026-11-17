@@ -1852,9 +1852,10 @@ def font_merge(path, donor_path, target_face=0, donor_face=0):
     """Gộp glyph tiếng Việt còn thiếu từ font nguồn vào font đích.
 
     Trả font mới ra /tmp/merged.ttf (hoặc /tmp/merged.ttc khi đích là
-    .ttc) để JS tải về. Chỉ font TrueType glyf; atlas SDF của
-    TextMeshPro tái tạo bằng tính năng thử nghiệm tmp_sdf_regen (nút
-    "Tái tạo atlas SDF" ở mục TMP). TTC: chọn
+    .ttc) để JS tải về. Font TrueType glyf và font CFF (.otf) không
+    CID đều gộp được; font CFF CID-keyed (Noto CJK) thì báo lỗi rõ,
+    không ghi đè. Atlas SDF của TextMeshPro tái tạo bằng tính năng
+    thử nghiệm tmp_sdf_regen (nút "Tái tạo atlas SDF" ở mục TMP). TTC: chọn
     face bằng target_face/donor_face (mặc định face 0).
     """
     try:
@@ -2228,12 +2229,14 @@ def font_unify(path, donor_path):
     """"Dùng chung 1 font": gom mọi font game về Be Vietnam Pro (phần D).
 
     Dùng lại kết quả liệt kê (cache) rồi lập kế hoạch + làm thật phần
-    web làm được: gộp glyph tiếng Việt còn thiếu vào từng font TTF rời
-    (sdk/font.merge_vietnamese). Trả file font_unified.zip để JS tải về:
-    các *.vi.ttf đã gộp + font_unify_plan.json + tmp_fallback_plan.json
-    (nếu có TMP) + BeVietnamPro-Regular.ttf (đủ 142/142, OFL).
-    TMP atlas SDF, font OTF/TTC/nhúng: chỉ có kế hoạch + đường Editor
-    trong plan (xem LIMITS của sdk/font_list).
+    web làm được: gộp glyph tiếng Việt còn thiếu vào từng font TTF/OTF
+    không CID rời (sdk/font.merge_vietnamese). Trả file font_unified.zip
+    để JS tải về: các *.vi.ttf / *.vi.otf đã gộp + font_unify_plan.json
+    + tmp_fallback_plan.json (nếu có TMP) + BeVietnamPro-Regular.ttf
+    (đủ 142/142, OFL). Font gộp lỗi (vd OTF CID) nằm trong danh sách
+    `merged` với trường `error`, không có trong zip. TMP atlas SDF,
+    font TTC/nhúng: chỉ có kế hoạch + đường Editor trong plan (xem
+    LIMITS của sdk/font_list).
     """
     try:
         from sdk import font_list as fl
@@ -2255,6 +2258,8 @@ def font_unify(path, donor_path):
                             json.dumps(plan["fallback_plan"],
                                      ensure_ascii=False, indent=1))
             for m in merged:
+                if "data" not in m:
+                    continue  # font gop loi (vd OTF CID): chi bao loi
                 zf.writestr(m["output"], m["data"])
             zf.writestr(fl.DONOR_FILE, donor)
         return json.dumps({
