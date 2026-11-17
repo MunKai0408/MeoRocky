@@ -1,0 +1,4 @@
+Approval probe — Bear path test write
+Date: 2026-11-17 15:12 +07
+Branch: muse-test-workflow-20261117
+Purpose: verify whether a GitHub write via custom.github-bear still triggers an approval card.
