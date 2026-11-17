@@ -1,10 +1,10 @@
 {
-  "when": "2026-11-16T08:28:09.399Z",
+  "when": "2026-11-17T14:39:01.090Z",
   "failures": 0,
   "results": {
     "worker_get_health": {
       "ok": true,
-      "detail": "GET / -> 200 {\"ok\":true,\"service\":\"beartea-translate-proxy\",\"version\":2,\"monthly_limit\":500000,\"note\":\"POST {text, target, source?} để dịch 1 chuỗi; POST {texts:[...], target, source?} để dịch batch (tối đa 100 chuỗi, tổng 5000 ký tự).\"}"
+      "detail": "GET / -> 200 {\"ok\":true,\"service\":\"beartea-translate-proxy\",\"version\":3,\"config\":\"ok\",\"configured\":true,\"provider\":\"google\",\"translate_provider\":\"auto\",\"monthly_limit\":500000,\"ai_daily_limit\":10000,\"ai_daily_guard\":9000,\"ai_daily_used\":null,\"note\":\"POST {text, target, source?} để dịch 1 chuỗi; POST {texts:[...], target, source?} để dịch batch (tối đa 100 chuỗi, tổng 5000 ký tự). Provider: TRANSLATE_PROVIDER=auto (Google nếu có key, nếu không Workers AI) | google | workers-ai.\"}"
     },
     "worker_translate_ok": {
       "ok": true,
@@ -24,7 +24,7 @@
     },
     "worker_circuit_breaker": {
       "ok": true,
-      "detail": "lần 1,2 -> google_rate_limited/google_rate_limited; lần 3 -> breaker_open (không gọi Google nữa) | googleCalls=6 | KV usage=0 (hoàn lại, bằng lúc đầu: null) | breaker={\"failures\":2,\"open_until\":1794817749334}"
+      "detail": "lần 1,2 -> google_rate_limited/google_rate_limited; lần 3 -> breaker_open (không gọi Google nữa) | googleCalls=6 | KV usage=0 (hoàn lại, bằng lúc đầu: null) | breaker={\"failures\":2,\"open_until\":1794926400568}"
     },
     "worker_rate_limit_ip": {
       "ok": true,
@@ -48,7 +48,7 @@
     },
     "gt_all_fail_throws_for_offline": {
       "ok": true,
-      "detail": "Google Sorry + MyMemory 500 -> ném kind=\"mymemory\" (phải = 'mymemory': bridge bắt lỗi này rồi dùng từ điển offline)"
+      "detail": "Google Sorry + MyMemory 500 -> ném kind=\"all_failed\" (phải = 'all_failed': lỗi cuối tóm tắt cả chuỗi; bridge bắt lỗi này rồi dùng từ điển offline)"
     },
     "gt_helpers_direct": {
       "ok": true,

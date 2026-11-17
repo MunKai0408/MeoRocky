@@ -223,7 +223,9 @@ async function callWorker(env, body, method = "POST", ip = "1.2.3.4") {
   const r2 = await callWorker(env, { text: "Hello", target: "vi" }, "POST", "9.9.9.2");
   const r3 = await callWorker(env, { text: "Hello", target: "vi" }, "POST", "9.9.9.3");
   const used = await env.TRANSLATE_USAGE.get("usage:" + monthKey());
-  const breaker = JSON.parse((await env.TRANSLATE_USAGE.get("breaker")) || "{}");
+  // Ngắt mạch RIÊNG TỪNG PROVIDER (T1 Workers AI): key KV là
+  // "breaker:google" / "breaker:workers-ai", không còn "breaker" chung.
+  const breaker = JSON.parse((await env.TRANSLATE_USAGE.get("breaker:google")) || "{}");
   // before là null (KV chưa có key) -> hoàn lại đúng nghĩa là usage "0".
   const expectedUsed = before === null ? "0" : before;
   rec("worker_circuit_breaker", r1.status === 429 && r1.data && r1.data.code === "google_rate_limited" &&
