@@ -2035,7 +2035,9 @@ def rebuild_apply(path, translations_json, provenance_json=None,
     ưu tiên, translation sidecar fallback, không provenance thì quét
     tất cả), chọn bản thắng cho xung đột, 1 plan mỗi đơn vị, áp bằng
     executor hiện có + đường rebuild streaming cho bundle .unity3d độc
-    lập lớn. Ghi TextAsset JSON dạng dict + MonoBehaviour/StringTable
+    lập lớn. Ghi TextAsset JSON dạng dict + TextAsset CSV (M3: file CSV
+    độc lập trong ZIP + TextAsset CSV trong bundle/.assets, ghi đúng ô
+    theo note vị trí) + MonoBehaviour/StringTable
     (M1: bảng I2 byte-walk + StringTable co type tree, REBUILD_SECTION);
     key MonoBehaviour generic (scan path) vao unmatched voi reason ro
     rang. source_locale: cot ngon ngu goc de ghi (mac dinh "en"). File

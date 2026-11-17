@@ -254,17 +254,100 @@ def build_mb_shared_index(sfs):
     return index
 
 
+def _csv_name(entry, req_entry):
+    """Ten hien thi cua file CSV cho csvutil (basename).
+
+    TextAsset CSV: ten asset (phan sau "::" cuoi cua asset_path). File CSV
+    doc lap: basename vpath. Ten chi dung de hien thi + chon che do parse
+    theo duoi file; noi dung CSV moi quyet dinh cot/dong."""
+    ap = entry.get("asset_path") or ""
+    if "::" in ap:
+        return ap.rsplit("::", 1)[-1]
+    raw = entry.get("vpath") or req_entry or "csv"
+    return str(raw).rsplit("/", 1)[-1]
+
+
+def _csv_plan_entry(data, name, *, asset_path, source_bundle, entry, kind,
+                    req_entry, object_id, translations, source_locale, mode):
+    """Lap 1 entry CSV (M3) tu bytes CSV goc. Tra (entry|None, ly_do|None).
+
+    data: bytes CSV (file doc lap hoac script TextAsset). name: ten de
+    hien thi/ban do cot (basename file hoac ten asset). object_id: 0 voi
+    file doc lap, path_id voi TextAsset trong bundle/assets. Change mang
+    them "cell": "csv:<hang>:<cot>" (vi tri o goc) de ghi dung o;
+    before_sha/after_sha la sha cua toan bo CSV (file doc lap) hoac cua
+    script (TextAsset). Tra (None, None) khi data khong phai CSV — caller
+    tu quyet dinh ly do bo qua; (None, ly_do) khi la CSV nhung khong lap
+    duoc entry."""
+    from core.errors import PB3Error
+    from sdk.csvutil import is_localization_csv, parse_csv, simulate_csv, \
+        source_map
+    if not is_localization_csv(data, name):
+        return None, None
+    try:
+        mapping, _dups, _eff = source_map(data, name, source_locale)
+    except PB3Error as exc:
+        return None, "khong doc duoc CSV: %s" % _err_text(exc)
+    if not mapping:
+        try:
+            has_rows = bool(parse_csv(data, name).get("entries"))
+        except PB3Error:
+            has_rows = False
+        if not has_rows:
+            return None, "CSV khong co dong du lieu"
+        return None, "CSV khong co cot %r de ghi" % source_locale
+    changes = []
+    warnings: List[str] = []
+    for key in sorted(translations):
+        if key not in mapping:
+            continue
+        cur = mapping[key]["value"]
+        new = translations[key]
+        if cur == new:
+            continue
+        if _placeholders(cur) != _placeholders(new):
+            warnings.append(
+                "key %r: placeholder doi %s -> %s (kiem tra lai ban dich)"
+                % (key, sorted(_placeholders(cur)),
+                   sorted(_placeholders(new))))
+        changes.append({"key": key, "before": cur, "after": new,
+                        "cell": mapping[key]["cell"]})
+    if not changes:
+        return None, "khong co key nao trung voi ban dich"
+    data_b = bytes(data)
+    try:
+        after_b = simulate_csv(data_b, name, changes, source_locale)
+    except (ValueError, PB3Error) as exc:
+        return None, "khong mo phong duoc patch: %s" % _err_text(exc)
+    eid = hashlib.sha256(
+        ("%s|%s|%d|%s|%s|csv" % (source_bundle, entry or "", object_id, name,
+                                json.dumps(changes, ensure_ascii=False,
+                                           sort_keys=True))).encode("utf-8")
+    ).hexdigest()[:12]
+    return {
+        "id": eid, "asset_path": asset_path, "asset_type": "TextAsset",
+        "format": "csv", "op": mode, "object": int(object_id), "kind": kind,
+        "entry": req_entry, "vpath": entry,
+        "source_locale": source_locale,
+        "changes": changes,
+        "preview_before": {c["key"]: c["before"] for c in changes},
+        "preview_after": {c["key"]: c["after"] for c in changes},
+        "before_sha": _sha(data_b), "after_sha": _sha(after_b),
+        "selected": True, "warnings": warnings,
+    }, None
+
+
 def build_plan(source_bytes, translations, *, source_bundle, entry=None,
                mode="REBUILD_SECTION", rebuild_all=False, asset_names=None,
                backend=None, limits=None, source_locale="en", mb_index=None):
-    """Lap plan tu bundle/assets: quet TextAsset JSON + MonoBehaviour /
-    StringTable, doi key trong `translations` (key -> gia tri moi) thanh
-    entry moi asset.
+    """Lap plan tu bundle/assets/file CSV: quet TextAsset JSON + CSV +
+    MonoBehaviour / StringTable, doi key trong `translations` (key ->
+    gia tri moi) thanh entry moi asset.
 
     entry: vpath toi don vi ("Payload/.../x.bundle::CAB-..." hoac None neu
-    file dau vao chinh la bundle/.assets). asset_names: chi ap cho cac
-    TextAsset co ten nay (vd ["en.json"] — mac dinh: moi asset JSON co key
-    trung). source_locale: cot ngon ngu goc de ghi (mac dinh "en" — ghi
+    file dau vao chinh la bundle/.assets/file CSV). asset_names: chi ap cho
+    cac TextAsset co ten nay (vd ["en.json"] — mac dinh: moi asset JSON co
+    key trung). source_locale: cot ngon ngu goc de ghi (mac dinh "en" — ghi
     vao cot/bang cua locale nay vi chua co cot vi). mb_index:
     {collection: {key: m_Id}} tu build_mb_shared_index (can de dat ten
     key StringTable va chen entry thieu); None thi StringTable chi ghi
@@ -282,13 +365,30 @@ def build_plan(source_bytes, translations, *, source_bundle, entry=None,
     be = backend or _u.UnityBackend("NATIVE")
     kind, unit_bytes, req_entry, label = _resolve_unit(
         bytes(source_bytes), entry, be, lim)
-    tas, _warn = _read_unit_text_assets(kind, unit_bytes, req_entry, be, lim)
-    wanted = None
-    if asset_names:
-        wanted = {str(n) for n in asset_names}
     entries: List[Dict[str, Any]] = []
     skipped: List[Dict[str, str]] = []
     unit_display = label or (entry or os.path.basename(str(source_bundle)))
+    if kind == "csv":
+        # M3: don vi la file CSV doc lap — lap entry CSV truc tiep, khong
+        # can doc TextAsset/SF (khoi MB ben duoi tu bo qua vi CSV khong
+        # phai SerializedFile).
+        csv_name = (label or "csv").rsplit("/", 1)[-1]
+        ent, skip = _csv_plan_entry(
+            unit_bytes, csv_name, asset_path=unit_display,
+            source_bundle=source_bundle, entry=entry, kind=kind,
+            req_entry=req_entry, object_id=0, translations=translations,
+            source_locale=source_locale, mode=mode)
+        if ent is not None:
+            entries.append(ent)
+        else:
+            skipped.append({"asset_path": unit_display,
+                            "reason": skip or "khong phai bang CSV localization"})
+        tas = []
+    else:
+        tas, _warn = _read_unit_text_assets(kind, unit_bytes, req_entry, be, lim)
+    wanted = None
+    if asset_names:
+        wanted = {str(n) for n in asset_names}
     for pid, name, script in tas:
         asset_path = "%s::%s::%s" % (unit_display, req_entry, name) \
             if kind == "bundle" else "%s::%s" % (unit_display, name)
@@ -300,8 +400,18 @@ def build_plan(source_bytes, translations, *, source_bundle, entry=None,
         try:
             obj = json.loads(script)
         except (ValueError, UnicodeDecodeError):
-            skipped.append({"asset_path": asset_path,
-                            "reason": "TextAsset khong phai JSON"})
+            # M3: TextAsset CSV — thu lap entry CSV thay vi bo qua.
+            ent, skip = _csv_plan_entry(
+                script.encode("utf-8"), name, asset_path=asset_path,
+                source_bundle=source_bundle, entry=entry, kind=kind,
+                req_entry=req_entry, object_id=int(pid),
+                translations=translations, source_locale=source_locale,
+                mode=mode)
+            if ent is not None:
+                entries.append(ent)
+            else:
+                skipped.append({"asset_path": asset_path,
+                                "reason": skip or "TextAsset khong phai JSON"})
             continue
         if not isinstance(obj, dict):
             skipped.append({"asset_path": asset_path,
@@ -504,7 +614,7 @@ def build_plan(source_bytes, translations, *, source_bundle, entry=None,
             })
     if not entries:
         raise ValueError(
-            "Khong lap duoc entry nao: khong co TextAsset JSON hay "
+            "Khong lap duoc entry nao: khong co TextAsset JSON/CSV hay "
             "MonoBehaviour nao co key trung voi ban dich (%d asset/object "
             "da bo qua, xem skipped)."
             % len(skipped))
@@ -605,6 +715,11 @@ def _apply_entry_changes(kind, unit_bytes, req_entry, entry, backend, lim,
     (old = script goc, new = script da mo phong) — dam bao byte ket qua
     dung after_sha theo dinh nghia. Verify script doc lai dung after_sha
     + dung dict mong doi.
+    TextAsset CSV (M3, format "csv"): ap qua csvutil.simulate_csv (ghi
+    dung o theo note vi tri), verify 2 lop: sha == after_sha + tung o
+    doi dung / o khac giu nguyen. File CSV doc lap (kind "csv") ap truc
+    tiep len bytes don vi; TextAsset CSV trong bundle/assets patch bang
+    apply_patch nhu JSON.
     MonoBehaviour (M1): ap qua apply_monobehaviour_patch (REBUILD_SECTION)
     roi verify object bytes sha == after_sha. Tra (unit_bytes_moi,
     write_mode_used). Loi verify -> PB3Error (khong ghi gi).
@@ -637,6 +752,88 @@ def _apply_entry_changes(kind, unit_bytes, req_entry, entry, backend, lim,
                 "E_VERIFY_FAILED",
                 "entry %s: object sau khi ap khac after_sha trong plan."
                 % entry["id"], where=entry["asset_path"])
+        return cur, last_mode
+    if entry.get("format") == "csv":
+        # M3: TextAsset CSV.
+        from sdk.csvutil import simulate_csv, verify_csv_values
+        total = len(entry["changes"])
+        if progress_fn is not None:
+            for idx in range(total):
+                try:
+                    progress_fn(idx + 1, total)
+                except Exception:
+                    pass
+        csv_name = _csv_name(entry, req_entry)
+        src_loc = entry.get("source_locale") or "en"
+        if kind == "csv":
+            # Don vi CHINH LA file CSV: ap truc tiep len bytes don vi.
+            try:
+                new_csv = simulate_csv(cur, csv_name, entry["changes"],
+                                       src_loc)
+            except ValueError as exc:
+                raise PB3Error(
+                    "E_CONFIG_INVALID",
+                    "entry %s: khong ap duoc change CSV (%s)"
+                    % (entry["id"], exc), where=entry["asset_path"])
+            if _sha(new_csv) != entry["after_sha"]:
+                raise PB3Error(
+                    "E_VERIFY_FAILED",
+                    "entry %s: CSV sau khi ap khac after_sha trong plan."
+                    % entry["id"], where=entry["asset_path"])
+            ok, details = verify_csv_values(cur, new_csv, csv_name,
+                                            entry["changes"], src_loc)
+            if not ok:
+                raise PB3Error(
+                    "E_VERIFY_FAILED",
+                    "entry %s: %s" % (entry["id"], "; ".join(details)),
+                    where=entry["asset_path"])
+            return new_csv, entry["op"]
+        # TextAsset CSV trong bundle/assets: lay script goc, mo phong,
+        # patch bang apply_patch nhu JSON.
+        if kind == "bundle":
+            bundle = _u.parse_bundle(cur, backend, lim, where="bundle")
+            sf = _u.parse_serialized(bundle.get_entry(req_entry), lim,
+                                     where=req_entry)
+        else:
+            sf = _u.parse_serialized(cur, lim, where="assets")
+        _pid, _name, script = sf.find_text_asset(path_id=int(entry["object"]))
+        try:
+            new_script_b = simulate_csv(script.encode("utf-8"), csv_name,
+                                        entry["changes"], src_loc)
+        except ValueError as exc:
+            raise PB3Error(
+                "E_CONFIG_INVALID",
+                "entry %s: khong ap duoc change CSV (%s)"
+                % (entry["id"], exc), where=entry["asset_path"])
+        req = _u.PatchRequest(
+            data=cur, kind=kind, entry=req_entry,
+            path_id=int(entry["object"]),
+            old_text=script, new_text=new_script_b.decode("utf-8"),
+            write_mode=entry["op"], backend=backend, temp_dir=None)
+        res = _u.apply_patch(req)
+        cur = res.output_bytes
+        last_mode = res.write_mode_used
+        if kind == "bundle":
+            bundle = _u.parse_bundle(cur, backend, lim, where="bundle::after")
+            sf = _u.parse_serialized(bundle.get_entry(req_entry), lim,
+                                     where="after")
+        else:
+            sf = _u.parse_serialized(cur, lim, where="assets::after")
+        _pid, _name, script2 = sf.find_text_asset(
+            path_id=int(entry["object"]))
+        if _sha(script2.encode("utf-8")) != entry["after_sha"]:
+            raise PB3Error(
+                "E_VERIFY_FAILED",
+                "entry %s: script sau khi ap khac after_sha trong plan."
+                % entry["id"], where=entry["asset_path"])
+        ok, details = verify_csv_values(
+            script.encode("utf-8"), script2.encode("utf-8"), csv_name,
+            entry["changes"], src_loc)
+        if not ok:
+            raise PB3Error(
+                "E_VERIFY_FAILED",
+                "entry %s: %s" % (entry["id"], "; ".join(details)),
+                where=entry["asset_path"])
         return cur, last_mode
     if kind == "bundle":
         bundle = _u.parse_bundle(cur, backend, lim, where="bundle")
@@ -997,9 +1194,16 @@ def undo_plan(source_bytes, plan, *, backend=None, limits=None,
             try:
                 for e in unit["entries"]:
                     rev = dict(e)
-                    rev["changes"] = [{"key": c["key"], "before": c["after"],
-                                       "after": c["before"]}
-                                      for c in reversed(e["changes"])]
+                    rev_changes = []
+                    for c in reversed(e["changes"]):
+                        rc = {"key": c["key"], "before": c["after"],
+                              "after": c["before"]}
+                        # M3: giu note vi tri o CSV de patch nguoc dung o
+                        # (khong co cell thi plugin fallback tim key+locale).
+                        if c.get("cell"):
+                            rc["cell"] = c["cell"]
+                        rev_changes.append(rc)
+                    rev["changes"] = rev_changes
                     rev["after_sha"] = e["before_sha"]
                     rev["op"] = "REBUILD_SECTION" \
                         if e["op"] == "REBUILD_ALL" else e["op"]
@@ -1017,20 +1221,29 @@ def undo_plan(source_bytes, plan, *, backend=None, limits=None,
         # Verify: moi entry phai ve dung before_sha.
         ok = True
         try:
-            if kind == "bundle":
-                bundle = _u.parse_bundle(cur, be, lim, where="bundle::undo")
-                sf = _u.parse_serialized(bundle.get_entry(req_entry), lim,
-                                         where="undo")
+            if kind == "csv":
+                # M3: don vi CSV doc lap — before_sha la sha toan bo file.
+                for e in unit["entries"]:
+                    if _sha(cur) != e["before_sha"]:
+                        raise PB3Error(
+                            "E_VERIFY_FAILED",
+                            "entry %s sau khi hoan tac khac before_sha."
+                            % e["id"], where=e["asset_path"])
             else:
-                sf = _u.parse_serialized(cur, lim, where="assets::undo")
-            for e in unit["entries"]:
-                _pid, _n, script = sf.find_text_asset(
-                    path_id=int(e["object"]))
-                if _sha(script.encode("utf-8")) != e["before_sha"]:
-                    raise PB3Error(
-                        "E_VERIFY_FAILED",
-                        "entry %s sau khi hoan tac khac before_sha."
-                        % e["id"], where=e["asset_path"])
+                if kind == "bundle":
+                    bundle = _u.parse_bundle(cur, be, lim, where="bundle::undo")
+                    sf = _u.parse_serialized(bundle.get_entry(req_entry), lim,
+                                             where="undo")
+                else:
+                    sf = _u.parse_serialized(cur, lim, where="assets::undo")
+                for e in unit["entries"]:
+                    _pid, _n, script = sf.find_text_asset(
+                        path_id=int(e["object"]))
+                    if _sha(script.encode("utf-8")) != e["before_sha"]:
+                        raise PB3Error(
+                            "E_VERIFY_FAILED",
+                            "entry %s sau khi hoan tac khac before_sha."
+                            % e["id"], where=e["asset_path"])
         except Exception as exc:  # noqa: BLE001
             ok = False
             for e in unit["entries"]:
