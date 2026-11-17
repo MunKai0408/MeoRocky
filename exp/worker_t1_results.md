@@ -6,8 +6,8 @@ Chất lượng dùng chuỗi 9K thật + gate check_placeholders thật — k�
 
 | Kiểm tra | Kết quả | Chi tiết |
 |---|---|---|
-| `status_ok` | PASS | GET http://127.0.0.1:38165/w-ok -> {"state":"ok","provider":"google","ai_daily_used":null,"ai_daily_limit":10000,"monthly_limit":500000,"version":3} (phải state=ok, monthly_limit=500000, provider=google, version=3) |
-| `status_provider_workers_ai` | PASS | GET http://127.0.0.1:38165/w-ai -> {"state":"ok","provider":"workers-ai","ai_daily_used":0,"ai_daily_limit":10000,"monthly_limit":500000,"version":3} (phải state=ok, provider=workers-ai) |
+| `status_ok` | PASS | GET http://127.0.0.1:37429/w-ok -> {"state":"ok","provider":"google","ai_daily_used":null,"ai_daily_limit":10000,"monthly_limit":500000,"version":3} (phải state=ok, monthly_limit=500000, provider=google, version=3) |
+| `status_provider_workers_ai` | PASS | GET http://127.0.0.1:37429/w-ai -> {"state":"ok","provider":"workers-ai","ai_daily_used":0,"ai_daily_limit":10000,"monthly_limit":500000,"version":3} (phải state=ok, provider=workers-ai) |
 | `status_not_configured` | PASS | GET /w-nokey -> {"state":"not_configured"} (phải state=not_configured) |
 | `status_kv_missing` | PASS | GET /w-nokv -> {"state":"kv_missing"} (phải state=kv_missing) |
 | `status_unreachable` | PASS | GET cổng đóng -> {"state":"unreachable","reason":"network"} (phải state=unreachable) |

@@ -1,5 +1,5 @@
 {
-  "when": "2026-11-17T14:39:01.090Z",
+  "when": "2026-11-17T14:50:49.873Z",
   "failures": 0,
   "results": {
     "worker_get_health": {
@@ -24,7 +24,7 @@
     },
     "worker_circuit_breaker": {
       "ok": true,
-      "detail": "lần 1,2 -> google_rate_limited/google_rate_limited; lần 3 -> breaker_open (không gọi Google nữa) | googleCalls=6 | KV usage=0 (hoàn lại, bằng lúc đầu: null) | breaker={\"failures\":2,\"open_until\":1794926400568}"
+      "detail": "lần 1,2 -> google_rate_limited/google_rate_limited; lần 3 -> breaker_open (không gọi Google nữa) | googleCalls=6 | KV usage=0 (hoàn lại, bằng lúc đầu: null) | breaker={\"failures\":2,\"open_until\":1794927109168}"
     },
     "worker_rate_limit_ip": {
       "ok": true,

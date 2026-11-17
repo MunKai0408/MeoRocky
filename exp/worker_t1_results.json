@@ -1,14 +1,14 @@
 {
-  "when": "2026-11-17T14:39:10.969Z",
+  "when": "2026-11-17T14:50:41.188Z",
   "failures": 0,
   "results": {
     "status_ok": {
       "ok": true,
-      "detail": "GET http://127.0.0.1:38165/w-ok -> {\"state\":\"ok\",\"provider\":\"google\",\"ai_daily_used\":null,\"ai_daily_limit\":10000,\"monthly_limit\":500000,\"version\":3} (phải state=ok, monthly_limit=500000, provider=google, version=3)"
+      "detail": "GET http://127.0.0.1:37429/w-ok -> {\"state\":\"ok\",\"provider\":\"google\",\"ai_daily_used\":null,\"ai_daily_limit\":10000,\"monthly_limit\":500000,\"version\":3} (phải state=ok, monthly_limit=500000, provider=google, version=3)"
     },
     "status_provider_workers_ai": {
       "ok": true,
-      "detail": "GET http://127.0.0.1:38165/w-ai -> {\"state\":\"ok\",\"provider\":\"workers-ai\",\"ai_daily_used\":0,\"ai_daily_limit\":10000,\"monthly_limit\":500000,\"version\":3} (phải state=ok, provider=workers-ai)"
+      "detail": "GET http://127.0.0.1:37429/w-ai -> {\"state\":\"ok\",\"provider\":\"workers-ai\",\"ai_daily_used\":0,\"ai_daily_limit\":10000,\"monthly_limit\":500000,\"version\":3} (phải state=ok, provider=workers-ai)"
     },
     "status_not_configured": {
       "ok": true,
