@@ -20,10 +20,14 @@ from core.errors import PB3Error
 
 # Placeholder giữ nguyên khi chuẩn hóa (đặc tả 7.5): {0}, {name}, %s, %d,
 # %1$s, <color>, \n, escape sequence, thẻ HTML/rich text.
+# GIỮ ĐỒNG BỘ với sdk/gate.py::_PLACEHOLDER_RE và
+# sdk/translate.py::_PLACEHOLDER_RE: cổng đếm cả $VAR và {nội dung bất
+# kỳ} — placeholders_ok phải thấy chúng thì mới cảnh báo + không cache
+# bản dịch làm mất chúng.
 _PLACEHOLDER_RES = [
-    re.compile(r"\{\d+\}"),                    # {0}, {1}
-    re.compile(r"\{[A-Za-z_][A-Za-z0-9_]*\}"),  # {name}
+    re.compile(r"\{[^}]*\}"),                  # {0}, {name}, {foo-bar}, {}
     re.compile(r"%(\d+\$)?[sdif]"),            # %s, %d, %1$s
+    re.compile(r"\$[A-Za-z_][A-Za-z0-9_]*"),    # $VAR
     re.compile(r"<[A-Za-z][^>]*>"),            # <color>, <b>
     re.compile(r"\\[nrt\\'\"]"),               # \n, \t, \\, \'
 ]

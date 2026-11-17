@@ -9,6 +9,8 @@
 """
 import asyncio
 import json
+import re
+import sys
 import unittest
 
 import bridge
@@ -155,6 +157,50 @@ class TranslateFilterCase(unittest.TestCase):
                     "Special_TheCritic.s62#6"):
             self.assertEqual(res2["translated"][key], rich[key], key)
         self.assertTrue(res2["self_check"]["ok"])
+
+    def test_google_batch_dropped_tokens_recovered_by_single_retry(self):
+        # Batch gộp (gtx) hay làm rơi token; dịch đơn lại từng dòng lệch
+        # phải khôi phục đủ placeholder, cổng kiểm tra phải PASS.
+        fake = _FakeJsDroppingBatch()
+        sys.modules["js"] = fake
+        try:
+            kv = {"a": "Unlock {VAR1} now",
+                  "b": "You have {0} points and %s",
+                  "c": "Pay $VAR and use {foo-bar} here"}
+            res = self._parse(asyncio.run(bridge.translate_json_google(
+                json.dumps(kv, ensure_ascii=False), "vi", False, "en")))
+        finally:
+            sys.modules.pop("js", None)
+        self.assertEqual(fake.batch_calls, 1)
+        self.assertGreater(fake.single_calls, 0)
+        self.assertEqual(res["warnings"], [])
+        from sdk.gate import check_placeholders
+        gate = check_placeholders(kv, res["translated"])
+        self.assertEqual(gate["status"], "pass", gate)
+
+
+class _FakeJsDroppingBatch:
+    """Giả module js: batch gộp làm rơi token, dịch đơn giữ token."""
+
+    def __init__(self):
+        self.batch_calls = 0
+        self.single_calls = 0
+
+    async def pb3_google_translate_batch(self, texts, src, dst):
+        self.batch_calls += 1
+        items = ["[vi] " + re.sub(r"__PB3PH\d+__", "", t) for t in texts]
+        return json.dumps({"translations": items, "mode": "gtx-joined"},
+                          ensure_ascii=False)
+
+    async def pb3_google_translate(self, text, src, dst):
+        self.single_calls += 1
+        return "[vi] " + text
+
+    def pb3_google_cancelled(self):
+        return False
+
+    def pb3_fallback_trace(self):
+        return "[]"
 
 
 def _i2_items():

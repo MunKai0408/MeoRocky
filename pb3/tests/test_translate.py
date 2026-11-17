@@ -70,6 +70,162 @@ class TestMask(unittest.TestCase):
             tr.check_lang("")
 
 
+class TestMaskGateCoverage(unittest.TestCase):
+    """mask_line phải che mọi dạng placeholder mà cổng kiểm tra đếm
+    (sdk/gate.py::_PLACEHOLDER_RE): $var và {nội dung bất kỳ} trước đây
+    không được che nên máy dịch nhìn thấy chúng như chữ thường và làm mất."""
+
+    def test_mask_covers_gate_forms(self):
+        cases = {
+            "Pay $VAR now": ["$VAR"],
+            "Cost $5 and $VAR": ["$VAR"],
+            "Use {foo-bar} here": ["{foo-bar}"],
+            "Set {a.b} value": ["{a.b}"],
+            "Empty {} here": ["{}"],
+            "Text {0:>5} pad": ["{0:>5}"],
+            "Unlock {VAR1} now": ["{VAR1}"],
+            "Color {KINGCOLOR} here": ["{KINGCOLOR}"],
+        }
+        for value, want in cases.items():
+            masked, tokens = tr.mask_line(value)
+            self.assertEqual(tokens, want, value)
+            self.assertEqual(tr.unmask_line(masked, tokens), value)
+
+    def test_mask_does_not_swallow_plain_text(self):
+        # $ theo sau là số không phải placeholder; { không đóng cũng không.
+        masked, tokens = tr.mask_line("Cost $5 and $100, brace { open")
+        self.assertEqual(tokens, [])
+        self.assertEqual(masked, "Cost $5 and $100, brace { open")
+        # ${VAR}: chỉ {VAR} là placeholder, $ đứng riêng.
+        masked, tokens = tr.mask_line("Value ${VAR} here")
+        self.assertEqual(tokens, ["{VAR}"])
+        self.assertEqual(tr.unmask_line(masked, tokens), "Value ${VAR} here")
+
+    def test_unmask_recovers_stripped_underscores(self):
+        # Google/MyMemory hay lột dấu gạch dưới của token khi dịch.
+        masked, tokens = tr.mask_line("Unlock {VAR1} and {KINGCOLOR} now")
+        bare = masked.replace("__PB3PH0__", "PB3PH0").replace(
+            "__PB3PH1__", "PB3PH1")
+        self.assertEqual(tr.unmask_line(bare, tokens),
+                         "Unlock {VAR1} and {KINGCOLOR} now")
+        one_side = masked.replace("__PB3PH0__", "__PB3PH0")
+        self.assertEqual(tr.unmask_line(one_side, tokens),
+                         "Unlock {VAR1} and {KINGCOLOR} now")
+
+    def test_strict_match_mirrors_gate(self):
+        # So theo thứ tự + số lần (như cổng), không chỉ tập hợp.
+        self.assertTrue(tr.placeholders_match_strict("A {0} B {0}", "A {0} B {0}"))
+        self.assertFalse(tr.placeholders_match_strict("A {0} B {0}", "A {0} B"))
+        self.assertFalse(tr.placeholders_match_strict("A {x} B {y}", "A {y} B {y}"))
+        self.assertFalse(tr.placeholders_match_strict("Pay $VAR", "Pay"))
+        self.assertTrue(tr.placeholders_match_strict("Pay $VAR", "Pay $VAR"))
+
+
+class _MangleUnderscoresProvider(tr.TranslationProvider):
+    """Giả máy dịch lột dấu gạch dưới của token: __PB3PH0__ -> PB3PH0."""
+
+    name = "mangle-underscores"
+
+    def __init__(self):
+        self.calls = 0
+
+    def translate_batch(self, texts, src, dst, on_item=None):
+        self.calls += 1
+        out = []
+        for t in texts:
+            mangled = re.sub(r"__PB3PH(\d+)__", r"PB3PH\1", t)
+            out.append("[vi] " + mangled)
+            if on_item is not None:
+                on_item(len(out) - 1)
+        return out
+
+
+class _DropOnceProvider(tr.TranslationProvider):
+    """Lần đầu làm rơi token (như batch gộp), dịch lại lần sau thì giữ."""
+
+    name = "drop-once"
+
+    def __init__(self):
+        self.calls = 0
+        self._seen = set()
+
+    def translate_batch(self, texts, src, dst, on_item=None):
+        self.calls += 1
+        out = []
+        for t in texts:
+            if t in self._seen:
+                out.append("[vi] " + t)
+            else:
+                self._seen.add(t)
+                out.append("[vi] " + re.sub(r"__PB3PH\d+__", "", t))
+            if on_item is not None:
+                on_item(len(out) - 1)
+        return out
+
+
+class _CountingDroppingProvider(tr.TranslationProvider):
+    """Lúc nào cũng làm rơi token, đếm số lần gọi (để kiểm tra có retry)."""
+
+    name = "counting-dropping"
+
+    def __init__(self):
+        self.calls = 0
+
+    def translate_batch(self, texts, src, dst, on_item=None):
+        self.calls += 1
+        return [re.sub(r"__PB3PH\d+__", "", t) for t in texts]
+
+
+class TestPlaceholderRepair(unittest.TestCase):
+    def test_mangled_tokens_recovered_no_warning(self):
+        kv = {"a": "Unlock {VAR1} now",
+              "b": "You have {0} points and %s",
+              "c": "Color {KINGCOLOR}!"}
+        res = tr.translate_table(kv, source_lang="en", target_lang="vi",
+                                 provider=_MangleUnderscoresProvider())
+        self.assertEqual(res.warnings, [])
+        from sdk.gate import check_placeholders
+        gate = check_placeholders(kv, res.translated)
+        self.assertEqual(gate["status"], "pass", gate)
+        for key, value in kv.items():
+            self.assertTrue(
+                tr.placeholders_match_strict(value, res.translated[key]), key)
+
+    def test_dropped_tokens_recovered_by_retry(self):
+        provider = _DropOnceProvider()
+        kv = {"a": "Unlock {VAR1} now", "b": "You have {0} points"}
+        res = tr.translate_table(kv, source_lang="en", target_lang="vi",
+                                 provider=provider)
+        self.assertEqual(res.warnings, [])
+        self.assertEqual(provider.calls, 2)  # lần đầu + 1 lần dịch lại
+        from sdk.gate import check_placeholders
+        self.assertEqual(
+            check_placeholders(kv, res.translated)["status"], "pass")
+        self.assertIn("{VAR1}", res.translated["a"])
+        self.assertIn("{0}", res.translated["b"])
+
+    def test_dropped_tokens_still_warn_when_retry_fails(self):
+        # Hành vi đã pin: giữ bản dịch hỏng + cảnh báo + không cache.
+        provider = _CountingDroppingProvider()
+        cache = tr.TranslationCache(None)
+        res = tr.translate_table({"a": "You have {0} points"}, source_lang="en",
+                                 target_lang="vi", provider=provider, cache=cache)
+        self.assertEqual(res.translated["a"], "You have  points")
+        self.assertEqual(len(res.warnings), 1)
+        self.assertIn("placeholder", res.warnings[0])
+        self.assertIsNone(cache.get("You have {0} points", "en", "vi"))
+        self.assertEqual(provider.calls, 2)  # đã thử dịch lại 1 lần rồi mới chịu
+
+    def test_dollar_and_brace_forms_survive_mangling(self):
+        kv = {"a": "Pay $VAR now", "b": "Use {foo-bar} and {0} here"}
+        res = tr.translate_table(kv, source_lang="en", target_lang="vi",
+                                 provider=_MangleUnderscoresProvider())
+        self.assertEqual(res.warnings, [])
+        from sdk.gate import check_placeholders
+        self.assertEqual(
+            check_placeholders(kv, res.translated)["status"], "pass")
+
+
 class TestGoogleProvider(unittest.TestCase):
     def test_single_request_parses(self):
         seen = {}
