@@ -12,7 +12,9 @@ Phạm vi đợt tổng cuối — nhóm font, chế độ (1)–(4):
 GIỚI HẠN TRUNG THỰC (xem handoff/final_font.md):
 - Chỉ gộp được font TrueType có outline glyf (sfnt 0x00010000/"true").
   Font CFF/OpenType (.otf, "OTTO") đọc được cmap nhưng KHÔNG gộp được;
-  font collection (.ttc) chưa hỗ trợ.
+  font collection (.ttc) đọc/gộp được THEO FACE (parse_font/merge_glyphs
+  nhận face_index; face khác giữ nguyên bytes, face đã gộp nối thêm ở
+  cuối file — xem mục TTC; face CFF vẫn không gộp được).
 - Atlas SDF của TextMeshPro KHÔNG tái tạo được trong đợt này: gặp font
   SDF thì báo rõ, hướng dùng chế độ (3)/(4) thay thế.
 - Gộp glyph chỉ copy outline + advance/lsb; không cập nhật OS/2
@@ -199,6 +201,11 @@ class FontInfo:
     number_of_hmetrics: int = 0
     warnings: List[str] = field(default_factory=list)
     where: str = "font"
+    # Face trong collection (.ttc): offset tuyệt đối của bảng offset face
+    # trong file; font rời thì face_index=0, face_count=1, face_offset=0.
+    face_index: int = 0
+    face_count: int = 1
+    face_offset: int = 0
 
 
 def _parse_cmap_format4(data: bytes, off: int, cmap: Dict[int, int]) -> None:
@@ -289,22 +296,31 @@ def _parse_name_table(data: bytes, off: int, length: int) -> Tuple[str, str]:
     return best.get(1, ""), best.get(4, "") or best.get(1, "")
 
 
-def parse_font(data: bytes, where: str = "font") -> FontInfo:
-    """Đọc font TTF/OTF: cmap + metadata. TTC -> E_UNSUPPORTED_FORMAT."""
-    data = bytes(data)
-    kind = detect_font_kind(data)
+def _kind_from_sfnt(sfnt_version: int) -> str:
+    """'ttf' | 'otf' | 'unknown' theo sfnt version u32 (đầu bảng offset)."""
+    if sfnt_version in (0x00010000, 0x74727565):  # 1.0 | "true"
+        return "ttf"
+    if sfnt_version == 0x4F54544F:  # "OTTO"
+        return "otf"
+    return "unknown"
+
+
+def _parse_font_at(data: bytes, dir_off: int, where: str) -> FontInfo:
+    """Đọc 1 font có bảng offset tại `dir_off` (0 = font rời; face TTC
+    thì dir_off = offset face). Offset các bảng là TUYỆT ĐỐI từ đầu
+    `data` (đặc tả TTC: table offset tính từ đầu file TTC, nhờ đó các
+    face chia sẻ được bảng — kiểm chứng trên NotoSansCJK-Regular.ttc
+    thật: head ở offset tuyệt đối cho magic đúng, 11 bảng chia sẻ
+    giữa các face)."""
+    if len(data) < dir_off + 12:
+        raise _err("E_CORRUPT", "font quá ngắn (thiếu bảng offset)", where=where)
+    kind = _kind_from_sfnt(_u32(data, dir_off))
     if kind == "unknown":
         raise _err("E_CORRUPT", "không phải font TrueType/OpenType (magic lạ)", where=where)
-    if kind == "ttc":
-        raise _err("E_UNSUPPORTED_FORMAT",
-                   "font collection (.ttc) chưa hỗ trợ — tách từng font con ra file .ttf riêng",
-                   where=where)
-    if len(data) < 12:
-        raise _err("E_CORRUPT", "font quá ngắn (thiếu bảng offset)", where=where)
-    num_tables = _u16(data, 4)
+    num_tables = _u16(data, dir_off + 4)
     tables: Dict[str, Tuple[int, int]] = {}
     for i in range(num_tables):
-        rec = 12 + 16 * i
+        rec = dir_off + 12 + 16 * i
         if rec + 16 > len(data):
             raise _err("E_CORRUPT", "bảng thư mục font bị cắt cụt", where=where)
         tag = data[rec:rec + 4].decode("latin-1")
@@ -366,6 +382,204 @@ def parse_font(data: bytes, where: str = "font") -> FontInfo:
     if not info.family:
         info.family = where.rsplit("/", 1)[-1]
     return info
+
+
+def parse_font(data: bytes, where: str = "font",
+               face_index: Optional[int] = None) -> FontInfo:
+    """Đọc font TTF/OTF, hoặc 1 face của collection (.ttc).
+
+    TTC mà không cho `face_index` thì từ chối (người gọi phải chọn face
+    — xem list_ttc_faces); face_index ngoài khoảng thì từ chối. Font rời
+    mà cho face_index != 0 thì từ chối (chỉ dùng cho .ttc).
+    """
+    data = bytes(data)
+    kind = detect_font_kind(data)
+    if kind == "unknown":
+        raise _err("E_CORRUPT", "không phải font TrueType/OpenType (magic lạ)", where=where)
+    if kind == "ttc":
+        _version, offsets = parse_ttc_header(data, where=where)
+        if face_index is None:
+            raise _err("E_UNSUPPORTED_FORMAT",
+                       "font collection (.ttc) có %d face — chọn face_index=0..%d "
+                       "(xem list_ttc_faces) thay vì đọc cả file"
+                       % (len(offsets), len(offsets) - 1), where=where)
+        if not 0 <= face_index < len(offsets):
+            raise _err("E_CONFIG_INVALID",
+                       "face_index %d ngoài khoảng 0..%d (.ttc có %d face)"
+                       % (face_index, len(offsets) - 1, len(offsets)), where=where)
+        info = _parse_font_at(data, offsets[face_index], where)
+        info.face_index = face_index
+        info.face_count = len(offsets)
+        info.face_offset = offsets[face_index]
+        return info
+    if face_index not in (None, 0):
+        raise _err("E_CONFIG_INVALID",
+                   "face_index chỉ dùng cho font collection (.ttc)", where=where)
+    info = _parse_font_at(data, 0, where)
+    info.face_index = 0
+    info.face_count = 1
+    info.face_offset = 0
+    return info
+
+
+# ------------------------------------------------------------------ TTC
+def parse_ttc_header(data: bytes, where: str = "font") -> Tuple[int, List[int]]:
+    """Đọc header TrueType Collection: (ttcf_version, [offset face]).
+
+    version 0x00010000 (1.0) hoặc 0x00020000 (2.0, thêm dsig sau mảng
+    offset). Offset face phải nằm sau header, khác nhau từng face.
+    """
+    data = bytes(data)
+    if len(data) < 12 or data[:4] != b"ttcf":
+        raise _err("E_CORRUPT", "không phải font collection (.ttc)", where=where)
+    version, num_fonts = struct.unpack_from(">II", data, 4)
+    if version not in (0x00010000, 0x00020000):
+        raise _err("E_UNSUPPORTED_FORMAT",
+                   "phiên bản .ttc 0x%08X chưa hỗ trợ (chỉ 1.0/2.0)" % version,
+                   where=where)
+    if not 1 <= num_fonts <= 256:
+        raise _err("E_CORRUPT", "số face .ttc %d không hợp lệ" % num_fonts,
+                   where=where)
+    header_len = 12 + 4 * num_fonts + (12 if version == 0x00020000 else 0)
+    if len(data) < header_len:
+        raise _err("E_CORRUPT", "header .ttc bị cắt cụt", where=where)
+    offsets = list(struct.unpack_from(">%dI" % num_fonts, data, 12))
+    seen = set()
+    for off in offsets:
+        if off < header_len or off >= len(data) or off in seen:
+            raise _err("E_CORRUPT", "offset face .ttc %d không hợp lệ" % off,
+                       where=where)
+        seen.add(off)
+    return version, offsets
+
+
+def list_ttc_faces(data: bytes, where: str = "font") -> List[Dict[str, object]]:
+    """Liệt kê từng face của .ttc: index, offset, kind, tên, số glyph,
+    có glyf không. Dùng để người gọi chọn đúng face trước khi parse/gộp."""
+    data = bytes(data)
+    _version, offsets = parse_ttc_header(data, where=where)
+    out: List[Dict[str, object]] = []
+    for i, off in enumerate(offsets):
+        info = _parse_font_at(data, off, where)
+        out.append({"index": i, "offset": off, "kind": info.kind,
+                    "family": info.family, "full_name": info.full_name,
+                    "num_glyphs": info.num_glyphs, "has_glyf": info.has_glyf})
+    return out
+
+
+def _face_to_standalone(data: bytes, face_off: int, where: str) -> bytes:
+    """Tách 1 face TTC thành font rời (tự chứa đủ bảng, offset tương đối).
+
+    Face có thể chia sẻ bảng với face khác (offset tuyệt đối) — tách bằng
+    cách copy bytes từng bảng của face đó, dựng lại bằng _assemble_font.
+    """
+    info = _parse_font_at(data, face_off, where)
+    tables: Dict[str, bytes] = {}
+    for tag, (off, ln) in info.tables.items():
+        tables[tag] = bytes(data[off:off + ln])
+    sfnt_version = _u32(data, face_off)
+    return _assemble_font(sfnt_version, tables)
+
+
+def _relocate_face(face_bytes: bytes, file_offset: int) -> bytes:
+    """Dời 1 font rời (offset bảng tương đối) vào vị trí `file_offset`
+    trong file TTC: cộng file_offset vào mọi offset bảng, tính lại
+    checkSumAdjustment của head sao cho tổng u32 của RIÊNG face này
+    (bảng offset + các bảng) bằng 0xB1B0AFBA — chặt hơn font TTC thật
+    ngoài đời (Noto CJK thật không giữ tổng này), để tự kiểm tra được.
+    """
+    out = bytearray(face_bytes)
+    num = _u16(out, 4)
+    head_rec = None
+    table_spans: List[Tuple[int, int]] = []
+    for i in range(num):
+        rec = 12 + 16 * i
+        tag = bytes(out[rec:rec + 4]).decode("latin-1")
+        _cs, off, ln = struct.unpack_from(">III", out, rec + 4)
+        if tag == "head":
+            head_rec = (off, ln)
+        table_spans.append((off, ln))
+        struct.pack_into(">I", out, rec + 8, off + file_offset)
+    if head_rec is None:
+        raise _err("E_CORRUPT", "không dời được face thiếu bảng head")
+    head_off, _head_ln = head_rec
+    struct.pack_into(">I", out, head_off + 8, 0)  # adjustment: tính lại
+    total = 0
+    for buf in [bytes(out[:12 + 16 * num])] + [bytes(out[o:o + ln])
+                                               for o, ln in table_spans]:
+        padded = buf + b"\x00" * ((-len(buf)) % 4)
+        for i in range(0, len(padded), 4):
+            total = (total + struct.unpack_from(">I", padded, i)[0]) & 0xFFFFFFFF
+    adjustment = (_CHECKSUM_MAGIC - total) & 0xFFFFFFFF
+    struct.pack_into(">I", out, head_off + 8, adjustment)
+    return bytes(out)
+
+
+def _rebuild_ttc_with_face(ttc_bytes: bytes, face_index: int,
+                           merged_face_bytes: bytes,
+                           where: str = "font") -> Tuple[bytes, List[str]]:
+    """Dựng lại .ttc sau khi gộp 1 face: các face khác GIỮ NGUYÊN bytes
+    tại offset cũ (kể cả bảng chia sẻ), face đã gộp nối thêm ở cuối file
+    (căn 4), mục offset của nó trong header trỏ tới vị trí mới. Face gốc
+    còn nằm trong file nhưng không còn được tham chiếu (file to thêm cỡ
+    1 face) — đánh đổi để không động vào face khác.
+    """
+    version, offsets = parse_ttc_header(ttc_bytes, where=where)
+    header_len = 12 + 4 * len(offsets) + (12 if version == 0x00020000 else 0)
+    append_pos = (len(ttc_bytes) + 3) // 4 * 4
+    relocated = _relocate_face(merged_face_bytes, append_pos)
+    out = bytearray()
+    out += b"ttcf" + struct.pack(">II", version, len(offsets))
+    for i, off in enumerate(offsets):
+        out += struct.pack(">I", append_pos if i == face_index else off)
+    if version == 0x00020000:
+        out += ttc_bytes[12 + 4 * len(offsets):header_len]  # trường dsig giữ nguyên
+    out += ttc_bytes[header_len:]
+    out += b"\x00" * (append_pos - len(out))
+    out += relocated
+    warnings = ["face %d đã gộp được nối thêm ở cuối file (face gốc còn "
+                "nằm trong file nhưng không còn được tham chiếu, file to "
+                "thêm %d byte)" % (face_index, len(relocated))]
+    if version == 0x00020000:
+        warnings.append("chữ ký DSIG của .ttc v2.0 đã lỗi thời sau khi gộp "
+                        "(như DSIG của font rời bị bỏ khi gộp)")
+    return bytes(out), warnings
+
+
+def verify_ttc(data: bytes, where: str = "font") -> List[str]:
+    """Kiểm tra .ttc: parse được từng face + checksum từng bảng khớp với
+    thư mục bảng. KHÔNG kiểm tổng checksum toàn file/face (font TTC thật
+    ngoài đời không giữ tổng này — đo trên NotoSansCJK-Regular.ttc:
+    tổng toàn file C8E61C62, tổng từng face B8DDF9DE, đều khác magic).
+    """
+    issues: List[str] = []
+    try:
+        _version, offsets = parse_ttc_header(data, where=where)
+        faces = list_ttc_faces(data, where=where)
+    except PB3Error as exc:
+        return ["%s: %s" % (exc.code, exc.message_vi)]
+    for face in faces:
+        idx = int(face["index"])  # type: ignore[arg-type]
+        off = int(face["offset"])  # type: ignore[arg-type]
+        try:
+            info = _parse_font_at(data, off, where)
+        except PB3Error as exc:
+            issues.append("face %d: %s: %s" % (idx, exc.code, exc.message_vi))
+            continue
+        num = _u16(data, off + 4)
+        recorded: Dict[str, int] = {}
+        for i in range(num):
+            rec = off + 12 + 16 * i
+            tag = data[rec:rec + 4].decode("latin-1")
+            recorded[tag] = _u32(data, rec + 4)
+        for tag in sorted(info.tables):
+            toff, ln = info.tables[tag]
+            stored = _table_checksum(data[toff:toff + ln],
+                                     zero_adjustment=(tag == "head"))
+            if recorded.get(tag) != stored:
+                issues.append("face %d bảng %s: checksum ghi %08X != tính %08X"
+                              % (idx, tag, recorded.get(tag, 0), stored))
+    return issues
 
 
 # ------------------------------------------------------------------ glyf/hmtx
@@ -499,17 +713,21 @@ class CoverageReport:
                 % (self.family, len(self.missing), self.total, shown, more))
 
 
-def missing_chars(font, required: Optional[Iterable[int]] = None) -> List[int]:
+def missing_chars(font, required: Optional[Iterable[int]] = None,
+                  face_index: Optional[int] = None) -> List[int]:
     """Ký tự bắt buộc mà font chưa có (đã sắp xếp). `font`: bytes hoặc FontInfo."""
-    info = font if isinstance(font, FontInfo) else parse_font(font)
+    info = font if isinstance(font, FontInfo) else parse_font(
+        font, face_index=face_index)
     req = required_vietnamese_chars(required)
     return [cp for cp in req if cp not in info.cmap]
 
 
 def coverage(font, required: Optional[Iterable[int]] = None,
-             where: str = "font") -> CoverageReport:
+             where: str = "font",
+             face_index: Optional[int] = None) -> CoverageReport:
     """Báo cáo độ phủ tiếng Việt của một font (bytes hoặc FontInfo)."""
-    info = font if isinstance(font, FontInfo) else parse_font(font, where=where)
+    info = font if isinstance(font, FontInfo) else parse_font(
+        font, where=where, face_index=face_index)
     req = required_vietnamese_chars(required)
     missing = [cp for cp in req if cp not in info.cmap]
     return CoverageReport(family=info.family, kind=info.kind,
@@ -518,15 +736,18 @@ def coverage(font, required: Optional[Iterable[int]] = None,
                           where=info.where)
 
 
-def verify_font(data: bytes, where: str = "font") -> List[str]:
+def verify_font(data: bytes, where: str = "font",
+                face_index: Optional[int] = None) -> List[str]:
     """Kiểm tra tính toàn vẹn font: magic head, checksum từng bảng, checksum tổng.
 
     Trả danh sách vấn đề (rỗng = đạt). Không raise khi font hỏng cấu trúc
-    nặng — parse lỗi thì trả 1 vấn đề mô tả lỗi.
+    nặng — parse lỗi thì trả 1 vấn đề mô tả lỗi. TTC face: kiểm checksum
+    từng bảng (đọc theo đúng thứ tự thư mục bảng của face) nhưng KHÔNG
+    kiểm tổng toàn file — font TTC thật không giữ tổng đó (đo trên Noto).
     """
     issues: List[str] = []
     try:
-        info = parse_font(data, where=where)
+        info = parse_font(data, where=where, face_index=face_index)
     except PB3Error as exc:
         return ["%s: %s" % (exc.code, exc.message_vi)]
     if "head" in info.tables:
@@ -536,18 +757,22 @@ def verify_font(data: bytes, where: str = "font") -> List[str]:
         if _hlen >= 54 and _u32(data, hoff + 12) != _HEAD_MAGIC:
             issues.append("head: magic sai (không phải 0x5F0F3CF5)")
     total = 0
+    recorded: Dict[str, int] = {}
+    num_tables = _u16(data, info.face_offset + 4)
+    for i in range(num_tables):
+        rec = info.face_offset + 12 + 16 * i
+        recorded[data[rec:rec + 4].decode("latin-1")] = _u32(data, rec + 4)
     for tag in sorted(info.tables):
         off, ln = info.tables[tag]
         stored = _table_checksum(data[off:off + ln], zero_adjustment=(tag == "head"))
         # Checksum ghi trong thư mục bảng (head: tính với adjustment = 0).
-        rec = 12 + 16 * sorted(info.tables).index(tag)
-        recorded = _u32(data, rec + 4)
-        if recorded != stored:
-            issues.append("bảng %s: checksum ghi %08X != tính %08X" % (tag, recorded, stored))
+        if recorded.get(tag) != stored:
+            issues.append("bảng %s: checksum ghi %08X != tính %08X" % (tag, recorded.get(tag, 0), stored))
     # Checksum toàn font: tổng mọi u32 của TOÀN FILE (cả thư mục bảng,
     # gồm checkSumAdjustment đã lưu) phải bằng 0xB1B0AFBA (đặc tả head:
-    # adjustment được tính sao cho tổng này đúng).
-    if "head" in info.tables:
+    # adjustment được tính sao cho tổng này đúng). Chỉ font rời mới có
+    # tổng này — face TTC không giữ tổng toàn file (đo trên Noto thật).
+    if "head" in info.tables and info.face_count == 1:
         buf = bytes(data) + b"\x00" * ((-len(data)) % 4)
         whole = 0
         for i in range(0, len(buf), 4):
@@ -714,19 +939,64 @@ class MergeResult:
     glyphs_copied: int = 0      # số glyph đã copy (kể cả component của composite)
     glyphs_total: int = 0
     warnings: List[str] = field(default_factory=list)
+    # TTC: face đã gộp (None = font rời).
+    face_index: Optional[int] = None
 
 
 def merge_glyphs(target: bytes, donor: bytes, codepoints: Iterable[int], *,
                  progress_fn: Optional[Callable[[int, int], None]] = None,
-                 where: str = "font") -> MergeResult:
+                 where: str = "font",
+                 target_face: int = 0, donor_face: int = 0) -> MergeResult:
     """Gộp glyph cho `codepoints` từ donor vào target; trả font mới (bytes).
 
     Chỉ font TrueType có outline glyf. Glyph composite được copy kèm toàn bộ
     component (đệ quy), id component được viết lại theo bảng gộp. `progress_fn`
     được gọi (đã xong, tổng) sau mỗi glyph đã copy.
+    TTC: `target_face`/`donor_face` chọn face (mặc định face 0); face đích
+    đã gộp được nối thêm ở cuối file, các face khác giữ nguyên bytes —
+    xem _rebuild_ttc_with_face. Trả .ttc khi target là .ttc.
     """
     target = bytes(target)
     donor = bytes(donor)
+    t_is_ttc = detect_font_kind(target) == "ttc"
+    d_is_ttc = detect_font_kind(donor) == "ttc"
+    if t_is_ttc or d_is_ttc:
+        t = parse_font(target, where=where,
+                       face_index=target_face if t_is_ttc else None)
+        d = parse_font(donor, where=where + " (font nguồn)",
+                       face_index=donor_face if d_is_ttc else None)
+        if t.kind != "ttf" or not t.has_glyf:
+            raise _err("E_UNSUPPORTED_FORMAT",
+                       "face đích không phải TrueType có outline glyf (kind=%s) — không gộp được"
+                       % t.kind, where=where)
+        if d.kind != "ttf" or not d.has_glyf:
+            raise _err("E_UNSUPPORTED_FORMAT",
+                       "face nguồn không phải TrueType có outline glyf (kind=%s) — không gộp được"
+                       % d.kind, where=where)
+        t_bytes = _face_to_standalone(target, t.face_offset, where) if t_is_ttc else target
+        d_bytes = _face_to_standalone(donor, d.face_offset,
+                                      where + " (font nguồn)") if d_is_ttc else donor
+        res = merge_glyphs(t_bytes, d_bytes, codepoints,
+                           progress_fn=progress_fn, where=where)
+        if not t_is_ttc:
+            return res
+        out_ttc, warnings = _rebuild_ttc_with_face(target, target_face,
+                                                   res.data, where)
+        res.data = out_ttc
+        res.warnings = list(res.warnings or []) + warnings
+        res.face_index = target_face
+        # Tự xác minh: từng face parse được + checksum bảng khớp; face đã
+        # gộp có tổng u32 riêng bằng magic (do _relocate_face tính).
+        issues = verify_ttc(out_ttc, where=where)
+        if issues:
+            raise _err("E_VERIFY_FAILED",
+                       ".ttc gộp xong không đạt kiểm tra: %s" % "; ".join(issues[:3]),
+                       where=where)
+        append_pos = (len(target) + 3) // 4 * 4
+        if _table_checksum(out_ttc[append_pos:]) != _CHECKSUM_MAGIC:
+            raise _err("E_VERIFY_FAILED",
+                       "face đã gộp trong .ttc có tổng checksum sai", where=where)
+        return res
     t = parse_font(target, where=where)
     d = parse_font(donor, where=where + " (font nguồn)")
     if t.kind != "ttf" or not t.has_glyf:
@@ -849,10 +1119,12 @@ def merge_glyphs(target: bytes, donor: bytes, codepoints: Iterable[int], *,
 def merge_vietnamese(target: bytes, donor: bytes, *,
                      extra: Optional[Iterable[int]] = None,
                      progress_fn: Optional[Callable[[int, int], None]] = None,
-                     where: str = "font") -> MergeResult:
+                     where: str = "font",
+                     target_face: int = 0, donor_face: int = 0) -> MergeResult:
     """Gộp toàn bộ ký tự tiếng Việt còn thiếu từ donor vào target."""
     return merge_glyphs(target, donor, required_vietnamese_chars(extra),
-                        progress_fn=progress_fn, where=where)
+                        progress_fn=progress_fn, where=where,
+                        target_face=target_face, donor_face=donor_face)
 
 
 # ------------------------------------------------------------------ Font nhúng Unity

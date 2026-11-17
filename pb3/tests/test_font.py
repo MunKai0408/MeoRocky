@@ -46,10 +46,13 @@ class TestDetectKind(TmpCase):
         self.assertEqual(fs.detect_font_kind(b""), "unknown")
         self.assertEqual(fs.detect_font_kind(b"PK\x03\x04"), "unknown")
 
-    def test_ttc_parse_refuses(self):
+    def test_ttc_stub_is_corrupt(self):
+        # Stub chỉ có magic (0 face) — TTC hỏng, không phải TTC hợp lệ
+        # bị từ chối vì chính sách. TTC hợp lệ mà không chọn face thì
+        # E_UNSUPPORTED_FORMAT (xem TestTTC.test_parse_face_index).
         with self.assertRaises(PB3Error) as cm:
             fs.parse_font(fx.build_ttc_stub())
-        self.assertEqual(cm.exception.code, "E_UNSUPPORTED_FORMAT")
+        self.assertEqual(cm.exception.code, "E_CORRUPT")
 
     def test_garbage_refuses(self):
         with self.assertRaises(PB3Error) as cm:
@@ -269,6 +272,86 @@ class TestMerge(TmpCase):
         raw = bytearray(fx.build_font_missing_vietnamese())
         raw[-10] ^= 0xFF
         self.assertTrue(fs.verify_font(bytes(raw)))
+
+
+class TestTTC(TmpCase):
+    """Font collection (.ttc): liệt kê face, parse/gộp theo face."""
+
+    def _ttc(self):
+        a = fx.build_ttf(fx.ascii_cps() + [0x103, 0xE2, 0x111],
+                         name="FaceA")
+        b = fx.build_ttf(fx.ascii_cps() + fx.vietnamese_cps(), name="FaceB")
+        return fx.build_ttc([a, b]), a, b
+
+    def test_list_faces(self):
+        ttc, _a, _b = self._ttc()
+        faces = fs.list_ttc_faces(ttc, where="test.ttc")
+        self.assertEqual(len(faces), 2)
+        self.assertEqual([f["family"] for f in faces], ["FaceA", "FaceB"])
+        self.assertTrue(all(f["kind"] == "ttf" and f["has_glyf"]
+                            for f in faces))
+
+    def test_parse_face_index(self):
+        ttc, _a, _b = self._ttc()
+        self.assertEqual(fs.parse_font(ttc, face_index=0).family, "FaceA")
+        self.assertEqual(fs.parse_font(ttc, face_index=1).family, "FaceB")
+        with self.assertRaises(PB3Error) as cm:
+            fs.parse_font(ttc)
+        self.assertEqual(cm.exception.code, "E_UNSUPPORTED_FORMAT")
+        with self.assertRaises(PB3Error) as cm:
+            fs.parse_font(ttc, face_index=2)
+        self.assertEqual(cm.exception.code, "E_CONFIG_INVALID")
+
+    def test_merge_face0_keeps_face1_bytes(self):
+        # [ĐÃ ĐO THẬT] gộp face 0: face 0 đủ tiếng Việt, face 1 giữ nguyên
+        # (vùng bytes gốc còn nguyên), verify_ttc đạt.
+        ttc, _a, _b = self._ttc()
+        donor = fx.build_font_full_vietnamese()
+        res = fs.merge_vietnamese(ttc, donor, target_face=0)
+        self.assertEqual(fs.detect_font_kind(res.data), "ttc")
+        self.assertEqual(res.face_index, 0)
+        self.assertTrue(res.added)
+        self.assertEqual(fs.missing_chars(res.data, face_index=0), [])
+        self.assertEqual(fs.parse_font(res.data, face_index=1).family,
+                         "FaceB")
+        header_len = 12 + 4 * 2
+        self.assertEqual(res.data[header_len:len(ttc)], ttc[header_len:])
+        self.assertEqual(fs.verify_ttc(res.data), [])
+        self.assertTrue(fs.coverage(res.data, face_index=0).is_full)
+
+    def test_merge_donor_ttc_target_standalone(self):
+        ttc, _a, _b = self._ttc()
+        target = fx.build_font_missing_vietnamese()
+        res = fs.merge_vietnamese(target, ttc, donor_face=1)
+        self.assertEqual(fs.detect_font_kind(res.data), "ttf")
+        self.assertIsNone(res.face_index)
+        self.assertEqual(fs.missing_chars(res.data), [])
+
+    def test_merge_cff_face_refused_real_ttc(self):
+        # [ĐÃ ĐO THẬT] NotoSansCJK-Regular.ttc thật trên máy (10 face CFF):
+        # liệt kê + parse + verify được, gộp thì từ chối (face CFF).
+        path = "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"
+        if not os.path.exists(path):
+            self.skipTest("không có NotoSansCJK-Regular.ttc trên máy này")
+        data = open(path, "rb").read()
+        faces = fs.list_ttc_faces(data, where="NotoSansCJK-Regular.ttc")
+        self.assertEqual(len(faces), 10)
+        self.assertTrue(all(f["kind"] == "otf" and not f["has_glyf"]
+                            for f in faces))
+        self.assertEqual(fs.verify_ttc(data), [])
+        donor = fx.build_font_full_vietnamese()
+        with self.assertRaises(PB3Error) as cm:
+            fs.merge_vietnamese(data, donor, target_face=0)
+        self.assertEqual(cm.exception.code, "E_UNSUPPORTED_FORMAT")
+
+    def test_verify_ttc_catches_bad_checksum(self):
+        ttc, _a, _b = self._ttc()
+        bad = bytearray(ttc)
+        info = fs.parse_font(bytes(bad), face_index=0)
+        goff, _glen = info.tables["glyf"]
+        bad[goff] ^= 0xFF
+        issues = fs.verify_ttc(bytes(bad))
+        self.assertTrue(any("glyf" in s for s in issues))
 
 
 class TestScan(TmpCase):

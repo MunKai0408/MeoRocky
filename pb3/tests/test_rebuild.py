@@ -322,19 +322,35 @@ class TestStreaming(unittest.TestCase):
         b = u.parse_bundle(out, be, Limits())
         self.assertEqual(b.payload, patched)
 
-    def test_v9_rejected(self):
+    def test_v9_round_trip(self):
+        # [ĐÃ ĐO THẬT] ghi streaming bundle v9 (M-formats): dựng lại v9,
+        # entry đã patch đúng nội dung, version giữ 9, offset block căn 16.
         sf = _sf([(1001, "en.json", EN)])
         data = build_bundle(version=9, entries=[(CAB_A, 4, sf)],
                             compression="none")
         with tempfile.TemporaryDirectory() as d:
             src = self._write(d, "a.unity3d", data)
             dst = os.path.join(d, "b.unity3d")
-            with self.assertRaises(PB3Error) as cm:
-                u.rebuild_bundle_streaming(
-                    src, dst, {}, backend=u.UnityBackend("NATIVE"),
-                    limits=Limits())
-            self.assertEqual(cm.exception.code, "E_UNSUPPORTED_FORMAT")
-            self.assertFalse(os.path.exists(dst))
+            patched, _m = pl._apply_entry_changes(
+                "assets", sf, None,
+                {"id": "e", "object": 1001, "op": "REBUILD_SECTION",
+                 "changes": [{"key": "hello", "before": "Hello",
+                              "after": "Xin chao"}],
+                 "after_sha": hashlib.sha256(json.dumps(
+                     {"hello": "Xin chao", "play": "Play", "quit": "Quit"},
+                     ensure_ascii=False).encode("utf-8")).hexdigest()},
+                u.UnityBackend("NATIVE"), Limits())
+            info = u.rebuild_bundle_streaming(
+                src, dst, {CAB_A: patched},
+                backend=u.UnityBackend("NATIVE"), limits=Limits())
+            out = open(dst, "rb").read()
+        self.assertEqual(json.loads(_scripts(out, CAB_A)["en.json"]),
+                         {"hello": "Xin chao", "play": "Play", "quit": "Quit"})
+        be = u.UnityBackend("NATIVE")
+        b = u.parse_bundle(out, be, Limits())
+        self.assertEqual(b.version, 9)
+        self.assertTrue(all((blk.offset or 0) % 16 == 0 for blk in b.blocks))
+        self.assertEqual(info["blocks"], 1)
 
     def test_encrypted_rejected(self):
         sf = _sf([(1001, "en.json", EN)])
@@ -505,18 +521,33 @@ class TestRoundTripAndSafety(unittest.TestCase):
         self.assertEqual(obj["hello"], "Xin chao")
         self.assertEqual(obj["play"], "Choi")
 
-    def test_v9_and_encrypted_standalone_are_refused(self):
-        # Hoi quy: bundle v9/ma hoa doc lap phai vao refused co ma ro
-        # rang, khong duoc im lang thanh key "not_found" voi units=[].
+    def test_v9_standalone_rebuilds(self):
+        # [ĐÃ ĐO THẬT] bundle v9 độc lập nay ghi được (M-formats):
+        # apply_rebuild áp bản dịch, không còn refused E_UNSUPPORTED_FORMAT.
         sf = _sf([(1001, "en.json", EN)])
         v9 = build_bundle(version=9, entries=[(CAB_A, 4, sf)],
                           compression="none")
-        res = rb.apply_rebuild(
-            v9, source_name="v9.unity3d",
-            translations={"hello": "Xin chao"})
-        self.assertEqual(res["units"], [])
-        self.assertEqual(len(res["refused"]), 1)
-        self.assertEqual(res["refused"][0]["code"], "E_UNSUPPORTED_FORMAT")
+        with tempfile.TemporaryDirectory() as d:
+            res = rb.apply_rebuild(
+                v9, source_name="v9.unity3d",
+                translations={"hello": "Xin chao"},
+                dry_run=False, confirm=True,
+                out_dir=os.path.join(d, "out"),
+                zip_path=os.path.join(d, "r.zip"))
+            self.assertEqual(res["refused"], [])
+            self.assertEqual(len(res["units"]), 1)
+            with open(res["dest"], "rb") as fh:
+                got = _scripts(fh.read(), CAB_A)
+            out = open(res["dest"], "rb").read()
+        obj = json.loads(got["en.json"])
+        self.assertEqual(obj["hello"], "Xin chao")
+        be = u.UnityBackend("NATIVE")
+        self.assertEqual(u.parse_bundle(out, be, Limits()).version, 9)
+
+    def test_encrypted_standalone_is_refused(self):
+        # Hoi quy: bundle ma hoa doc lap phai vao refused co ma ro
+        # rang, khong duoc im lang thanh key "not_found" voi units=[].
+        sf = _sf([(1001, "en.json", EN)])
         enc = build_bundle(version=7, entries=[(CAB_A, 4, sf)],
                            compression="none", extra_data_flags=0x200)
         res = rb.apply_rebuild(

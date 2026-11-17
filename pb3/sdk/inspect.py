@@ -11,7 +11,7 @@ số entry, số object theo loại (MonoBehaviour/TextAsset/...), TextAsset
 (tên + cỡ + 200 ký tự đầu; file nhị phân đếm riêng), nguồn ngôn ngữ tìm
 thấy (I2 language_source / StringTable / SharedTableData), và lý do
 pipeline trích xuất bỏ qua file đó (nếu có: vượt giới hạn entry 64 MB,
-UnityFS v9 chỉ đọc khi ghi/mod, mã hóa...).
+mã hóa...).
 
 Tương thích Python 3.9, stdlib-only.
 """

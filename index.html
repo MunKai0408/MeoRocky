@@ -369,7 +369,7 @@
   <div id="tab-unity" class="card" hidden>
     <h2>Inspect Unity</h2>
     <p class="note">Đọc bundle .unity3d hoặc file .assets độc lập bằng parser thuần của PB3
-    (UnityFS v6–v9 — v9 chỉ đọc; block nén Zstd đọc được qua fzstd, SerializedFile v23). Không dùng UnityPy trên web. Nếu file đang
+    (UnityFS v6–v9; block nén Zstd đọc được qua fzstd, SerializedFile v23). Không dùng UnityPy trên web. Nếu file đang
     chọn là ZIP/IPA thì trang liệt kê các bundle/.assets bên trong để bạn chọn 1
     cái inspect trực tiếp.
     Asset nhị phân (texture/âm thanh): chỉ đọc, dùng bản iSH.</p>
@@ -391,7 +391,7 @@
     <details>
       <summary>Tùy chọn nâng cao</summary>
       <p class="note">Inspect không có tùy chọn nào thêm — mọi bundle/.assets đều được đọc
-      bằng cùng một parser thuần (UnityFS v6–v9, v9 chỉ đọc; block Zstd đọc qua fzstd; SerializedFile v23). Kết quả inspect
+      bằng cùng một parser thuần (UnityFS v6–v9; block Zstd đọc qua fzstd; SerializedFile v23). Kết quả inspect
       (Unity Version, số object, TextAsset) hiện ở dưới và ở thẻ “Thông tin Unity”
       trên Trang chủ.</p>
     </details>
@@ -541,7 +541,7 @@
     <p class="note">Ép bản dịch vào file game theo 5 bước bên dưới: chọn bản dịch → xem trước → cổng kiểm tra → ép và ghi file → đóng gói lại IPA. File gốc không bao giờ bị ghi đè; output là đơn vị nhỏ nhất đã patch, <b>không phải</b> IPA đóng gói lại.</p>
 
     <h3>Bước 1 — Ép lại vào file gốc (E)</h3>
-    <p class="note">Ép bản dịch vào đúng đơn vị (bundle/.assets) theo provenance + key, 1 plan mỗi đơn vị. <b>(E) ghi được TextAsset JSON dạng dict + TextAsset CSV + MonoBehaviour/StringTable</b> — key MonoBehaviour generic (scan path) và bảng ngôn ngữ CÓ type tree vẫn chưa ghi được, sẽ liệt kê rõ là không ép được, không bỏ im lặng. Xem trước (dry-run) trước, rồi mới ghi. Nút ghi chỉ bật sau khi đã xem trước VÀ cổng kiểm tra (bước 6) bên dưới ĐẠT cho đúng file + bản dịch này. File gốc KHÔNG bị ghi đè; output là đơn vị nhỏ nhất đã patch, <b>không phải</b> IPA đóng gói lại; cần re-sign gói ngoài thì game mới nhận. Bundle .unity3d độc lập lớn ghi theo luồng (streaming); bundle v9 chỉ đọc, bundle mã hóa không giải mã.</p>
+    <p class="note">Ép bản dịch vào đúng đơn vị (bundle/.assets) theo provenance + key, 1 plan mỗi đơn vị. <b>(E) ghi được TextAsset JSON dạng dict + TextAsset CSV + MonoBehaviour/StringTable</b> — key MonoBehaviour generic (scan path) và bảng ngôn ngữ CÓ type tree vẫn chưa ghi được, sẽ liệt kê rõ là không ép được, không bỏ im lặng. Xem trước (dry-run) trước, rồi mới ghi. Nút ghi chỉ bật sau khi đã xem trước VÀ cổng kiểm tra (bước 6) bên dưới ĐẠT cho đúng file + bản dịch này. File gốc KHÔNG bị ghi đè; output là đơn vị nhỏ nhất đã patch, <b>không phải</b> IPA đóng gói lại; cần re-sign gói ngoài thì game mới nhận. Bundle .unity3d độc lập lớn ghi theo luồng (streaming); bundle mã hóa không giải mã.</p>
     <div class="row">
       <label style="flex:1;min-width:180px">Nguồn bản dịch:
         <select id="rebuild-source">
@@ -1044,7 +1044,7 @@
     trích xuất, dịch, mod, xuất file) chạy hoàn toàn trên trình duyệt của bạn.
     File game chỉ được đọc và xử lý trên thiết bị, không upload đi đâu
     (trừ khi bạn bật dịch Google ở tab Dịch).</p>
-    <p><b>PB3 v3.1.0</b> · 20 plugin · UnityFS v6–v9 (v9 chỉ đọc), SerializedFile v23 ·
+    <p><b>PB3 v3.1.0</b> · 20 plugin · UnityFS v6–v9, SerializedFile v23 ·
     parser thuần (không dùng UnityPy trên web).</p>
     <p class="note">Việt Hoá Bởi Bear 🐻 — credit “Việt Hoá Bởi Bear” được gắn vào
     bản dịch khi bạn tick “Gắn credit” ở tab Dịch.</p>

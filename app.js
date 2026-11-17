@@ -3317,7 +3317,6 @@ function rebuildSourceData() {
 function rebuildErrorText(msg) {
   const m = String(msg || "");
   if (/E_ENCRYPTED/.test(m)) return "File/bundle MÃ HÓA — BearTea không giải mã, không vượt DRM/mã hóa. Dùng bản game không mã hóa (decrypted) hoặc file ngôn ngữ từ nguồn hợp lệ khác.";
-  if (/v9|UnityFS v9/.test(m) && /E_UNSUPPORTED_FORMAT/.test(m)) return "Bundle UnityFS v9 CHỈ ĐỌC trên bản web — chưa ghi được bundle v9. Dùng bản iSH/desktop hoặc bundle phiên bản cũ hơn.";
   if (/E_UNSUPPORTED_FORMAT/.test(m)) return "Định dạng chưa hỗ trợ ghi (" + m + "). Thử Probe định dạng ở tab Chẩn đoán để xem engine/mức hỗ trợ thật.";
   if (/E_TOO_LARGE/.test(m)) return "File/entry QUÁ LỚN cho bản web (" + m + "). Dùng bản iSH cho file này — iSH đọc/ghi streaming với giới hạn cao hơn.";
   if (/E_VERIFY_FAILED/.test(m)) return "Kiểm tra sau khi ghi KHÔNG ĐẠT (before_sha lệch — file gốc có thể khác lúc lập kế hoạch, hoặc chuỗi gốc đã đổi). Không ghi file nào. Hãy chọn lại đúng file gốc rồi xem trước lại.";
@@ -4785,10 +4784,11 @@ $("btn-font-merge").addEventListener("click", async () => {
   try {
     const { parsed } = await runOp("Gộp glyph tiếng Việt", "font_merge",
       [inputPath(), "/pb3web/fonts/BeVietnamPro-Regular.ttf"], inputFileArgs(), true);
+    const mergedName = (parsed.dest || "merged.ttf").split("/").pop();
     $("font-result").innerHTML =
       "<p>Đã gộp: thêm <b>" + parsed.added + "</b> ký tự · đã có sẵn " + parsed.already +
       " · font nguồn cũng thiếu " + parsed.donor_missing + " · copy " + parsed.glyphs_copied +
-      " glyph · file <b>merged.ttf</b> đã sẵn sàng — bấm “Lưu / Chia sẻ” ở thanh Lưu file bên dưới để lưu về máy</p>" +
+      " glyph · file <b>" + esc(mergedName) + "</b> đã sẵn sàng — bấm “Lưu / Chia sẻ” ở thanh Lưu file bên dưới để lưu về máy</p>" +
       ((parsed.warnings || []).length ? "<p>Cảnh báo: " + esc(parsed.warnings.join("; ")) + "</p>" : "");
   } catch (e) { /* đã báo lỗi */ }
 });

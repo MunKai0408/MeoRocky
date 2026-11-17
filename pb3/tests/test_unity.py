@@ -504,7 +504,7 @@ class TestSerializedV23(unittest.TestCase):
 
 
 class TestBundleV9Zstd(unittest.TestCase):
-    """UnityFS v9 (chỉ đọc) + block Zstd qua cầu nối JS (mục C5).
+    """UnityFS v9 (đọc + ghi từ M-formats) + block Zstd qua cầu nối JS (mục C5).
 
     Fixture tổng hợp (tests/fixtures/unity/build_fixtures.py): v9 theo
     đúng layout UnityPy master — BlockInfo thêm u64 offset, block căn
@@ -637,11 +637,62 @@ class TestBundleV9Zstd(unittest.TestCase):
             sf9 = u.parse_serialized(b9.get_entry(ENTRY1))
             self.assertEqual(sf9.text_assets()[0][2], "Xin chao Unity 6!")
 
-    def test_build_bundle_v9_raises(self):
-        with self.assertRaises(PB3Error) as cm:
-            u.build_bundle([("a", 0, b"x")], version=9, backend=nat())
-        self.assertEqual(cm.exception.code, "E_UNSUPPORTED_FORMAT")
-        self.assertIn("chỉ đọc", str(cm.exception))
+    @pytest.mark.needs_fixture("unity/resources.assets", "unity/sharedassets0.assets")
+    def test_build_bundle_v9_roundtrip(self):
+        # [ĐÃ ĐO THẬT] v9 ghi được (M-formats): dựng lại -> đọc lại,
+        # entry byte-identical, BlockInfo có offset u64, block căn 16.
+        raw1 = read(RES)
+        raw2 = read(SHARED)
+        for compression in ("none", "lz4"):
+            built = u.build_bundle([(ENTRY1, 0, raw1), (ENTRY2, 0, raw2)],
+                                   version=9, compression=compression,
+                                   backend=nat())
+            parsed = u.parse_bundle(built, nat())
+            self.assertEqual(parsed.version, 9)
+            self.assertEqual(parsed.compression_name, compression)
+            self.assertEqual(parsed.get_entry(ENTRY1), raw1)
+            self.assertEqual(parsed.get_entry(ENTRY2), raw2)
+            self.assertTrue(all(b.offset is not None for b in parsed.blocks))
+            self.assertTrue(all(b.offset % 16 == 0 for b in parsed.blocks))
+            self.assertEqual(parsed.blocks[0].offset, 0)
+
+    def test_build_bundle_v9_multi_block_offsets(self):
+        # [ĐÃ ĐO THẬT] LZ4 chia 128 KiB -> nhiều block; offset từng block
+        # = vị trí đã căn 16, tính từ đầu vùng block data.
+        import os
+        data = os.urandom(300 * 1024)
+        built = u.build_bundle([("a", 0, data)], version=9,
+                               compression="lz4", backend=nat())
+        parsed = u.parse_bundle(built, nat())
+        self.assertEqual(parsed.version, 9)
+        self.assertEqual(len(parsed.blocks), 3)
+        expected = [0]
+        for b in parsed.blocks[:-1]:
+            expected.append(expected[-1] + (b.compressed_size + 15) // 16 * 16)
+        self.assertEqual([b.offset for b in parsed.blocks], expected)
+        self.assertTrue(all(b.offset % 16 == 0 for b in parsed.blocks))
+        self.assertEqual(parsed.get_entry("a"), data)
+
+    @pytest.mark.needs_fixture("unity/sample_v9.unity3d")
+    def test_patch_v9_bundle(self):
+        # [ĐÃ ĐO THẬT] apply_patch trên bundle v9 thật (fixture tổng hợp):
+        # dựng lại bundle v9, entry sửa đổi nội dung, entry còn lại giữ
+        # nguyên bytes, offset block vẫn căn 16.
+        before = u.parse_bundle(read(BUNDLE_V9), nat())
+        r = u.apply_patch(u.PatchRequest(
+            data=read(BUNDLE_V9), kind="bundle", entry=ENTRY1,
+            path_id=4001, old_text="Unity 6!", new_text="Unity 6?"))
+        self.assertTrue(r.verified)
+        out = u.parse_bundle(r.output_bytes, nat())
+        self.assertEqual(out.version, 9)
+        self.assertEqual(out.unity_revision, "6000.0.23f1")
+        sf = u.parse_serialized(out.get_entry(ENTRY1))
+        self.assertEqual(sf.text_assets()[0][2], "Xin chao Unity 6?")
+        self.assertEqual(out.get_entry(ENTRY2), before.get_entry(ENTRY2))
+        # SDK build_bundle "none" gom payload thành 1 block; offset block
+        # đầu = 0 và mọi offset đều căn 16.
+        self.assertEqual(out.blocks[0].offset, 0)
+        self.assertTrue(all(b.offset % 16 == 0 for b in out.blocks))
 
     def test_build_bundle_zstd_raises(self):
         with self.assertRaises(PB3Error) as cm:
@@ -681,15 +732,6 @@ class TestBundleV9Zstd(unittest.TestCase):
         self.assertEqual(sf.text_assets()[0][2], "Xin chao 8 Kings!")
         # Entry còn lại giữ nguyên byte.
         self.assertEqual(out.get_entry(ENTRY2), read(SHARED))
-
-    @pytest.mark.needs_fixture("unity/sample_v9.unity3d")
-    def test_patch_v9_refuses(self):
-        with self.assertRaises(PB3Error) as cm:
-            u.apply_patch(u.PatchRequest(
-                data=read(BUNDLE_V9), kind="bundle", entry=ENTRY1,
-                path_id=4001, old_text="Unity 6", new_text="Unity 7"))
-        self.assertEqual(cm.exception.code, "E_UNSUPPORTED_FORMAT")
-        self.assertIn("chỉ đọc", str(cm.exception))
 
     def test_support_matrix_mentions_v9_zstd(self):
         rows = u.support_matrix()

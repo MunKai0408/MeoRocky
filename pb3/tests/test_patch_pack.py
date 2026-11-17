@@ -132,13 +132,15 @@ class TestBuildPackFromPlan(unittest.TestCase):
             pp.build_patch_pack(other, "test.unity3d", "plan", plan)
         self.assertIn("before_sha", str(cm.exception))
 
-    def test_v9_bundle_refused(self):
+    def test_v9_bundle_builds_pack(self):
+        # [ĐÃ ĐO THẬT] bundle v9 nay ghi được (M-formats): pack lập được.
         bundle9 = _bundle_bytes(version=9)
         plan = pl.build_plan(bundle9, VI, source_bundle="test.unity3d",
                              entry=CAB)
-        with self.assertRaises(ValueError) as cm:
-            pp.build_patch_pack(bundle9, "test.unity3d", "plan", plan)
-        self.assertIn("v9", str(cm.exception))
+        man = pp.build_patch_pack(bundle9, "test.unity3d", "plan", plan)
+        self.assertEqual(len(man["entries"]), 1)
+        self.assertEqual(man["entries"][0]["after_sha"],
+                         plan["entries"][0]["after_sha"])
 
     def test_bad_kind_refused(self):
         with self.assertRaises(ValueError):

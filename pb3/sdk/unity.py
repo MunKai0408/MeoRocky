@@ -1,6 +1,6 @@
 """Backend Unity (Claude 05; đặc tả §6, decisions #66+).
 
-Phạm vi: UnityFS v6/v7/v8/v9 (đọc; v9 CHỈ ĐỌC, không ghi; Zstd chỉ đọc
+Phạm vi: UnityFS v6/v7/v8/v9 (đọc + ghi; Zstd chỉ đọc
 trên web qua fzstd — xem C5), SerializedFile v15–23 (metadata, object
 table, TextAsset, chuỗi ngắn/dài), hybrid backend AUTO / LIBRARY /
 NATIVE (UnityPy + LZ4 + Python thuần), planner, patcher
@@ -21,12 +21,14 @@ ObjectReader.py, TypeTreeNode.py, CompressionHelper.py):
 - UnityFS v8 cùng layout header với v7 (căn 16 sau header); cờ mã hóa /
   padding chọn theo unityRevision (UnityPy: version_engine), KHÔNG theo
   unityVersion (thường là "5.x.x").
-- UnityFS v9 (C5, chỉ đọc): cùng header với v8; khác biệt DUY NHẤT theo
+- UnityFS v9 (C5): cùng header với v8; khác biệt DUY NHẤT theo
   UnityPy master (helpers/CompressionHelper.py, đối chiếu 2026-11-16):
   mỗi BlockInfo thêm u64 `offset` sau cờ u16, và mỗi block nén được căn
   16 byte trong vùng block data (đọc block bằng offset, không đọc tuần
   tự). Header vẫn căn 16 khi version >= 7; entry vẫn (offset u64, size
   u64, flags u32, tên) — file lớn đã có từ trước nhờ các trường u64.
+  Ghi v9 (M-formats, 2026-11-17): build_bundle / rebuild_bundle_streaming
+  ghi offset u64 + căn 16 từng block; patch dựng lại bundle v9 như v7/v8.
 - Zstd (C5, chỉ đọc trên web): mã nén 5 — mã trống tiếp theo sau
   LZHAM=4. UnityPy master (2026-11-16) và tài liệu Unity (chỉ liệt kê
   LZMA/LZ4/Uncompressed) KHÔNG có cờ Zstd; mã 5 là quy ước mở rộng của
@@ -73,7 +75,7 @@ UNITYFS_MAGIC = b"UnityFS"
 UNITY_VERSION = "2019.4.40f1"  # mặc định khi dựng bundle mới (giữ nguyên khi rebuild)
 UNITY6_PLAYER_VERSION = "5.x.x"     # unityVersion trong header bundle Unity 6
 UNITY6_REVISION = "6000.0.23f1"     # unityRevision (engine) của fixture v8/v23
-SUPPORTED_BUNDLE_VERSIONS = (6, 7, 8, 9)  # v9: CHỈ ĐỌC (C5), không ghi
+SUPPORTED_BUNDLE_VERSIONS = (6, 7, 8, 9)  # v9: đọc + ghi (M-formats)
 # SerializedFile: chỉ 15-23 (object table đã kiểm chứng; <15 quá cũ, >23 chưa có fixture).
 SUPPORTED_SF_VERSIONS = (15, 16, 17, 18, 19, 20, 21, 22, 23)
 
@@ -113,8 +115,8 @@ def support_matrix():
     return [
         {"format": "UnityFS v6/v7/v8 (bundle)", "read": "có", "write": "có (dựng lại bundle, giữ compression gốc)",
          "backend": "Python thuần + lz4/lzma", "maturity": "M2"},
-        {"format": "UnityFS v9 (bundle)", "read": "có (chỉ đọc; BlockInfo có offset u64, block căn 16)",
-         "write": "không (v9 chỉ đọc — dựng lại bundle v9 chưa hỗ trợ)",
+        {"format": "UnityFS v9 (bundle)", "read": "có (BlockInfo có offset u64, block căn 16)",
+         "write": "có (dựng lại bundle, giữ compression gốc; offset u64 + căn 16)",
          "backend": "Python thuần", "maturity": "M2"},
         {"format": "Zstd (block bundle, mã nén 5)", "read": "có — CHỈ trên web BearTea (qua fzstd, cầu nối JS)",
          "write": "không (ghi lại bằng block không nén, cờ 0)",
@@ -684,11 +686,12 @@ def parse_bundle(data, backend=None, limits=None, where="bundle"):
 
     v8 cùng layout với v7 (UnityPy không kiểm version, chỉ căn 16 khi
     version >= 7); cờ mã hóa/padding chọn theo unityRevision (#78).
-    v9 (C5, chỉ đọc): mỗi BlockInfo thêm u64 `offset` sau cờ u16; block
+    v9 (C5): mỗi BlockInfo thêm u64 `offset` sau cờ u16; block
     data đọc bằng offset (tính từ đầu vùng block data đã căn 16), vì các
     block nén được căn 16 nên không đọc tuần tự được nữa. Các trường
     total size / entry offset / entry size vốn đã là u64 nên file lớn
-    không cần đổi gì thêm."""
+    không cần đổi gì thêm. Ghi v9 xem build_bundle (offset u64 + căn 16
+    từng block)."""
 
     data = bytes(data)
     backend = backend or UnityBackend("AUTO", limits)
@@ -1031,18 +1034,13 @@ def build_bundle(entries, *, version=7, unity_version=UNITY_VERSION,
     "6000.0.23f1". `extra_data_flags` OR thêm vào data_flag (để test cờ
     mã hóa/padding); `pad_block_data` đặt cờ 0x200 và căn đầu vùng block
     data tới 16 (chỉ có ý nghĩa với cờ mới).
-    RANH GIỚI GHI (C5): version 9 CHỈ ĐỌC — dựng bundle v9 thì từ chối
-    với lý do rõ ràng; compression "zstd" cũng từ chối (không có
+    Ghi v9 (M-formats): mỗi BlockInfo thêm u64 `offset` sau cờ u16, mỗi
+    block trong vùng block data được căn 16 (đệm NUL sau từng block) —
+    port từ build_fixtures.build_bundle (đối chiếu UnityPy
+    chunk_based_compress). compression "zstd" vẫn từ chối (không có
     encoder) — bên gọi (apply_patch) dựng lại bằng compression "none"
     (block không nén, cờ nén 0)."""
     backend = backend or UnityBackend("AUTO", limits)
-    if version == 9:
-        raise PB3Error("E_UNSUPPORTED_FORMAT",
-                       "UnityFS v9 chỉ đọc — dựng lại bundle v9 chưa hỗ trợ "
-                       "(không ghi v9)",
-                       message_vi="UnityFS v9 chỉ đọc — không ghi được "
-                                  "bundle v9.",
-                       where="bundle")
     if compression == "zstd":
         raise PB3Error("E_UNSUPPORTED_FORMAT",
                        "ghi block Zstd chưa hỗ trợ (không có encoder) — "
@@ -1068,20 +1066,26 @@ def build_bundle(entries, *, version=7, unity_version=UNITY_VERSION,
     blocks = []
     block_data = io.BytesIO()
     for chunk in chunks:
+        off = block_data.tell()
         comp = backend.compress(chunk, comp_code)
         if compression != "none" and len(comp) >= len(chunk):
             block_data.write(chunk)
-            blocks.append(BundleBlock(len(chunk), len(chunk), 0))
+            blocks.append(BundleBlock(len(chunk), len(chunk), 0, off))
         else:
             block_data.write(comp)
             flag = 64 if compression == "none" else comp_code
-            blocks.append(BundleBlock(len(chunk), len(comp), flag))
+            blocks.append(BundleBlock(len(chunk), len(comp), flag, off))
+        if version >= 9:
+            # v9: căn từng block tới 16 trong vùng block data (đệm NUL).
+            block_data.write(b"\x00" * ((-block_data.tell()) % 16))
     block_bytes = block_data.getvalue()
     info = _Writer(">")
     info.write(b"\x00" * 16)
     info.pack("i", len(blocks))
     for b in blocks:
         info.pack("IIH", b.uncompressed_size, b.compressed_size, b.flags)
+        if version >= 9:
+            info.pack("Q", b.offset if b.offset is not None else 0)
     info.pack("i", len(entries))
     offset = 0
     for name, flags, data in entries:
@@ -1138,8 +1142,10 @@ def rebuild_bundle_streaming(src_path, dst_path, replacements, backend=None,
     Chỉ bundle ĐỘC LẬP (đường dẫn file) mới dùng đường này; bundle
     trong ZIP/IPA (bytes đã trong RAM) giữ đường RAM.
     Giới hạn: entry đơn > max_memory_read_bytes (128MB) -> E_TOO_LARGE
-    (hướng iSH); bundle v9 / mã hóa / mã nén 4,>5 -> từ chối sớm ở
-    pass 1, không ghi gì. Verify ở đây YẾU HƠN diffverify toàn phần
+    (hướng iSH); bundle mã hóa / mã nén 4,>5 -> từ chối sớm ở
+    pass 1, không ghi gì. v9 ghi được (M-formats): mỗi BlockInfo thêm
+    u64 offset, mỗi block trong vùng block data được căn 16 (đệm NUL),
+    như build_bundle. Verify ở đây YẾU HƠN diffverify toàn phần
     ở 1 điểm: không kiểm byte-layout ngoài entry bằng snapshot (bù
     bằng test parse_bundle trên fixture nhỏ + round-trip ở tầng plan).
     `progress_fn(done, total)` đơn điệu theo byte payload
@@ -1173,13 +1179,6 @@ def rebuild_bundle_streaming(src_path, dst_path, replacements, backend=None,
     # ---- Pass 1: layout + quét entry (không giữ payload) ----
     with open(src_path, "rb") as fh:
         layout = _read_bundle_layout(fh, backend, lim, where="bundle")
-    if layout.version >= 9:
-        raise PB3Error(
-            "E_UNSUPPORTED_FORMAT",
-            "bundle UnityFS v9 chỉ đọc — chưa hỗ trợ ghi streaming "
-            "(ghi lại bundle v9 chưa được hỗ trợ)",
-            message_vi="Bundle UnityFS v9 chỉ đọc — không ghi được.",
-            where="bundle")
     src_compression = COMPRESSION_NAMES.get(layout.compression, "?")
     if layout.compression == COMPRESSION_ZSTD:
         write_compression = "none"
@@ -1254,6 +1253,13 @@ def rebuild_bundle_streaming(src_path, dst_path, replacements, backend=None,
         blocks_tmp = blocks_path
         blocks: List[BundleBlock] = []
         with os.fdopen(fd, "wb") as bf:
+            def _pad_block():
+                # v9: căn từng block tới 16 trong vùng block data (đệm NUL).
+                if layout.version >= 9:
+                    pad = (-bf.tell()) % 16
+                    if pad:
+                        bf.write(b"\x00" * pad)
+
             if write_compression == "lzma":
                 comp = lzma.LZMACompressor(
                     format=lzma.FORMAT_RAW,
@@ -1274,20 +1280,23 @@ def rebuild_bundle_streaming(src_path, dst_path, replacements, backend=None,
                 tail = comp.flush()
                 bf.write(tail)
                 written += len(tail)
-                blocks.append(BundleBlock(new_payload, written, comp_code))
+                blocks.append(BundleBlock(new_payload, written, comp_code, 0))
+                _pad_block()
                 _prog(old_payload + new_payload)
             elif write_compression in ("lz4", "lz4hc"):
                 buf = bytearray()
 
                 def _flush_chunk(chunk):
                     comp = backend.compress(bytes(chunk), comp_code)
+                    off = bf.tell()
                     if len(comp) >= len(chunk):
                         bf.write(bytes(chunk))
-                        blocks.append(BundleBlock(len(chunk), len(chunk), 0))
+                        blocks.append(BundleBlock(len(chunk), len(chunk), 0, off))
                     else:
                         bf.write(comp)
                         blocks.append(BundleBlock(len(chunk), len(comp),
-                                                  comp_code))
+                                                  comp_code, off))
+                    _pad_block()
 
                 consumed = 0
                 for name, data in _stream_payload_entries(
@@ -1310,13 +1319,17 @@ def rebuild_bundle_streaming(src_path, dst_path, replacements, backend=None,
                     buf += data
                     consumed += len(data)
                     while len(buf) >= step:
+                        off = bf.tell()
                         bf.write(bytes(buf[:step]))
-                        blocks.append(BundleBlock(step, step, 64))
+                        blocks.append(BundleBlock(step, step, 64, off))
+                        _pad_block()
                         del buf[:step]
                     _prog(old_payload + consumed)
                 if buf or not blocks:
+                    off = bf.tell()
                     bf.write(bytes(buf))
-                    blocks.append(BundleBlock(len(buf), len(buf), 64))
+                    blocks.append(BundleBlock(len(buf), len(buf), 64, off))
+                    _pad_block()
                 _prog(old_payload + new_payload)
         # ---- Pass 2b: blocks-info + ráp file đích ----
         info = _Writer(">")
@@ -1324,6 +1337,8 @@ def rebuild_bundle_streaming(src_path, dst_path, replacements, backend=None,
         info.pack("i", len(blocks))
         for b in blocks:
             info.pack("IIH", b.uncompressed_size, b.compressed_size, b.flags)
+            if layout.version >= 9:
+                info.pack("Q", b.offset if b.offset is not None else 0)
         info.pack("i", len(layout.entries))
         for e in layout.entries:
             info.pack("qqi", new_offsets[e.name], new_sizes[e.name], e.flags)
@@ -3722,16 +3737,6 @@ def apply_patch(req):
             raise PB3Error("E_CONFIG_INVALID", "patch trong bundle cần tên entry",
                            where=req.kind)
         bundle = parse_bundle(data, backend, lim, where="bundle")
-        if bundle.version >= 9:
-            # v9 CHỈ ĐỌC (C5): patch luôn dựng lại bundle (kể cả
-            # PATCH_INPLACE cũng đóng gói lại container) nên từ chối
-            # sớm với lý do rõ ràng thay vì lỗi khó hiểu ở bước ghi.
-            raise PB3Error(
-                "E_UNSUPPORTED_FORMAT",
-                "bundle UnityFS v9 chỉ đọc — chưa hỗ trợ patch (ghi lại "
-                "bundle v9 chưa được hỗ trợ)",
-                message_vi="Bundle UnityFS v9 chỉ đọc — chưa hỗ trợ patch.",
-                where="bundle")
         before_snap = _snapshot_bundle(bundle)
         assets_bytes = bundle.get_entry(req.entry)
         sf = parse_serialized(assets_bytes, lim, where=req.entry)
@@ -4085,13 +4090,6 @@ def apply_monobehaviour_patch(req):
             raise PB3Error("E_CONFIG_INVALID", "patch trong bundle cần tên entry",
                            where=req.kind)
         bundle = parse_bundle(data, backend, lim, where="bundle")
-        if bundle.version >= 9:
-            raise PB3Error(
-                "E_UNSUPPORTED_FORMAT",
-                "bundle UnityFS v9 chỉ đọc — chưa hỗ trợ patch (ghi lại "
-                "bundle v9 chưa được hỗ trợ)",
-                message_vi="Bundle UnityFS v9 chỉ đọc — chưa hỗ trợ patch.",
-                where="bundle")
         before_snap = _snapshot_bundle(bundle)
         assets_bytes = bundle.get_entry(req.entry)
         sf = parse_serialized(assets_bytes, lim, where=req.entry)

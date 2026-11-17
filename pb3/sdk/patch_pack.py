@@ -18,7 +18,7 @@ An toan:
   dinh dry-run).
 - Tu choi toan bo (khong ghi nua voi) khi: file goc khong khop
   source_sha256, script hien tai khong khop before_sha, asset khong tim
-  thay, bundle ma hoa / khong doc duoc, bundle v9 (chi doc), entry dung
+  thay, bundle ma hoa / khong doc duoc, entry dung
   op REBUILD_ALL (can maturity M4).
 - KHONG bao gio ghi de file goc: output la don vi da patch trong thu muc
   <ten-file>.pb3-patched/ ke ben file goc, kem ban sao luu don vi goc.
@@ -84,17 +84,6 @@ def _read_script(kind, unit_bytes, req_entry, pid, backend, lim):
     raise ValueError(
         "khong tim thay TextAsset path_id=%d trong don vi %s"
         % (int(pid), req_entry or kind))
-
-
-def _check_bundle_version(kind, unit_bytes, backend, lim, where):
-    """Bundle UnityFS v9 chi doc (C5) — tu choi som, ro ly do."""
-    if kind != "bundle":
-        return
-    bundle = _u.parse_bundle(unit_bytes, backend, lim, where=where)
-    if bundle.version >= 9:
-        raise ValueError(
-            "bundle UnityFS v%d chi doc — chua ho tro patch "
-            "(ghi lai bundle v9 chua duoc ho tro)" % bundle.version)
 
 
 def _apply_entry_changes(kind, unit_bytes, req_entry, entry, backend, lim,
@@ -215,8 +204,6 @@ def _prepare_plan_entries(source_bytes, source_name, entries):
         if key not in units:
             kind, unit_bytes, req_entry, label = plan_sdk._resolve_unit(
                 source_bytes, entry.get("vpath"), be, lim)
-            _check_bundle_version(kind, unit_bytes, be, lim,
-                                  entry.get("asset_path") or key)
             units[key] = {"kind": kind, "bytes": unit_bytes,
                           "req_entry": req_entry, "label": label}
         unit = units[key]
@@ -307,7 +294,6 @@ def build_pack_from_mod(source_bytes, source_name, edits):
         if key not in units:
             kind, unit_bytes, req_entry, label = plan_sdk._resolve_unit(
                 source_bytes, entry, be, lim)
-            _check_bundle_version(kind, unit_bytes, be, lim, key)
             units[key] = {"kind": kind, "bytes": unit_bytes,
                           "req_entry": req_entry, "label": label}
         unit = units[key]
@@ -400,7 +386,7 @@ thu muc lam viec, hoac thu muc goc cua du an tren iSH. Neu khong tim
 thay, script bao loi ro rang kem cac noi da tim.
 
 An toan: neu file goc khong khop, asset khong tim thay, bundle ma hoa
-hoac chi doc (v9), script tu choi toan bo va khong ghi nua voi.
+hoac khong doc duoc, script tu choi toan bo va khong ghi nua voi.
 File da patch la don vi nho nhat (bundle/.assets), khong phai goi da
 dong goi lai — tu dong goi lai neu can.
 """
@@ -438,7 +424,7 @@ sao luu don vi goc trong thu muc con backup-goc/.
 Script tu choi toan bo (khong ghi nua voi) khi: file goc khong khop
 source_sha256 trong manifest, script hien tai cua asset khong khop
 before_sha, asset khong tim thay, bundle ma hoa / khong doc duoc,
-bundle v9 (chi doc), entry dung op REBUILD_ALL (can maturity M4).
+entry dung op REBUILD_ALL (can maturity M4).
 
 Yeu cau: Python >= 3.9 + cay PB3 (thu muc co sdk/unity.py). Script tu
 tim cay PB3 qua bien moi truong PB3_ROOT, thu muc chua script, thu muc
@@ -631,15 +617,11 @@ def main(argv=None):
             continue
         if kind == "bundle":
             try:
-                bundle = unity_sdk.parse_bundle(unit_bytes, backend, lim,
-                                                where="bundle")
+                unity_sdk.parse_bundle(unit_bytes, backend, lim,
+                                       where="bundle")
             except Exception as exc:  # noqa: BLE001
                 problems.append("%s: khong doc duoc bundle (%s) — co the "
                                 "bundle ma hoa hoac hong." % (key, exc))
-                continue
-            if bundle.version >= 9:
-                problems.append("%s: bundle UnityFS v%d chi doc — chua ho "
-                                "tro patch." % (key, bundle.version))
                 continue
         cur = bytes(unit_bytes)
         unit_ok = True

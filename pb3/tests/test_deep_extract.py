@@ -46,8 +46,12 @@ NINEKINGS_META = ("Payload/9Kings.app/Data/Managed/Metadata/"
 
 
 # ------------------------------------------------------- builder metadata
-def _build_meta_v31(literals):
-    """global-metadata.dat v31 tổng hợp: header 256 + bảng (len, idx)."""
+def _build_meta_pairs(version, literals, header_size=256):
+    """global-metadata.dat v24/v27/v29/v31 tổng hợp: header + bảng (len, idx).
+
+    v24–v31 cùng layout pairs (Il2CppDumper + rea: header 4 field, không
+    có số entry); v24 dùng header 264 byte theo rea, các version sau 256.
+    """
     blob = b"".join(s.encode("utf-8") for s in literals)
     table = bytearray()
     off = 0
@@ -55,11 +59,16 @@ def _build_meta_v31(literals):
         raw = s.encode("utf-8")
         table += struct.pack("<II", len(raw), off)
         off += len(raw)
-    header = struct.pack("<Ii", 0xFAB11BAF, 31)
-    header += struct.pack("<iiii", 256, len(table), 256 + len(table),
-                          len(blob))
-    header += b"\x00" * (256 - len(header))
+    header = struct.pack("<Ii", 0xFAB11BAF, version)
+    header += struct.pack("<iiii", header_size, len(table),
+                          header_size + len(table), len(blob))
+    header += b"\x00" * (header_size - len(header))
     return header + bytes(table) + blob
+
+
+def _build_meta_v31(literals):
+    """global-metadata.dat v31 tổng hợp: header 256 + bảng (len, idx)."""
+    return _build_meta_pairs(31, literals, 256)
 
 
 def _build_meta_v39(literals):
@@ -163,6 +172,23 @@ class TestIl2cppUnits(unittest.TestCase):
         self.assertNotIn("Hello worldDaily challenge!", texts)
         self.assertEqual(out["label"], "il2cpp-literals")
 
+    def test_v24_v27_v29_exact_split(self):
+        # [FIXTURE] v24/v27/v29 cùng layout pairs như v31 (Il2CppDumper +
+        # rea: header 4 field, entry 8 byte; chỉ có fixture tổng hợp,
+        # bộ mẫu thật chỉ có v31/v39) — tách đúng từng literal.
+        lits = ["Hello world", "Daily challenge!", "Café au lait"]
+        for version, header_size in ((24, 264), (27, 256), (29, 256)):
+            with self.subTest(version=version):
+                data = _build_meta_pairs(version, lits, header_size)
+                out = il2cpp_sdk.extract_literals(io.BytesIO(data), "fx")
+                self.assertEqual(out["mode"], "il2cpp")
+                self.assertEqual(out["metadata_version"], version)
+                self.assertEqual(out["literals_total"], 3)
+                texts = [s["text"] for s in out["strings"]]
+                for lit in lits:
+                    self.assertIn(lit, texts)
+                self.assertNotIn("Hello worldDaily challenge!", texts)
+
     def test_v39_exact_split(self):
         lits = ["Hello world", "Daily challenge!", "Custom level"]
         data = _build_meta_v39(lits)
@@ -180,6 +206,16 @@ class TestIl2cppUnits(unittest.TestCase):
         with self.assertRaises(PB3Error) as ctx:
             il2cpp_sdk.extract_literals(io.BytesIO(bytes(data)), "fx")
         self.assertEqual(ctx.exception.code, "E_UNSUPPORTED_FORMAT")
+        # v30/v32: không có bằng chứng từng phát hành (v32–v38 chưa từng
+        # phát hành công khai — Il2CppDumper PR #925) -> vẫn từ chối.
+        for version in (30, 32):
+            with self.subTest(version=version):
+                data = bytearray(_build_meta_v31(["Hello world"]))
+                struct.pack_into("<i", data, 4, version)
+                with self.assertRaises(PB3Error) as ctx:
+                    il2cpp_sdk.extract_literals(io.BytesIO(bytes(data)),
+                                                "fx")
+                self.assertEqual(ctx.exception.code, "E_UNSUPPORTED_FORMAT")
 
     def test_corrupt_table_rejected(self):
         # Bảng toàn 0: literal rỗng — kiểm chứng mẫu phải từ chối thay vì

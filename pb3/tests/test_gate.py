@@ -32,6 +32,7 @@ _spec = _importlib_util.spec_from_file_location(
 font_fx = _importlib_util.module_from_spec(_spec)  # noqa: E402
 _spec.loader.exec_module(font_fx)  # noqa: E402
 
+from core.errors import PB3Error  # noqa: E402
 from core.limits import Limits  # noqa: E402
 from sdk import gate  # noqa: E402
 from sdk import rebuild as rb  # noqa: E402
@@ -319,6 +320,21 @@ class TestFonts(unittest.TestCase):
         self.assertEqual(missing["status"], "partial")
         self.assertIn(0xE0, missing["missing_codepoints"])
 
+    def test_font_entry_from_ttc_face(self):
+        # [ĐÃ ĐO THẬT] cổng đọc đúng face của .ttc (face 0 thiếu, face 1 đủ);
+        # không chọn face thì cổng từ chối rõ ràng.
+        ttc = font_fx.build_ttc([
+            font_fx.build_font_missing_vietnamese(),
+            font_fx.build_font_full_vietnamese()])
+        face0 = gate.font_entry_from_bytes(ttc, "Game.ttc", face_index=0)
+        self.assertEqual(face0["status"], "partial")
+        self.assertEqual(face0["face_index"], 0)
+        face1 = gate.font_entry_from_bytes(ttc, "Game.ttc", face_index=1)
+        self.assertEqual(face1["status"], "full")
+        self.assertEqual(face1["covered"], 142)
+        with self.assertRaises(PB3Error):
+            gate.font_entry_from_bytes(ttc, "Game.ttc")
+
     def test_tmp_style_entry(self):
         entry = {"name": "TMP Font", "kind": "tmp_font_asset",
                  "source": "x.assets", "status": "partial",
@@ -401,14 +417,17 @@ class TestGatePreWrite(unittest.TestCase):
         self.assertEqual(res["verdict"], "FAIL")
         self.assertEqual(_status(res, "diffverify"), "fail")
 
-    def test_refused_v9(self):
+    def test_v9_passes(self):
+        # [ĐÃ ĐO THẬT] bundle v9 nay ghi được (M-formats): cổng PASS như v7.
+        # Chỉ dịch đúng 4 key có trong bundle (EN) — VI đầy đủ 8 key của
+        # fixture zip 2 đơn vị sẽ thành 4 key unmatched, cổng FAIL đúng luật.
         sf = _sf([(1001, "en.json", EN)])
         bundle = build_bundle(version=9, entries=[(CAB_A, 4, sf)],
                               compression="none")
-        res = _run(bundle, VI, source_texts=SRC, source_name="v9.unity3d")
-        self.assertEqual(res["verdict"], "FAIL")
-        self.assertTrue(res["refused"] or
-                        _status(res, "diffverify") == "fail")
+        tr = {k: VI[k] for k in EN}
+        res = _run(bundle, tr, source_texts=EN, source_name="v9.unity3d")
+        self.assertEqual(res["verdict"], "PASS")
+        self.assertEqual(res["refused"], [])
 
     def test_refused_encrypted(self):
         sf = _sf([(1001, "en.json", EN)])
