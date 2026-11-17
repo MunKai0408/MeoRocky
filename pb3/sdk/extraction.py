@@ -2515,6 +2515,29 @@ def _arbitrate_groups(groups: Dict[Any, List[Dict[str, Any]]], referenced: set,
                 for r in decision.rejected:
                     rejected.append({"path": r.path, "reason": r.reason})
                 continue
+            # (fix strings-arbitration 2026-11-17): nhóm hỏi mà ứng viên
+            # xếp đầu (theo tie-break: app chính trước, Localizable
+            # trước) là file .strings của app chính thì chọn luôn — không
+            # hạ ngưỡng auto chung (0.80) và không đổi điểm. Lý do: file
+            # .strings dạng text chỉ đạt 0.77 vì sniff text 0.8 < magic
+            # bplist 0.9, không phải vì sai nội dung; trên web không có
+            # người để hỏi nên để nhóm rơi sẽ mất text của chính game.
+            # Chỉ áp khi KHÔNG ứng viên nào đạt auto (nhóm ASK) — không
+            # ghi đè quyết định AUTO; và chỉ khi ứng viên đầu là file
+            # app chính (không trong .framework/.bundle/.appex/PlugIns).
+            top = decision.options[0]
+            if (top.path.lower().endswith(".strings")
+                    and arb.is_main_app_path(top.path)):
+                pick = next(it for it in items
+                            if it["plugin"].plugin_id == top.adapter_id
+                            and it["full"] == top.path)
+                pick["group_locale"] = code
+                chosen.append(pick)
+                log("chọn %s cho locale %s (%s, %.2f; nhóm hỏi nhưng ứng viên đầu là .strings của app chính)"
+                    % (pick["full"], code or "?", pick["plugin"].plugin_id, top.score))
+                for r in decision.rejected:
+                    rejected.append({"path": r.path, "reason": r.reason})
+                continue
             ask_groups.append({"locale": code,
                                "options": [{"plugin": r.adapter_id, "path": r.path,
                                             "score": round(r.score, 2),
@@ -2620,11 +2643,21 @@ def _origin_kind_for(full_path: str, layer, plugin_id: str,
     key; PB3 2348 -> 2349). File .strings dạng text giữ nguyên
     "text_asset" (vẫn gộp như trước, vd CSJ 32 key của Tom). flavor lấy
     từ table.schema_hint ở chỗ parse; đường checkpoint (resume) không
-    có flavor nên giữ hành vi cũ ở đó."""
+    có flavor nên giữ hành vi cũ ở đó.
+
+    Ngoại lệ của ngoại lệ (fix strings-arbitration 2026-11-17): chỉ
+    InfoPlist.strings mới là metadata vỏ app. Localizable.strings là
+    bảng localization chính của app -> text game, được gộp (Tom:
+    en.lproj/Localizable.strings bplist 64 key; 9K/PB3/EK2 có
+    Localizable.strings bplist 0 key nên không đổi output). Bảng
+    .strings bplist/XML khác (tên SDK/vendor: BGNativeAd, HyBid...) giữ
+    "other" để text SDK không lọt vào file locale của game."""
     origin_map = getattr(layer, "origin_map", None) if layer is not None else None
     if origin_map and full_path in origin_map:
         return origin_map[full_path]
     if flavor in ("strings-bplist", "strings-xml-plist"):
+        if full_path.rsplit("/", 1)[-1].lower() == "localizable.strings":
+            return "text_asset"
         return "other"
     if plugin_id == "generic_strings":
         return "generic_flat"

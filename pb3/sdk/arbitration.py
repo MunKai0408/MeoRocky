@@ -9,8 +9,10 @@ Nguyên tắc:
   đưa vào tín hiệu `schema_fit` (trọng số 0.18): một plugin KHÔNG thể tự ép mình lên >= 0.80.
 - >= auto_select (0.80): chọn tự động. [ask_min, auto_select): hỏi người dùng, tối đa 5 ứng viên kèm lý do.
   < ask_min (0.55): không ứng viên (E_NO_CANDIDATE) kèm tối đa 5 ứng viên "gần nhất".
-- Điểm bằng nhau (sai khác < 1e-9): tie-break cố định maturity cao > priority cao > đường dẫn ngắn > adapter_id
-  theo alphabet. Không dùng random, không "thử đến khi parse được".
+- Điểm bằng nhau (sai khác < 1e-9): tie-break cố định maturity cao > priority cao > file app chính
+  (Payload/*.app/... trực tiếp, không trong .framework/.bundle/.appex/PlugIns) > bảng
+  Localizable.strings > InfoPlist.strings cuối > đường dẫn ngắn > adapter_id theo alphabet.
+  Không dùng random, không "thử đến khi parse được".
 - `conflict_margin` (mặc định 0 = đúng đặc tả): nếu > 0 và ứng viên thứ hai (khác adapter/đường dẫn) kém top
   dưới margin thì hạ về "ask" thay vì tự chọn (xung đột -> không đoán bừa).
 Module không import registry: dùng được độc lập (pipeline Claude 07 dùng trực tiếp).
@@ -143,7 +145,48 @@ class Decision:
 
 
 def _rank_key(r: Ranked):
-    return (-round(r.score, 9), -SupportLevel.rank(r.maturity), -r.priority, len(r.path), r.path, r.adapter_id)
+    # (fix strings-arbitration 2026-11-17): khi ngang điểm tuyệt đối,
+    # file của app chính thắng file SDK, và bảng Localizable.strings
+    # thắng InfoPlist.strings (chỉ metadata vỏ app). Hai mức này đứng
+    # TRƯỚC độ dài đường dẫn: trước đây InfoPlist.strings của Tom thắng
+    # Localizable.strings chỉ vì ngắn hơn 2 ký tự, làm mất text game.
+    return (-round(r.score, 9), -SupportLevel.rank(r.maturity), -r.priority,
+            0 if is_main_app_path(r.path) else 1, strings_basename_rank(r.path),
+            len(r.path), r.path, r.adapter_id)
+
+
+def is_main_app_path(path: str) -> bool:
+    """True khi file nằm TRỰC TIẾP trong bundle app iOS chính
+    (Payload/<App>.app/...), không lọt vào bundle/framework/extension
+    lồng nhau (.framework/.bundle/.appex/.xctest/PlugIns). Đường dẫn
+    không có ".app" (vd file Unity, đường dẫn tương đối) -> False cho
+    tất cả -> tie-break rơi về các mức sau như cũ."""
+    parts = (path or "").replace("\\", "/").split("/")
+    app_idx = None
+    for i, part in enumerate(parts):
+        if part.lower().endswith(".app"):
+            app_idx = i
+            break
+    if app_idx is None:
+        return False
+    for part in parts[app_idx + 1:]:
+        low = part.lower()
+        if low == "plugins" or low.endswith((".framework", ".bundle", ".appex", ".xctest")):
+            return False
+    return True
+
+
+def strings_basename_rank(path: str) -> int:
+    """Thứ hạng basename cho tie-break (chỉ có ý nghĩa với .strings):
+    0 = Localizable.strings (bảng localization chính của app),
+    2 = InfoPlist.strings (chỉ metadata vỏ app: mô tả xin quyền...),
+    1 = còn lại (kể cả file không phải .strings — trung lập)."""
+    base = (path or "").replace("\\", "/").rsplit("/", 1)[-1].lower()
+    if base == "localizable.strings":
+        return 0
+    if base == "infoplist.strings":
+        return 2
+    return 1
 
 
 def rank(contenders: Sequence[Contender], w: Weights) -> List[Ranked]:
@@ -165,6 +208,10 @@ def _why_lost(win: Ranked, lose: Ranked) -> str:
         return "ngang điểm; thua tie-break maturity (%s < %s)" % (lose.maturity, win.maturity)
     if win.priority != lose.priority:
         return "ngang điểm; thua tie-break priority (%d < %d)" % (lose.priority, win.priority)
+    if is_main_app_path(win.path) != is_main_app_path(lose.path):
+        return "ngang điểm; thua tie-break app chính (nằm trong .framework/.bundle)"
+    if strings_basename_rank(win.path) != strings_basename_rank(lose.path):
+        return "ngang điểm; thua tie-break tên file (InfoPlist.strings sau Localizable.strings)"
     if len(win.path) != len(lose.path):
         return "ngang điểm; thua tie-break đường dẫn (dài hơn)"
     return "ngang điểm; thua tie-break theo adapter_id/đường dẫn"
