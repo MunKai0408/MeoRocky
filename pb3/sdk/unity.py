@@ -1556,6 +1556,11 @@ class SerializedFile:
           collection từ m_TableCollectionName (để join với StringTable).
         - kind "locale": đối tượng Locale (chỉ có m_Identifier/m_LocaleName,
           không phải text dịch) — bên gọi bỏ qua.
+        - kind "language_source": bảng ngôn ngữ có cấu trúc — languages
+          [{name, code}], terms [{term, values}] theo đúng thứ tự cột
+          (values[i] thuộc languages[i], GIỮ chuỗi rỗng). Từ type tree
+          (nếu có) hoặc byte-walk đã validate (nếu không); object không
+          khớp layout thì rơi về generic như trước.
         - kind "generic": MonoBehaviour khác — fields {đường_dẫn: chuỗi}
           nếu có type tree, strings [chuỗi...] nếu không (quét đã xác minh).
         Object đọc lỗi bị bỏ qua kèm ghi chú vào `warnings` (nếu có) thay
@@ -1607,14 +1612,35 @@ class SerializedFile:
                                 "kind": "locale",
                                 "locale": code if isinstance(code, str) else None})
                 else:
-                    fields = {}
-                    _flatten_typetree_strings(val, "", fields)
-                    out.append({"path_id": o.path_id, "name": name or "",
-                                "kind": "generic", "locale": None,
-                                "fields": fields})
+                    ls = language_source_from_fields(val)
+                    if ls is not None:
+                        out.append({"path_id": o.path_id, "name": name or "",
+                                    "kind": "language_source",
+                                    "languages": ls["languages"],
+                                    "terms": ls["terms"],
+                                    "trailing_bytes": ls["trailing_bytes"]})
+                    else:
+                        fields = {}
+                        _flatten_typetree_strings(val, "", fields)
+                        out.append({"path_id": o.path_id, "name": name or "",
+                                    "kind": "generic", "locale": None,
+                                    "fields": fields})
             else:
                 try:
                     raw = self.object_bytes(o.path_id)
+                except PB3Error as exc:
+                    notes.append("bỏ qua MonoBehaviour path_id=%d (%s)"
+                                 % (o.path_id, exc.code))
+                    continue
+                ls = parse_language_source_bytes(raw, self.endian)
+                if ls is not None:
+                    out.append({"path_id": o.path_id, "name": ls["name"],
+                                "kind": "language_source",
+                                "languages": ls["languages"],
+                                "terms": ls["terms"],
+                                "trailing_bytes": ls["trailing_bytes"]})
+                    continue
+                try:
                     name, strings = scan_monobehaviour_strings(raw, self.endian)
                 except PB3Error as exc:
                     notes.append("bỏ qua MonoBehaviour path_id=%d (%s)"
@@ -1852,6 +1878,208 @@ def _mb_text_ok(raw):
             continue
         return None
     return s
+
+
+# ------------------------------------------------------------------ bảng ngôn ngữ
+# Bảng ngôn ngữ của game (vd plugin localization lưu mọi term + mọi bản dịch
+# trong 1 object MonoBehaviour): cấu trúc nhị phân khi build player đã lược
+# type tree — đọc bằng cách đi bộ theo layout đã kiểm chứng, KHÔNG quét chuỗi
+# phẳng (quét phẳng bỏ chuỗi rỗng nên lệch cột, gán nhầm ngôn ngữ — lỗi
+# en.json 2026-11-17). Layout [ĐÃ ĐO THẬT] trên 4 build thật (9 Kings IPA
+# v1.0.6, 9 Kings build riêng BuildNumber 68, Poly Bridge 3 v1.1.7,
+# Exploding Kittens 2 v0.0.18): header 28 byte + m_Name, rồi 3 int32 (KHÔNG
+# khẳng định ngữ nghĩa — đo được 0/1 khác nhau giữa các build) + int32 số
+# term; mỗi term: chuỗi Term, int32 TermType, int32 L + L chuỗi bản dịch
+# (GIỮ chuỗi rỗng), int32 F == L + F byte cờ, int32 T + T chuỗi; rồi 3
+# int32 + int32 số ngôn ngữ == L, mỗi ngôn ngữ: chuỗi Name, chuỗi Code (có
+# thể rỗng — cột không phải ngôn ngữ như Notes/Status), 4 byte (1 byte cờ +
+# đệm); phần đuôi dài tùy build, chỉ giới hạn độ dài, không parse. Thứ tự
+# cột ngôn ngữ KHÁC NHAU giữa các build (vd zh-CN/zh-TW đổi chỗ) nên ánh xạ
+# luôn đọc từ bảng ngôn ngữ của chính file, không giả định. Parser validate
+# nghiêm ngặt và FAIL-CLOSED: bất kỳ điều kiện nào sai -> None để caller
+# dùng đường quét chuỗi cũ, không bao giờ trả bảng sai. Không khớp theo tên
+# object/tên game: chỉ cấu trúc.
+_LS_MAX_TERMS = 200000
+_LS_MAX_LANGS = 64
+_LS_MAX_TOUCH = 1024
+_LS_MAX_VALUE_CHARS = 1048576
+_LS_MAX_TRAILING = 65536
+_LS_CODE_RE = re.compile(r"^[A-Za-z]{2,3}([-_][A-Za-z0-9]{2,8})?$")
+
+
+def _ls_no_control(s):
+    """Chuỗi không chứa ký tự điều khiển (kể cả NUL/DEL)."""
+    for ch in s:
+        o = ord(ch)
+        if o < 0x20 or o == 0x7F:
+            return False
+    return True
+
+
+def parse_language_source_bytes(raw, endian="<"):
+    """Parse 1 object MonoBehaviour thành bảng ngôn ngữ có cấu trúc.
+
+    Trả {"name", "languages": [{"name", "code"}], "terms": [{"term",
+    "values": [chuỗi theo đúng thứ tự languages, GIỮ chuỗi rỗng]}],
+    "trailing_bytes": int} hoặc None khi dữ liệu không khớp layout (kể cả
+    object không phải bảng ngôn ngữ). Không raise với dữ liệu xấu.
+    values[i] thuộc languages[i] — ánh xạ theo CHỈ SỐ, không đoán."""
+    try:
+        data = bytes(raw)
+        name = read_monobehaviour_name(data, endian)
+        if name is None or len(name) > 256 or not _ls_no_control(name):
+            return None
+        body_start = _MB_HEADER_SIZE + 4 + len(name.encode("utf-8"))
+        body_start += (-body_start) % 4
+        r = _Reader(data, endian, where="language_source")
+        r.pos = body_start
+        r.i32()
+        r.i32()
+        r.i32()
+        n_terms = r.i32()
+        if n_terms < 1 or n_terms > _LS_MAX_TERMS:
+            return None
+        terms = []
+        seen = set()
+        n_langs = None
+        for _ in range(n_terms):
+            term = r.aligned_string()
+            if (not term or len(term) > 512 or not _ls_no_control(term)
+                    or term in seen):
+                return None
+            seen.add(term)
+            r.i32()  # TermType (kiểu term: text/audio/...); không ràng buộc giá trị
+            lang_count = r.i32()
+            if n_langs is None:
+                if lang_count < 1 or lang_count > _LS_MAX_LANGS:
+                    return None
+                n_langs = lang_count
+            elif lang_count != n_langs:
+                return None
+            values = []
+            for _i in range(n_langs):
+                v = r.aligned_string()
+                if len(v) > _LS_MAX_VALUE_CHARS or "\x00" in v:
+                    return None
+                values.append(v)
+            flag_count = r.i32()
+            if flag_count != n_langs:
+                return None
+            r.read(flag_count)
+            r.align(4)
+            touch_count = r.i32()
+            if touch_count < 0 or touch_count > _LS_MAX_TOUCH:
+                return None
+            for _i in range(touch_count):
+                v = r.aligned_string()
+                if len(v) > _LS_MAX_VALUE_CHARS or "\x00" in v:
+                    return None
+            terms.append({"term": term, "values": values})
+        r.i32()
+        r.i32()
+        r.i32()
+        n_lang2 = r.i32()
+        if n_lang2 != n_langs:
+            return None
+        languages = []
+        any_code = False
+        for _ in range(n_langs):
+            lname = r.aligned_string()
+            code = r.aligned_string()
+            r.i32()
+            if (not lname or len(lname) > 256 or not _ls_no_control(lname)
+                    or len(code) > 32):
+                return None
+            if code:
+                if _LS_CODE_RE.match(code) is None:
+                    return None
+                any_code = True
+            languages.append({"name": lname, "code": code})
+        if not any_code:
+            return None
+        trailing = r.remaining()
+        if trailing < 0 or trailing > _LS_MAX_TRAILING:
+            return None
+        return {"name": name, "languages": languages, "terms": terms,
+                "trailing_bytes": trailing}
+    except (PB3Error, struct.error, ValueError, UnicodeDecodeError,
+            IndexError, TypeError):
+        return None
+
+
+def _ls_field(d, *names):
+    for n in names:
+        if n in d:
+            return d[n]
+    return None
+
+
+def language_source_from_fields(val):
+    """Bảng ngôn ngữ từ giá trị type-tree đã parse (build còn type tree).
+
+    [HYPOTHESIS]: tên trường (mSource/mLanguages/mTerms, Name/Code,
+    Term/Languages) suy từ layout nhị phân đã đo + quy ước đặt tên trường
+    Unity; CHƯA có build thật nào còn type tree để kiểm chứng — chỉ có test
+    trên dict dựng sẵn. Sai hình dạng -> None, caller dùng đường generic.
+    Validate giống bản byte-walk: L == số ngôn ngữ, tên term duy nhất,
+    ít nhất 1 mã ngôn ngữ hợp lệ, giữ chuỗi rỗng."""
+    try:
+        if not isinstance(val, dict):
+            return None
+        src = val.get("mSource")
+        if not isinstance(src, dict):
+            src = val
+        langs_raw = _ls_field(src, "mLanguages", "Languages")
+        terms_raw = _ls_field(src, "mTerms", "Terms")
+        if not isinstance(langs_raw, list) or not isinstance(terms_raw, list):
+            return None
+        if not 1 <= len(langs_raw) <= _LS_MAX_LANGS:
+            return None
+        if not 1 <= len(terms_raw) <= _LS_MAX_TERMS:
+            return None
+        languages = []
+        any_code = False
+        for entry in langs_raw:
+            if not isinstance(entry, dict):
+                return None
+            lname = _ls_field(entry, "Name", "m_Name", "name")
+            code = _ls_field(entry, "Code", "m_Code", "code")
+            if (not isinstance(lname, str) or not lname or len(lname) > 256
+                    or not _ls_no_control(lname)
+                    or not isinstance(code, str) or len(code) > 32):
+                return None
+            if code:
+                if _LS_CODE_RE.match(code) is None:
+                    return None
+                any_code = True
+            languages.append({"name": lname, "code": code})
+        if not any_code:
+            return None
+        n_langs = len(languages)
+        terms = []
+        seen = set()
+        for entry in terms_raw:
+            if not isinstance(entry, dict):
+                return None
+            term = _ls_field(entry, "Term", "m_Term", "term")
+            values = _ls_field(entry, "Languages", "m_Languages", "languages")
+            if (not isinstance(term, str) or not term or len(term) > 512
+                    or not _ls_no_control(term) or term in seen
+                    or not isinstance(values, list) or len(values) != n_langs):
+                return None
+            seen.add(term)
+            clean = []
+            for v in values:
+                if (not isinstance(v, str) or len(v) > _LS_MAX_VALUE_CHARS
+                        or "\x00" in v):
+                    return None
+                clean.append(v)
+            terms.append({"term": term, "values": clean})
+        return {"languages": languages, "terms": terms,
+                "trailing_bytes": None}
+    except (ValueError, TypeError, AttributeError):
+        return None
+
 
 
 def scan_monobehaviour_strings(data, endian="<"):

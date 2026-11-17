@@ -263,7 +263,8 @@ def _expand_serialized(sf, assets_name: str, vpath: str):
     .unity3d lớn không ôm cả payload)."""
     out: Dict[str, bytes] = {}
     notes: List[str] = []
-    mb: Dict[str, Any] = {"string_tables": [], "shared_tables": [], "generic": []}
+    mb: Dict[str, Any] = {"string_tables": [], "shared_tables": [], "generic": [],
+                          "language_sources": []}
     tas = sf.text_assets()
     n_text_assets = len(tas)
     for _pid, name, script in tas:
@@ -282,6 +283,11 @@ def _expand_serialized(sf, assets_name: str, vpath: str):
             mb["shared_tables"].append(item)
         elif kind == "locale":
             pass  # đối tượng Locale: chỉ có mã/tên locale, không phải text dịch
+        elif kind == "language_source":
+            # Bảng ngôn ngữ có cấu trúc: KHÔNG đi qua đường quét chuỗi phẳng
+            # (đường đó bỏ chuỗi rỗng -> lệch cột). Đếm chuỗi = số term.
+            mb["language_sources"].append((assets_name, item))
+            n_mb_strings += len(item.get("terms") or [])
         else:
             mb["generic"].append((assets_name, item))
             fields = item.get("fields")
@@ -300,10 +306,12 @@ def _expand_unity(data: bytes, vpath: str, backend, limits) -> Tuple[Dict[str, b
     hỏng cũng vậy (ghi chú trong notes).
 
     mb = {"string_tables": [item], "shared_tables": [item],
-          "generic": [(assets_name, item)]} — item theo
+          "generic": [(assets_name, item)],
+          "language_sources": [(assets_name, item)]} — item theo
     SerializedFile.monobehaviour_texts(): StringTable (entries {m_Id: chuỗi},
     locale từ m_Code), SharedTableData (entries {m_Id: key}), generic
-    (fields {đường_dẫn: chuỗi} nếu có type tree, strings [...] nếu không).
+    (fields {đường_dẫn: chuỗi} nếu có type tree, strings [...] nếu không),
+    language_source (languages + terms theo chỉ số cột, giữ chuỗi rỗng).
     StringTable/SharedTableData join theo m_Id ở _build_layers (chúng có thể
     nằm ở 2 bundle khác nhau trong cùng IPA).
 
@@ -314,7 +322,8 @@ def _expand_unity(data: bytes, vpath: str, backend, limits) -> Tuple[Dict[str, b
     ghi vào skipped/log thay vì để bundle biến mất."""
     out: Dict[str, bytes] = {}
     notes: List[str] = []
-    mb: Dict[str, Any] = {"string_tables": [], "shared_tables": [], "generic": []}
+    mb: Dict[str, Any] = {"string_tables": [], "shared_tables": [], "generic": [],
+                          "language_sources": []}
     assets: List[Tuple[str, Any]] = []
     det = unity_sdk.detect_bundle(data)
     if det is not None:
@@ -350,13 +359,13 @@ def _expand_unity(data: bytes, vpath: str, backend, limits) -> Tuple[Dict[str, b
     for assets_name, sf in assets:
         got, mb_i, notes_i, n_ta, n_m, n_s = _expand_serialized(sf, assets_name, vpath)
         out.update(got)
-        for k in ("string_tables", "shared_tables", "generic"):
+        for k in ("string_tables", "shared_tables", "generic", "language_sources"):
             mb[k].extend(mb_i[k])
         notes.extend(notes_i)
         n_text_assets += n_ta
         n_mb += n_m
         n_mb_strings += n_s
-    if not out and not mb["string_tables"] and not mb["generic"]:
+    if not out and not mb["string_tables"] and not mb["generic"] and not mb["language_sources"]:
         notes.append("không có TextAsset nào (%d SerializedFile đã mở, %d TextAsset, "
                      "%d MonoBehaviour, %d chuỗi)"
                      % (len(assets), n_text_assets, n_mb, n_mb_strings))
@@ -375,7 +384,8 @@ def _expand_unity_stream(path: str, vpath: str, backend, limits):
     parse lỗi ghi notes như _expand_unity, không làm hỏng cả file."""
     out: Dict[str, bytes] = {}
     notes: List[str] = []
-    mb: Dict[str, Any] = {"string_tables": [], "shared_tables": [], "generic": []}
+    mb: Dict[str, Any] = {"string_tables": [], "shared_tables": [], "generic": [],
+                          "language_sources": []}
     n_sf = 0
     n_text_assets = 0
     n_mb = 0
@@ -396,13 +406,13 @@ def _expand_unity_stream(path: str, vpath: str, backend, limits):
         n_sf += 1
         got, mb_i, notes_i, n_ta, n_m, n_s = _expand_serialized(sf, entry_name, vpath)
         out.update(got)
-        for k in ("string_tables", "shared_tables", "generic"):
+        for k in ("string_tables", "shared_tables", "generic", "language_sources"):
             mb[k].extend(mb_i[k])
         notes.extend(notes_i)
         n_text_assets += n_ta
         n_mb += n_m
         n_mb_strings += n_s
-    if not out and not mb["string_tables"] and not mb["generic"]:
+    if not out and not mb["string_tables"] and not mb["generic"] and not mb["language_sources"]:
         notes.append("không có TextAsset nào (%d SerializedFile đã mở, %d TextAsset, "
                      "%d MonoBehaviour, %d chuỗi)"
                      % (n_sf, n_text_assets, n_mb, n_mb_strings))
@@ -415,10 +425,14 @@ def _mb_string_is_noise(s: str) -> bool:
     Bỏ: quá ngắn, GUID 32 hex (có/không có gạch nối), "[None]" (tham chiếu
     null của Unity), số phiên bản (1.1.0), đường dẫn asset
     (Assets/.../Plugins/.../đuôi .png/.mat/.prefab/...), chuỗi không có chữ
-    cái nào (dãy số/ký tự của font, vd "32 - 126, 160, 8203"). Giữ mọi chuỗi
-    có chữ cái (kể cả key kiểu "sim_pause", mã, câu) — lọc mạnh tay sẽ mất
-    text thật; rác còn lại (tên font, "Aniara"...) vẫn đọc được và không
-    làm hỏng dịch."""
+    cái nào (dãy số/ký tự của font, vd "32 - 126, 160, 8203"). Bỏ thêm rác
+    nội bộ của Unity [ĐÃ ĐO THẬT trên resources.assets của 3 game thật]:
+    tên kiểu kèm assembly ("UnityEngine.…", "Unity.…"), tên class USS của
+    UI Toolkit (toàn chuỗi là "unity-…"), namespace chấm 3+ đoạn
+    ("MGS.Debugging.UILogHandler"), tài liệu UXML, đường dẫn .uxml/.uss.
+    KHÔNG bỏ tên CamelCase trần ("PromoCodeUI", "Aniara"): đo được
+    1971/396/566 chuỗi như vậy, lẫn cả text thật — lọc sẽ mất text. Giữ mọi
+    chuỗi có chữ cái còn lại (kể cả key kiểu "sim_pause", mã, câu)."""
     if not s or len(s) < 2:
         return True
     if s == "[None]" or _MB_GUID_RE.match(s) or _MB_GUID_DASHED_RE.match(s) \
@@ -429,6 +443,16 @@ def _mb_string_is_noise(s: str) -> bool:
     low = s.lower()
     if any(low.endswith(e) for e in _MB_NOISE_EXTS):
         return True
+    if "UnityEngine." in s or _MB_UNITY_NS_RE.search(s):
+        return True
+    if _MB_USS_CLASS_RE.match(s):
+        return True
+    if _MB_DOTTED_NS_RE.match(s):
+        return True
+    stripped = s.strip()
+    if (stripped.startswith("<UXML") or stripped.startswith("<ui:")
+            or "xmlns:ui=" in stripped):
+        return True
     return not any(ch.isalpha() for ch in s)
 
 
@@ -438,7 +462,10 @@ _MB_GUID_DASHED_RE = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-
 _MB_VERSION_RE = re.compile(r"^\d+(\.\d+)+$")
 _MB_NOISE_EXTS = (".png", ".jpg", ".jpeg", ".mat", ".prefab", ".ttf", ".otf",
                   ".shader", ".asset", ".controller", ".anim", ".fbx", ".exr",
-                  ".wav", ".mp3", ".ogg", ".dll", ".cs")
+                  ".wav", ".mp3", ".ogg", ".dll", ".cs", ".uxml", ".uss")
+_MB_UNITY_NS_RE = re.compile(r"\bUnity\.[A-Z]")
+_MB_USS_CLASS_RE = re.compile(r"^\.?unity-[a-z0-9_-]+$")
+_MB_DOTTED_NS_RE = re.compile(r"^[A-Za-z][A-Za-z0-9]{1,}(\.[A-Z][A-Za-z0-9]+){2,}$")
 
 
 _TERM_LIKE_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_/.\-]*$")
@@ -770,6 +797,93 @@ def _mb_generic_kv(items, split_languages=False):
             "stats": stats}
 
 
+def _string_table_collection(name, loc):
+    """Tên collection suy từ tên bảng bỏ hậu tố "_<locale>" (vd "Buildings_en")."""
+    if loc and name.lower().endswith("_" + loc):
+        return name[:-len(loc) - 1]
+    return name
+
+
+def join_string_tables_grouped(tables, shared):
+    """Join StringTable + SharedTableData theo m_Id, giữ riêng từng collection.
+
+    Trả (grouped, notes, conflicts, shared_keys):
+    - grouped: {(bundle, locale, collection): {key: value}} — key là key thật
+      trong SharedTableData, hoặc "id_<m_Id>" khi entry không có key.
+    - notes: cùng ý nghĩa với _join_string_tables (bảng không rõ locale /
+      thiếu SharedTableData / entry không có key).
+    - conflicts: cùng (bundle, locale, collection, key) mà giá trị khác nhau
+      (giữ bản đầu, ghi rõ cả hai giá trị + nguồn), và cùng (collection,
+      m_Id) mà SharedTableData cho key khác nhau. Không bỏ âm thầm.
+    - shared_keys: {collection: {m_Id: key}} — vũ trụ key từ SharedTableData
+      (để caller biết key nào thiếu entry ở một locale: thiếu -> "").
+    Dùng cho xuất locale dạng key "table/key"; pipeline gộp chung vẫn dùng
+    _join_string_tables (giữ nguyên hành vi + thứ tự cũ)."""
+    shared_map: Dict[str, Dict[int, str]] = {}
+    shared_src: Dict[Tuple[str, int], str] = {}
+    conflicts: List[Dict[str, Any]] = []
+    for item in shared:
+        coll = item.get("collection") or ""
+        if not coll:
+            continue
+        bucket = shared_map.setdefault(coll, {})
+        for i, k in (item.get("entries") or {}).items():
+            if i in bucket and bucket[i] != k:
+                conflicts.append({
+                    "key": "%s/id_%d" % (coll, i),
+                    "locale": None,
+                    "kind": "shared_key",
+                    "kept": {"value": bucket[i],
+                             "source": shared_src.get((coll, i), "")},
+                    "dropped": {"value": k, "source": item.get("name") or ""},
+                })
+            else:
+                bucket.setdefault(i, k)
+                shared_src.setdefault((coll, i), item.get("name") or "")
+    grouped: Dict[Tuple[str, str, str], Dict[str, str]] = {}
+    key_src: Dict[Tuple[str, str, str, str], str] = {}
+    notes: List[str] = []
+    for bundle_path, item in tables:
+        loc = (item.get("locale") or "").strip().lower()
+        if not loc:
+            notes.append("bảng StringTable %r không rõ locale, bỏ qua"
+                         % (item.get("name") or "?"))
+            continue
+        name = item.get("name") or ""
+        coll = _string_table_collection(name, loc)
+        keys = shared_map.get(coll)
+        bucket = grouped.setdefault((bundle_path, loc, coll), {})
+        src = "%s::%s" % (bundle_path, name)
+        n_id = 0
+        for i, v in (item.get("entries") or {}).items():
+            key = keys.get(i) if keys else None
+            if key is None:
+                key = "id_%d" % i
+                n_id += 1
+            if key in bucket:
+                if bucket[key] != v:
+                    conflicts.append({
+                        "key": "%s/%s" % (coll, key),
+                        "locale": loc,
+                        "kind": "value",
+                        "kept": {"value": bucket[key],
+                                 "source": key_src.get((bundle_path, loc, coll, key), "")},
+                        "dropped": {"value": v, "source": src},
+                    })
+            else:
+                bucket[key] = v
+                key_src[(bundle_path, loc, coll, key)] = src
+        if keys is None:
+            notes.append("bảng %r (locale %s): không tìm thấy SharedTableData "
+                         "cho collection %r, dùng id làm key (%d chuỗi)"
+                         % (name, loc, coll, len(item.get("entries") or {})))
+        elif n_id:
+            notes.append("bảng %r (locale %s): %d/%d entry không có key trong "
+                         "SharedTableData, dùng id làm key"
+                         % (name, loc, n_id, len(item.get("entries") or {})))
+    return grouped, notes, conflicts, shared_map
+
+
 def _join_string_tables(tables, shared):
     """Join StringTable + SharedTableData theo m_Id -> {(bundle, locale): {key: value}}.
 
@@ -816,6 +930,103 @@ def _join_string_tables(tables, shared):
     return merged, notes
 
 
+def _language_source_base_columns(item):
+    """Chọn 1 cột cho mỗi mã ngôn ngữ GỐC trong bảng ngôn ngữ (cho pipeline).
+
+    Pipeline gộp biến thể về mã gốc (bảng locale chỉ có "zh", "en", "pt"...;
+    detect_locale cũng gộp "zh-CN"/"zh-TW" về "zh"). Quy tắc chung, không
+    theo game nào: mỗi mã gốc lấy cột có mã ĐÚNG BẰNG mã gốc nếu có ("zh"),
+    nếu không thì cột biến thể ĐẦU TIÊN theo thứ tự bảng ("zh-TW" đứng trước
+    "zh-CN" thì lấy "zh-TW"). Cột mã rỗng/không hợp lệ (Notes, Status...) là
+    cột không phải ngôn ngữ -> bỏ qua, đếm riêng. Biến thể không được chọn
+    vẫn đọc được qua xuất locale đầy đủ (en/zh-CN/zh-TW riêng), không mất.
+    Trả (picked, skipped_variants, n_nonlocale): picked {mã_gốc: (mã_đầy_đủ,
+    chỉ_số_cột)}; skipped_variants [mã_đầy_đủ...] theo thứ tự bảng."""
+    picked: Dict[str, Tuple[str, int]] = {}
+    skipped_variants: List[str] = []
+    n_nonlocale = 0
+    for idx, lang in enumerate(item.get("languages") or []):
+        code = (lang.get("code") or "").strip()
+        if not code:
+            n_nonlocale += 1
+            continue
+        norm = code.replace("_", "-").lower()
+        base = norm.split("-")[0]
+        if not base.isalpha() or not 2 <= len(base) <= 3:
+            n_nonlocale += 1
+            continue
+        if base not in picked:
+            picked[base] = (norm, idx)
+        elif picked[base][0] != base and norm == base:
+            skipped_variants.append(picked[base][0])
+            picked[base] = (norm, idx)
+        else:
+            skipped_variants.append(norm)
+    return picked, skipped_variants, n_nonlocale
+
+
+def _language_source_virtual_files(mb_lang_sources, log):
+    """File JSON ao cho bang ngon ngu co cau truc: {(vpath): bytes}.
+
+    Moi (don vi, ma goc) mot file, key = ten term that, GIU chuoi rong.
+    Ten file co doan ".langtable" de khong dung file generic cung don vi +
+    ngon ngu (dict ao ghi de se mat bang). Nhieu bang trong cung don vi
+    gop keep-first theo thu tu gap, xung dot dem + log (khong lang le)."""
+    ls_units: Dict[Tuple[str, str, str], Dict[str, str]] = {}
+    ls_order: List[Tuple[str, str, str]] = []
+    ls_conflicts = 0
+    for unit_path, assets_name, item in mb_lang_sources:
+        picked, skipped_var, n_nonloc = _language_source_base_columns(item)
+        unit_label = unit_path + ("::" + assets_name if assets_name else "")
+        log("Unity: %s -> bảng ngôn ngữ %r: %d term, %d cột (mã gốc: %s; "
+            "biến thể gộp: %s; cột không phải ngôn ngữ: %d)"
+            % (unit_label, item.get("name") or "?",
+               len(item.get("terms") or []),
+               len(item.get("languages") or []),
+               ", ".join("%s<-%s" % (b, f)
+                         for b, (f, _i) in sorted(picked.items())),
+               ", ".join(skipped_var) if skipped_var else "-",
+               n_nonloc))
+        for base, (_full, col) in sorted(picked.items()):
+            ukey = (unit_path, assets_name, base)
+            bucket = ls_units.setdefault(ukey, {})
+            if ukey not in ls_order:
+                ls_order.append(ukey)
+            for term in item.get("terms") or []:
+                tname = term.get("term")
+                vals = term.get("values") or []
+                if tname is None or col >= len(vals):
+                    continue
+                if tname not in bucket:
+                    bucket[tname] = vals[col]
+                elif bucket[tname] != vals[col]:
+                    # Nhiều bảng trong cùng đơn vị, cùng term khác giá
+                    # trị: giữ bản đầu + đếm (log tổng ở dưới), không
+                    # lặng lẽ — xung đột liên file vẫn ghi ở bước gộp.
+                    ls_conflicts += 1
+    if ls_conflicts:
+        log("Unity: bảng ngôn ngữ: %d xung đột cùng term trong đơn vị "
+            "(giữ bản đầu)" % ls_conflicts)
+    out: Dict[str, bytes] = {}
+    for unit_path, assets_name, base in ls_order:
+        kv = ls_units[(unit_path, assets_name, base)]
+        if not kv:
+            continue
+        if assets_name:
+            stem = _sanitize_segment(os.path.splitext(os.path.basename(assets_name))[0]
+                                     or "assets")
+            vpath = "%s::%s::%s.langtable.monobehaviour.%s.json" % (unit_path, assets_name, stem, base)
+        else:
+            stem = _sanitize_segment(os.path.splitext(os.path.basename(unit_path))[0]
+                                     or "assets")
+            vpath = "%s::%s.langtable.monobehaviour.%s.json" % (unit_path, stem, base)
+        out[vpath] = json.dumps(kv, ensure_ascii=False, indent=1).encode("utf-8")
+        log("Unity: %s -> bảng ngôn ngữ [%s]: %d term (xuất %s)"
+            % (unit_path + ("::" + assets_name if assets_name else ""),
+               base, len(kv), vpath))
+    return out
+
+
 def _build_layers(root_vfs, inv: List[disc.InventoryEntry], limits, backend, log,
                   progress_fn: Optional[Callable[[str, int, Optional[int]], None]] = None,
                   skipped: Optional[List[Dict[str, Any]]] = None,
@@ -848,6 +1059,7 @@ def _build_layers(root_vfs, inv: List[disc.InventoryEntry], limits, backend, log
     mb_tables: List[Tuple[str, Dict[str, Any]]] = []
     mb_shared: List[Dict[str, Any]] = []
     mb_generic_units: Dict[Tuple[str, str], List[Dict[str, Any]]] = {}
+    mb_lang_sources: List[Tuple[str, str, Dict[str, Any]]] = []
     total = len(inv)
 
     def _add_skipped(path: str, reason: str) -> None:
@@ -917,19 +1129,26 @@ def _build_layers(root_vfs, inv: List[disc.InventoryEntry], limits, backend, log
             mb_shared.extend(mb["shared_tables"])
             for assets_name, item in mb["generic"]:
                 mb_generic_units.setdefault((entry.path, assets_name), []).append(item)
+            for assets_name, item in mb["language_sources"]:
+                mb_lang_sources.append((entry.path, assets_name, item))
             n_st = len(mb["string_tables"])
             n_gen = len(mb["generic"])
+            n_ls = len(mb["language_sources"])
+            n_ls_terms = sum(len(_it.get("terms") or [])
+                             for _an, _it in mb["language_sources"])
             n_gen_str = 0
             for _an, _it in mb["generic"]:
                 _f = _it.get("fields")
                 _s = _it.get("strings")
                 n_gen_str += len(_f) if isinstance(_f, dict) else len(_s or [])
-            if got or n_st or n_gen:
+            if got or n_st or n_gen or n_ls:
                 virtual.update(got)
                 # Giữ nguyên tiền tố log cũ "-> N TextAsset" (harness cũ
                 # kiểm tra đúng chuỗi này) rồi thêm số liệu MonoBehaviour.
-                log("Unity: %s -> %d TextAsset, %d StringTable, %d MonoBehaviour (%d chuỗi)"
-                    % (entry.path, len(got), n_st, n_gen, n_gen_str))
+                log("Unity: %s -> %d TextAsset, %d StringTable, %d MonoBehaviour (%d chuỗi)%s"
+                    % (entry.path, len(got), n_st, n_gen, n_gen_str,
+                       (", %d bảng ngôn ngữ (%d term)" % (n_ls, n_ls_terms))
+                       if n_ls else ""))
                 for n in notes:
                     log("Unity: %s: %s" % (entry.path, n))
             else:
@@ -945,9 +1164,23 @@ def _build_layers(root_vfs, inv: List[disc.InventoryEntry], limits, backend, log
     # - StringTable: gộp mọi bảng cùng (bundle, locale) thành 1 file
     #   "<bundle>::<locale>.json" (vd "...bundle::en.json" -> xuất English.json),
     #   key đã join qua SharedTableData; nguồn bundle hiện ở FileOutcome.source.
+    # - Bảng ngôn ngữ có cấu trúc: LUÔN 1 file mỗi mã gốc
+    #   ("<đơn vị>.langtable.monobehaviour.<base>.json", key = tên term thật,
+    #   giữ chuỗi rỗng) — không bao giờ trộn các cột vào 1 file, không đi qua
+    #   đường quét chuỗi phẳng (đường đó bỏ chuỗi rỗng -> lệch cột). Đoạn
+    #   ".langtable" để KHÔNG đụng tên file generic cùng đơn vị + ngôn ngữ
+    #   ("...monobehaviour.<lang>.json" — đụng tên thì dict ảo ghi đè mất
+    #   bảng, lỗi đã gặp khi kiểm chứng 2026-11-17); hậu tố
+    #   ".monobehaviour.<lang>.json" giữ nguyên để nhóm __mono__ + đặt tên
+    #   xuất vẫn nhận ra. Biến thể (zh-CN/zh-TW) gộp về mã gốc theo
+    #   _language_source_base_columns.
     # - Generic: 1 file "<đơn vị>.monobehaviour.json" cho mỗi .assets / CAB
     #   (vd "...resources.assets::resources.monobehaviour.json"); khi tách
     #   ngôn ngữ thì 1 file mỗi ngôn ngữ ("...monobehaviour.<lang>.json").
+    #   Đường quét phẳng này CHỈ còn cho object không phải nguồn ngôn ngữ
+    #   (không validate được cấu trúc bảng); xóa hẳn sẽ mất text thật không
+    #   gắn nguồn trong prefab/UI — xem README/HANDOVER. Output locale mới
+    #   (locales/) không dùng đường này nên không có key hậu tố .sN/.pN/.xN.
     # Thứ tự key GIỮ NGUYÊN thứ tự gốc trong game (ý 7): dict Python giữ
     # thứ tự chèn, KHÔNG sort_keys ở đây (cũng không sorted() key ở các
     # bước sau — xem _mb_generic_kv, export_key_value_json). Chỉ sorted()
@@ -964,6 +1197,8 @@ def _build_layers(root_vfs, inv: List[disc.InventoryEntry], limits, backend, log
                 % (bundle_path, loc, len(kv), vpath))
         for n in join_notes:
             log("Unity: StringTable: %s" % n)
+    if mb_lang_sources:
+        virtual.update(_language_source_virtual_files(mb_lang_sources, log))
     for (unit_path, assets_name), items in sorted(mb_generic_units.items()):
         res = _mb_generic_kv(items, split_languages=split_mono_languages)
         kept, dropped = res["kept"], res["dropped"]
@@ -2094,6 +2329,39 @@ def _export(req: ExtractionRequest, result: ExtractionResult, source_hash: str,
                 fh.write(json.dumps(sidecar, ensure_ascii=False, indent=1).encode("utf-8"))
         except OSError:
             pass
+    # conflicts.json: mọi xung đột key khi gộp (cùng key, giá trị khác nhau)
+    # — key, cả hai giá trị + nguồn, quy tắc giữ bản đầu. Trước đây xung đột
+    # chỉ nằm trong sidecar/report; file riêng này để không ai bỏ sót. Chỉ
+    # ghi khi có xung đột (tránh thêm file rỗng vào mọi lần xuất).
+    if req.out_dir is not None and result.merged_files:
+        all_conflicts: List[Dict[str, Any]] = []
+        total = 0
+        truncated = False
+        for stat in result.merged_files:
+            total += stat.get("conflicts_total", 0)
+            truncated = truncated or bool(stat.get("conflicts_truncated"))
+            for c in stat.get("conflicts", []):
+                entry = {"locale": stat.get("locale"),
+                         "file": stat.get("file"),
+                         "key": c.get("key"),
+                         "kept": c.get("kept"),
+                         "dropped": c.get("dropped"),
+                         "rule": "keep-first"}
+                all_conflicts.append(entry)
+        if total > 0:
+            try:
+                with open(os.path.join(req.out_dir, "conflicts.json"),
+                          "wb") as fh:
+                    fh.write(json.dumps(
+                        {"format": "beartea-merge-conflicts/1",
+                         "game": game,
+                         "source": str(req.source),
+                         "conflicts_total": total,
+                         "conflicts_truncated": truncated,
+                         "conflicts": all_conflicts},
+                        ensure_ascii=False, indent=1).encode("utf-8"))
+            except OSError:
+                pass
     _save_checkpoint(req, source_hash, checkpoint_files)
     _write_reports(req, result, logs)
 

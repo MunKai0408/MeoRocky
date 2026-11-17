@@ -21,9 +21,51 @@
 
 ## Mục đang làm
 
-- **P0-3** — tiếp theo, theo brief mục 7.
+- **P0-4** — tiếp theo, theo brief mục 7 (xem "Chờ Joseph" #5: cần ảnh Q1/Q2/Q3
+  bản v4 + xác nhận bản đang cài; nếu chưa có thì ghi "Chờ Joseph" và bỏ qua
+  sang P1-1).
 
 ## Đã xong
+
+### P0-3 (trích xuất cấu trúc bảng ngôn ngữ + StringTable, lọc rác, conflicts) — XONG 2026-11-17 [ĐÃ ĐO THẬT] (chưa đẩy; coordinator đẩy nhánh `auto/p0-3`)
+
+- Parser cấu trúc bảng ngôn ngữ của game (`pb3/sdk/unity.py`, kind mới
+  `"language_source"`): đọc `mLanguages`/`mTerms`, ánh xạ theo chỉ số, giữ
+  chuỗi rỗng, kiểm chứng layout rồi mới nhận (fail-closed); đường field-shape
+  cho build có typetree là [HYPOTHESIS] (chỉ dict tổng hợp). Định tuyến riêng
+  trong pipeline (`pb3/sdk/extraction.py`): file ảo
+  `*.langtable.monobehaviour.<mã gốc>.json`, key tên term thật; biến thể gộp về
+  mã gốc. Gộp StringTable theo nhóm (`join_string_tables_grouped`, hàm cũ giữ
+  nguyên, đã kiểm vi sai byte-identical). Lọc rác Unity ở đường generic (theo
+  mẫu chung, có cơ sở đo). `_export` ghi `conflicts.json` khi gộp có xung đột.
+  `rebuild.py` cộng tên term vào `mb_terms`. 35 test mới, không file pb3 mới,
+  không đổi precache (files.json 95, tests.json 166, CACHE v21).
+- Xuất locales [ĐÃ ĐO THẬT] (script ngoài repo, thư mục giao
+  `deliver_p03_locales/`): 9 Kings v1.0.6 IPA 2.252 key/file (I2 2.150 =
+  mTerms + ST 102), thiếu en 2 / zh-CN 2.218 / zh-TW 106, xung đột 0, rác
+  1.006, tự kiểm tra 11/11 PASS (4 giá trị mẫu khớp, rò rỉ cột 0/2.150,
+  placeholder/thẻ 0 lệch); đối chiếu file mẫu Build 68: 2.086 key/file, thiếu
+  93/38, 14/14 PASS, byte-identical với kết quả mẫu của parent; PB3 v1.1.7
+  2.348 key/file, 10/10 PASS; EK2 v0.0.18 1.344 key/file, 10/10 PASS;
+  DungeonWithin CHƯA ĐẠT có lý do (0 bảng, thoát 2, không ghi file, không giải
+  mã). Cùng parser, không hardcode, đúng trên 4 build (số term/cột/thứ tự cột/
+  đuôi khác nhau).
+- Hồi quy §4 ĐỔI CÓ LÝ DO (xem bảng mốc bên dưới): key `.sNNNN` thành tên term
+  thật; EK2 mất file zh là đúng (7 key cũ là tiếng Nhật gán nhầm). Lỗi va chạm
+  tên file ảo (dict ghi đè mất bảng) đã gặp khi kiểm chứng, đã sửa bằng đoạn
+  `.langtable` + test khóa. Đường quét phẳng chỉ còn cho object không phải
+  bảng ngôn ngữ, ghi rõ lý do trong code.
+- Tự kiểm tra §E: smoke 59/59 [ĐÃ ĐO THẬT]; full 1.846 chạy = 1.816 đạt /
+  25 lỗi / 3 fail / 2 bỏ qua (103,2s), tập đỏ trùng hệt mốc trước sửa (2
+  fixture thiếu đã biết), không đỏ mới; harness rebuild 13/13 PASS, harness
+  cổng 13/13 PASS (Chromium thật); harness gộp §1 đạt, §2–§4 bị chặn từ trước
+  (fixture vắng + đường dẫn cũ đã chết), §5: c2 13/13 + item8 đạt, 5 harness
+  con FAIL do fixture/đường dẫn vắng từ trước. Chi tiết:
+  `exp/p03_language_source_results.md`.
+- CHƯA ĐẠT / CHƯA KIỂM CHỨNG: file 9 Kings v1.0.5 chưa có (mọi số 9 Kings là
+  v1.0.6 — xem "Chờ Joseph" #6); EK2 100 bundle mã hóa ngoài phạm vi; đường
+  field-shape [HYPOTHESIS]; Safari/iSH [CHƯA KIỂM CHỨNG] (không đổi UI nên
+  không có bước thử mới); job CI `unit` exit 1 (nguyên nhân chưa rõ, như cũ).
 
 ### P0-2 (cổng kiểm tra trước khi giao, bước 6) — XONG 2026-11-17 [ĐÃ ĐO THẬT] (commit `982174fc`, PR #2, gộp vào main `d93b79a3`)
 
@@ -117,19 +159,31 @@
    PAT mới — khi tới các mục cần chúng.
 5. P0-4 (Space Marshals 2 mất chữ): cần ảnh chụp màn hình Q1/Q2/Q3 bản v4 + xác nhận bản
    đang cài trên máy; tới lượt P0-4 sẽ ghi "Chờ Joseph" và bỏ qua sang P1-1 nếu chưa có.
+6. File 9 Kings v1.0.5 để chạy lại đúng bản user nhắc tới — hiện chỉ có v1.0.6
+   (173.472.485 B, md5 4f53043c…); mọi số P0-3 của 9 Kings là v1.0.6, không
+   tuyên bố số v1.0.5.
 
 ## Mốc hồi quy mới nhất [ĐÃ ĐO THẬT] (CPython qua bridge.extract, en+zh, gộp 1 file)
 
+Mốc mới sau P0-3 (2026-11-17) — số cũ trước P0-3 trong ngoặc:
+
 | Game (build) | en / xung đột | zh / xung đột | #N | Gộp khớp tách |
 |---|---|---|---|---|
-| 9 Kings v1.0.6 (173.472.485 B) | 13.465 / 17 | 1.914 / 0 | 0 | 100% |
-| Poly Bridge 3 v1.1.7 (482.039.645 B) | 14.556 / 293 | 2.570 / 224 | 0 | 100% |
-| Exploding Kittens 2 v0.0.18 (290.547.090 B) | 17.240 / 2 | 7 / 0 | 0 | 100% |
+| 9 Kings v1.0.6 (173.472.485 B) | 6.694 / 13 (trước: 13.465 / 17) | 2.176 / 0 (trước: 1.914 / 0) | 0 | 100% |
+| Poly Bridge 3 v1.1.7 (482.039.645 B) | 11.065 / 126 (trước: 14.556 / 293) | 2.350 / 5 (trước: 2.570 / 224) | 0 | 100% |
+| Exploding Kittens 2 v0.0.18 (290.547.090 B) | 10.468 / 2 (trước: 17.240 / 2) | không còn file (trước: 7 / 0) | 0 | 100% |
 
-Khớp chính xác mốc brief §4 → mốc đo trên đúng 3 build này. Phân loại key: 9K mb_generic
-15.254 + mb_table 125; PB3 mb_generic 12.426 + CSV 4.700; EK2 mb_generic 17.247;
-TextAsset JSON dict = 0 ở cả 3. DungeonWithin (91.389.555 B): chỉ quét/probe, 4 bundle
-Addressables mã hóa AES — KHÔNG giải mã. Passpartout/Dead Cells/data.unity3d: chưa có file.
+Lý do đổi (đã đo bằng diff trực tiếp, xem `exp/p03_language_source_results.md`
+§4): key `.sNNNN`/`.pNNNN` được thay bằng tên term thật từ bảng ngôn ngữ có cấu
+trúc (mọi term có mặt đầy đủ: 2.150/2.150, 2.348/2.348, 1.344/1.344); bộ lọc rác
+loại giá trị Unity khỏi đường generic; trùng lặp giống hệt gộp lại nên xung đột
+giảm. EK2 mất file zh là ĐÚNG: 7 key zh cũ là chuỗi tiếng Nhật `日本語` gán
+nhầm, EK2 không có dữ liệu tiếng Trung. Mốc cũ (trước P0-3) khớp chính xác mốc
+brief §4 → mốc đo trên đúng 3 build này. Phân loại key (trước P0-3): 9K
+mb_generic 15.254 + mb_table 125; PB3 mb_generic 12.426 + CSV 4.700; EK2
+mb_generic 17.247; TextAsset JSON dict = 0 ở cả 3. DungeonWithin (91.389.555 B):
+chỉ quét/probe, 4 bundle Addressables mã hóa AES — KHÔNG giải mã.
+Passpartout/Dead Cells/data.unity3d: chưa có file.
 Chạy lại sau P0-2 (2026-11-17): khớp chính xác cả 3 game, merged==tách 100%, không lệch.
 
 ## Lệnh đã chạy (mốc + kiểm tra)
@@ -160,6 +214,15 @@ diff -rq -x __pycache__ -x logs -x reports -x workspace -x .pytest_cache <pristi
   — vì file ép bằng công cụ khác vẫn hợp lệ; khác bytes thì cảnh báo rõ.
 - Font nhúng Unity không đọc được bytes thì "chưa kiểm được", không mặc định tốt/xấu
   — vì reader hiện tại không trích được bytes font; kết luận chắc chắn cần font chỉ định.
+- Parser bảng ngôn ngữ fail-closed, không fallback âm thầm về quét phẳng — vì
+  đoán sai layout gán nhầm ngôn ngữ cho hàng nghìn term mà không ai phát hiện.
+- Pipeline gộp biến thể về mã gốc, xuất locales giữ đủ biến thể — vì bảng locale
+  hiện có gộp biến thể và mốc §4 cần so được; độ trung thực biến thể nằm ở
+  artifact locales.
+- Đường quét phẳng chỉ còn cho object không phải bảng ngôn ngữ, ghi rõ lý do —
+  vì xóa hẳn mất hàng nghìn chuỗi thật không có nguồn thay thế + phá test hiện có.
+- File ảo bảng ngôn ngữ mang đoạn `.langtable` — vì tên cũ đụng file generic
+  cùng đơn vị, dict ảo ghi đè làm mất bảng (lỗi thật, đã có test khóa).
 
 ## Đẩy code
 
@@ -177,5 +240,5 @@ diff -rq -x __pycache__ -x logs -x reports -x workspace -x .pytest_cache <pristi
 
 ## Backlog còn lại (thứ tự)
 
-P0-3 → P0-4 (xem "Chờ Joseph" #5) → P1-1 → P1-2 → P1-3 (I1) → P1-4 (I2) →
+P0-4 (xem "Chờ Joseph" #5) → P1-1 → P1-2 → P1-3 (I1) → P1-4 (I2) →
 P1-5 (I3) → P2-1 → P2-2 → P2-3 → P2-4 → P3. Tiêu chí XONG từng mục theo brief mục 7.

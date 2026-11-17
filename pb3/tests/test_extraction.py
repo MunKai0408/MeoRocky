@@ -552,5 +552,208 @@ class TestApplyEdits(ExtractionCase):
         self.assertIn("Chào".encode("utf-8"), content)
 
 
+class TestGroupedStringTableJoin(unittest.TestCase):
+    def _st(self, name, locale, entries):
+        return {"name": name, "locale": locale, "entries": dict(entries)}
+
+    def _shared(self, name, coll, entries):
+        return {"name": name, "collection": coll, "entries": dict(entries)}
+
+    def test_grouped_keeps_collections_separate(self):
+        shared = [self._shared("B Shared", "Buildings", {1: "Farm", 2: "Castle"}),
+                  self._shared("K Shared", "Kings", {1: "Nothing"})]
+        tables = [("bun", self._st("Buildings_en", "en", {1: "Farm", 2: "Castle"})),
+                  ("bun", self._st("Kings_en", "en", {1: "King of Nothing"}))]
+        grouped, notes, conflicts, universe = ext.join_string_tables_grouped(tables, shared)
+        self.assertEqual(notes, [])
+        self.assertEqual(conflicts, [])
+        self.assertEqual(grouped[("bun", "en", "Buildings")],
+                         {"Farm": "Farm", "Castle": "Castle"})
+        self.assertEqual(grouped[("bun", "en", "Kings")],
+                         {"Nothing": "King of Nothing"})
+        self.assertEqual(universe["Buildings"], {1: "Farm", 2: "Castle"})
+
+    def test_grouped_value_conflict_recorded_keep_first(self):
+        shared = [self._shared("B Shared", "Buildings", {1: "Farm"})]
+        tables = [("bun", self._st("Buildings_en", "en", {1: "Farm"})),
+                  ("bun", self._st("Buildings_en", "en", {1: "FARM!" }))]
+        grouped, _notes, conflicts, _u = ext.join_string_tables_grouped(tables, shared)
+        self.assertEqual(grouped[("bun", "en", "Buildings")], {"Farm": "Farm"})
+        self.assertEqual(len(conflicts), 1)
+        c = conflicts[0]
+        self.assertEqual(c["key"], "Buildings/Farm")
+        self.assertEqual(c["locale"], "en")
+        self.assertEqual(c["kept"]["value"], "Farm")
+        self.assertEqual(c["dropped"]["value"], "FARM!")
+        self.assertIn("Buildings_en", c["dropped"]["source"])
+
+    def test_grouped_shared_key_conflict_recorded(self):
+        shared = [self._shared("B Shared", "Buildings", {1: "Farm"}),
+                  self._shared("B Shared 2", "Buildings", {1: "Barn"})]
+        tables = [("bun", self._st("Buildings_en", "en", {1: "Farm"}))]
+        _g, _n, conflicts, universe = ext.join_string_tables_grouped(tables, shared)
+        self.assertEqual(universe["Buildings"], {1: "Farm"})
+        self.assertEqual(len(conflicts), 1)
+        self.assertEqual(conflicts[0]["kind"], "shared_key")
+        self.assertEqual(conflicts[0]["kept"]["value"], "Farm")
+        self.assertEqual(conflicts[0]["dropped"]["value"], "Barn")
+
+    def test_grouped_id_fallback_and_notes(self):
+        shared = [self._shared("B Shared", "Buildings", {1: "Farm"})]
+        tables = [("bun", self._st("Buildings_en", "en", {1: "Farm", 9: "Orphan"})),
+                  ("bun", self._st("NoColl_en", "en", {1: "X"})),
+                  ("bun", self._st("Mystery", None, {1: "Y"}))]
+        grouped, notes, _c, _u = ext.join_string_tables_grouped(tables, shared)
+        self.assertEqual(grouped[("bun", "en", "Buildings")]["id_9"], "Orphan")
+        self.assertEqual(grouped[("bun", "en", "NoColl")], {"id_1": "X"})
+        self.assertEqual(len(notes), 3)
+
+    def test_grouped_merged_values_match_flat_join(self):
+        shared = [self._shared("B Shared", "Buildings", {1: "Farm", 2: "Castle"}),
+                  self._shared("K Shared", "Kings", {1: "Nothing"})]
+        tables = [("bun", self._st("Buildings_en", "en", {1: "Farm", 2: "Castle"})),
+                  ("bun", self._st("Kings_en", "en", {1: "King of Nothing"})),
+                  ("bun", self._st("Buildings_zh", "zh", {1: "农场"}))]
+        flat, _n = ext._join_string_tables(tables, shared)
+        grouped, _n2, _c, _u = ext.join_string_tables_grouped(tables, shared)
+        merged = {}
+        for (_b, loc, _coll), kv in grouped.items():
+            bucket = merged.setdefault(("bun", loc), {})
+            for k, v in kv.items():
+                bucket.setdefault(k, v)
+        self.assertEqual(merged, flat)
+
+
+class TestLanguageSourceBaseColumns(unittest.TestCase):
+    def _item(self, codes):
+        return {"languages": [{"name": "L%d" % i, "code": c}
+                              for i, c in enumerate(codes)],
+                "terms": []}
+
+    def test_first_variant_wins_without_exact(self):
+        picked, skipped, n_nonloc = ext._language_source_base_columns(
+            self._item(["en", "zh-TW", "zh-CN"]))
+        self.assertEqual(picked["zh"], ("zh-tw", 1))
+        self.assertEqual(skipped, ["zh-cn"])
+        self.assertEqual(n_nonloc, 0)
+
+    def test_exact_base_code_wins_over_variant(self):
+        picked, skipped, _n = ext._language_source_base_columns(
+            self._item(["zh-CN", "zh", "en"]))
+        self.assertEqual(picked["zh"], ("zh", 1))
+        self.assertEqual(skipped, ["zh-cn"])
+        picked2, _s2, _n2 = ext._language_source_base_columns(
+            self._item(["en-GB", "en-US"]))
+        self.assertEqual(picked2["en"], ("en-gb", 0))
+
+    def test_empty_and_bad_codes_counted_nonlocale(self):
+        _p, _s, n = ext._language_source_base_columns(
+            self._item(["en", "", "xx!!"]))
+        self.assertEqual(n, 2)  # "" và "xx!!" (mã gốc không phải chữ cái)
+        picked, _s2, n2 = ext._language_source_base_columns(
+            self._item(["en", ""]))
+        self.assertEqual(n2, 1)
+        self.assertEqual(list(picked), ["en"])
+
+
+class TestUnityJunkFilter(unittest.TestCase):
+    def test_unity_type_names_are_noise(self):
+        for s in ("UnityEngine.UIElements.VisualElement",
+                  "UnityEngine.Object, UnityEngine",
+                  "UnityEngine.Rendering.UI.DebugUIHandlerButton, Unity.RenderPipelines.Core",
+                  "Unity.RenderPipelines.Core.Runtime"):
+            self.assertTrue(ext._mb_string_is_noise(s), s)
+
+    def test_uss_class_names_are_noise(self):
+        for s in ("unity-base-slider", "unity-button", ".unity-button",
+                  "unity-base-slider__tracker"):
+            self.assertTrue(ext._mb_string_is_noise(s), s)
+
+    def test_dotted_namespaces_and_uxml_are_noise(self):
+        for s in ("MGS.Debugging.UILogHandler",
+                  "<UXML xmlns:ui=\"x\">",
+                  "<ui:UXML>",
+                  "styles.uss",
+                  "panel.uxml"):
+            self.assertTrue(ext._mb_string_is_noise(s), s)
+
+    def test_real_text_is_not_noise(self):
+        for s in ("Fire", "Unity is strength", "Dr. No", "Noto Sans",
+                  "PromoCodeUI", "Start Simulation", "U.S.A", "a.b",
+                  "King of War", "按继续。"):
+            self.assertFalse(ext._mb_string_is_noise(s), s)
+
+
+class TestExpandSerializedLanguageSource(unittest.TestCase):
+    def test_routes_language_source_separately(self):
+        ls_item = {"path_id": 7, "name": "LS", "kind": "language_source",
+                   "languages": [{"name": "English", "code": "en"}],
+                   "terms": [{"term": "T1", "values": ["Hi"]}],
+                   "trailing_bytes": 0}
+        gen_item = {"path_id": 8, "name": "G", "kind": "generic",
+                    "locale": None, "strings": ["hello"]}
+
+        class FakeSF:
+            def text_assets(self):
+                return []
+
+            def monobehaviour_texts(self, warnings=None):
+                return [ls_item, gen_item]
+
+        _out, mb, _notes, n_ta, n_mb, n_str = ext._expand_serialized(
+            FakeSF(), "", "v")
+        self.assertEqual(n_ta, 0)
+        self.assertEqual(n_mb, 2)
+        self.assertEqual(len(mb["language_sources"]), 1)
+        self.assertEqual(mb["language_sources"][0][1], ls_item)
+        self.assertEqual(len(mb["generic"]), 1)
+        self.assertEqual(n_str, 2)  # 1 term + 1 chuỗi generic
+
+
+class TestLanguageSourceVirtualFiles(unittest.TestCase):
+    def _item(self, terms, codes, name="LS"):
+        return {"path_id": 1, "name": name, "kind": "language_source",
+                "languages": [{"name": "L%d" % i, "code": c}
+                              for i, c in enumerate(codes)],
+                "terms": [{"term": t, "values": v} for t, v in terms],
+                "trailing_bytes": 0}
+
+    def test_vpath_distinct_from_generic_and_keeps_empty(self):
+        item = self._item([("T1", ["Hi", "你好", "你好"]),
+                           ("T2", ["", "X", "Y"])],
+                          ["en", "zh-TW", "zh-CN"])
+        logs = []
+        out = ext._language_source_virtual_files(
+            [("u/resources.assets", "", item)], logs.append)
+        self.assertEqual(
+            sorted(out),
+            ["u/resources.assets::resources.langtable.monobehaviour.en.json",
+             "u/resources.assets::resources.langtable.monobehaviour.zh.json"])
+        # Ten file khac han file generic cung don vi + ngon ngu (khong ghi de).
+        for vpath in out:
+            self.assertNotIn("::resources.monobehaviour.", vpath)
+            self.assertIn(".monobehaviour.", vpath)  # nhom __mono__ van nhan
+        en = json.loads(out["u/resources.assets::resources.langtable.monobehaviour.en.json"])
+        self.assertEqual(en, {"T1": "Hi", "T2": ""})  # chuoi rong giu lai
+        zh = json.loads(out["u/resources.assets::resources.langtable.monobehaviour.zh.json"])
+        self.assertEqual(zh, {"T1": "你好", "T2": "X"})  # zh -> bien the dau (zh-TW)
+
+    def test_cab_unit_path_and_two_tables_keep_first(self):
+        item1 = self._item([("T1", ["One", "Uno"])], ["en", "es"])
+        item2 = self._item([("T1", ["1st", "Primero"]), ("T2", ["Two", "Dos"])],
+                           ["en", "es"])
+        logs = []
+        out = ext._language_source_virtual_files(
+            [("u/b.bundle", "CAB-abc", item1), ("u/b.bundle", "CAB-abc", item2)],
+            logs.append)
+        self.assertEqual(
+            sorted(out),
+            ["u/b.bundle::CAB-abc::CAB-abc.langtable.monobehaviour.en.json",
+             "u/b.bundle::CAB-abc::CAB-abc.langtable.monobehaviour.es.json"])
+        en = json.loads(out["u/b.bundle::CAB-abc::CAB-abc.langtable.monobehaviour.en.json"])
+        self.assertEqual(en, {"T1": "One", "T2": "Two"})  # giu ban dau
+        self.assertTrue(any("xung đột" in m for m in logs))
+
+
 if __name__ == "__main__":
     unittest.main()

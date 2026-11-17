@@ -439,6 +439,8 @@ def _collect_mb_keys(sfs):
     """Tap key MonoBehaviour co the xuat hien trong ban dich.
 
     - Term SharedTableData (key cua StringTable sau join).
+    - Ten term cua bang ngon ngu co cau truc (key sau khi trich dung cau
+      truc; truoc P0-3 cac term nay xuat hien duoi dang key generic).
     - Key generic cua _mb_generic_kv (ca 2 che do split) tren item
       generic cua tung sf. Chi dung de PHAN LOAI unmatched (khong dung
       de anh xa ghi — (E) v1 khong ghi MB).
@@ -457,6 +459,10 @@ def _collect_mb_keys(sfs):
                 for term in (item.get("entries") or {}).values():
                     if isinstance(term, str):
                         terms.add(term)
+            elif item.get("kind") == "language_source":
+                for term in (item.get("terms") or []):
+                    if isinstance(term.get("term"), str):
+                        terms.add(term["term"])
             elif item.get("kind") == "generic":
                 generic.append(item)
         if generic:

@@ -212,5 +212,50 @@ class ExportMergedCase(unittest.TestCase):
             self.assertNotIn("<merged:en>", ckpt.get("files", {}))
 
 
+class ConflictsJsonCase(unittest.TestCase):
+    def test_export_writes_conflicts_json(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            req = ExtractionRequest(source="game.ipa", out_dir=tmp)
+            res = ExtractionResult(ok=True, decision="done")
+            res.files = [
+                _out("u::a.en.json", "en", {"A": "one", "B": "two"},
+                     source="u::resources.assets", exported="a.en.json"),
+                _out("u::b.en.json", "en", {"A": "uno"},
+                     source="u::sharedassets0.assets", exported="b.en.json"),
+            ]
+            _apply_merge(res, {"en"})
+            _export(req, res, "hash", [])
+            path = os.path.join(tmp, "conflicts.json")
+            self.assertTrue(os.path.isfile(path))
+            with open(path, encoding="utf-8") as fh:
+                doc = json.load(fh)
+            self.assertEqual(doc["format"], "beartea-merge-conflicts/1")
+            self.assertEqual(doc["conflicts_total"], 1)
+            self.assertEqual(len(doc["conflicts"]), 1)
+            c = doc["conflicts"][0]
+            self.assertEqual(c["locale"], "en")
+            self.assertEqual(c["file"], "en.json")
+            self.assertEqual(c["key"], "A")
+            self.assertEqual(c["kept"], {"value": "one",
+                                         "source": "u::resources.assets"})
+            self.assertEqual(c["dropped"], {"value": "uno",
+                                            "source": "u::sharedassets0.assets"})
+            self.assertEqual(c["rule"], "keep-first")
+
+    def test_export_no_conflicts_json_when_clean(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            req = ExtractionRequest(source="game.ipa", out_dir=tmp)
+            res = ExtractionResult(ok=True, decision="done")
+            res.files = [
+                _out("u::a.en.json", "en", {"A": "one"},
+                     source="u::resources.assets", exported="a.en.json"),
+                _out("u::b.en.json", "en", {"B": "two"},
+                     source="u::sharedassets0.assets", exported="b.en.json"),
+            ]
+            _apply_merge(res, {"en"})
+            _export(req, res, "hash", [])
+            self.assertFalse(os.path.exists(os.path.join(tmp, "conflicts.json")))
+
+
 if __name__ == "__main__":
     unittest.main()
