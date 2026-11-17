@@ -186,6 +186,18 @@ Hai điều chỉnh ở tầng khởi động (không sửa mã PB3): dựng reg
   tốt/xấu; muốn kết luận chắc chắn thì chỉ định font hiển thị hoặc dùng
   font đi kèm. Flow trình duyệt cổng chưa kiểm chứng trên Safari thật (xem
   `exp/delivery_gate_results.md`).
+- **Trích xuất bảng ngôn ngữ có cấu trúc (P0-3):** MonoBehaviour chứa bảng
+  ngôn ngữ của game được đọc đúng cấu trúc `mLanguages`/`mTerms` (ánh xạ theo
+  chỉ số, giữ chuỗi rỗng), không qua quét chuỗi phẳng; object nào không qua
+  kiểm chứng cấu trúc thì không được coi là bảng ngôn ngữ. Pipeline xuất 1
+  file mỗi mã gốc (`*.langtable.monobehaviour.<ngôn ngữ>.json`, key là tên
+  term thật; biến thể gộp về mã gốc). Bundle StringTable gộp theo nhóm
+  (bundle, locale, collection), key dạng `table/key`. Rác Unity (kiểu
+  `UnityEngine.*`, class USS `unity-*`, UXML, namespace 3 đoạn) bị loại khỏi
+  đường generic. Khi gộp có xung đột, ngoài provenance còn ghi file
+  `conflicts.json` trong thư mục xuất. Đường quét chuỗi phẳng cũ chỉ còn cho
+  object không phải bảng ngôn ngữ (ghi rõ lý do trong code) — xem
+  `exp/p03_language_source_results.md`.
 - **Ma trận hỗ trợ**: bảng plugin/container/Unity lấy từ dữ liệu thật của
   PB3 (registry + sdk), nhưng cột “ngày test” hiện “chưa có” vì bản web
   không vendor tests/corpus/*.json; cột “số game đã test” chỉ đếm KB đã

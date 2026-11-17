@@ -1243,5 +1243,172 @@ class TestUnityCli(TmpCase):
         self.assertTrue(list(out_dir.rglob("*.unity3d")))
 
 
+def _ls_astr(buf, s, endian):
+    """Thêm aligned_string vào buffer (độ dài + bytes + đệm tới bội 4 tuyệt đối)."""
+    b = s.encode("utf-8")
+    buf += struct.pack(endian + "i", len(b))
+    buf += b
+    buf += b"\x00" * ((-len(buf)) % 4)
+
+
+def _ls_bytes(terms, languages, endian="<", name="LangSource", trailing=b"",
+              term_types=None, lang_count_override=None,
+              flag_count_override=None):
+    """Dựng bytes object MonoBehaviour bảng ngôn ngữ theo layout đã đo.
+
+    terms: [(term, [values...], [touch...])]; languages: [(name, code, flag)].
+    term_types: [int...] mỗi term (mặc định 0). Các *_override để dựng dữ
+    liệu sai cho test fail-closed."""
+    buf = bytearray(28)
+    _ls_astr(buf, name, endian)
+    for v in (0, 0, 1):
+        buf += struct.pack(endian + "i", v)
+    buf += struct.pack(endian + "i", len(terms))
+    n = len(languages)
+    for ti, (term, values, touch) in enumerate(terms):
+        _ls_astr(buf, term, endian)
+        tt = term_types[ti] if term_types is not None else 0
+        buf += struct.pack(endian + "i", tt)
+        buf += struct.pack(endian + "i", n)
+        for v in values:
+            _ls_astr(buf, v, endian)
+        fc = flag_count_override if flag_count_override is not None else n
+        buf += struct.pack(endian + "i", fc)
+        buf += bytes(fc)
+        buf += b"\x00" * ((-len(buf)) % 4)
+        buf += struct.pack(endian + "i", len(touch))
+        for v in touch:
+            _ls_astr(buf, v, endian)
+    for v in (0, 1, 0):
+        buf += struct.pack(endian + "i", v)
+    buf += struct.pack(endian + "i",
+                       lang_count_override if lang_count_override is not None else n)
+    for lname, code, flag in languages:
+        _ls_astr(buf, lname, endian)
+        _ls_astr(buf, code, endian)
+        buf += struct.pack(endian + "i", flag)
+    buf += trailing
+    return bytes(buf)
+
+
+class TestLanguageSourceBytes(unittest.TestCase):
+    LANGS = [("English", "en", 0), ("Chinese (Simplified)", "zh-CN", 0),
+             ("Chinese (Traditional)", "zh-TW", 0)]
+
+    def test_round_trip_keeps_empty_no_column_shift(self):
+        # Chuỗi rỗng GIỮA hàng không được lệch cột: term2 col en rỗng,
+        # col zh-CN "X" — parse xong values[0]=="" và values[1]=="X".
+        terms = [("Term_A", ["Hello", "你好", "你好"], []),
+                 ("Term_B", ["", "X", "Y"], []),
+                 ("Term_C", ["Bye", "", ""], [])]
+        raw = _ls_bytes(terms, self.LANGS, trailing=b"\x01" * 60)
+        got = u.parse_language_source_bytes(raw, "<")
+        self.assertIsNotNone(got)
+        self.assertEqual(got["name"], "LangSource")
+        self.assertEqual([l["code"] for l in got["languages"]],
+                         ["en", "zh-CN", "zh-TW"])
+        self.assertEqual([t["term"] for t in got["terms"]],
+                         ["Term_A", "Term_B", "Term_C"])
+        self.assertEqual(got["terms"][1]["values"], ["", "X", "Y"])
+        self.assertEqual(got["terms"][2]["values"], ["Bye", "", ""])
+        self.assertEqual(got["trailing_bytes"], 60)
+
+    def test_empty_code_column_kept(self):
+        langs = [("English", "en", 0), ("Notes", "", 0)]
+        raw = _ls_bytes([("T1", ["Hi", "note"], [])], langs)
+        got = u.parse_language_source_bytes(raw, "<")
+        self.assertIsNotNone(got)
+        self.assertEqual(got["languages"][1], {"name": "Notes", "code": ""})
+
+    def test_touch_strings_and_nonzero_termtype(self):
+        terms = [("T1", ["Hi", "你好", "你好"], ["tap1", "tap2"])]
+        raw = _ls_bytes(terms, self.LANGS, term_types=[2])
+        got = u.parse_language_source_bytes(raw, "<")
+        self.assertIsNotNone(got)
+        self.assertEqual(got["terms"][0]["values"], ["Hi", "你好", "你好"])
+
+    def test_big_endian(self):
+        raw = _ls_bytes([("T1", ["Hi", "你好", "你好"], [])], self.LANGS,
+                        endian=">")
+        got = u.parse_language_source_bytes(raw, ">")
+        self.assertIsNotNone(got)
+        self.assertEqual(got["terms"][0]["term"], "T1")
+
+    def test_rejects_truncated(self):
+        raw = _ls_bytes([("T1", ["Hi", "你好", "你好"], [])], self.LANGS)
+        self.assertIsNone(u.parse_language_source_bytes(raw[:len(raw) // 2], "<"))
+        self.assertIsNone(u.parse_language_source_bytes(raw[:-1], "<"))
+
+    def test_rejects_language_count_mismatch(self):
+        raw = _ls_bytes([("T1", ["Hi", "你好", "你好"], [])], self.LANGS,
+                        lang_count_override=2)
+        self.assertIsNone(u.parse_language_source_bytes(raw, "<"))
+
+    def test_rejects_flag_count_mismatch(self):
+        raw = _ls_bytes([("T1", ["Hi", "你好", "你好"], [])], self.LANGS,
+                        flag_count_override=2)
+        self.assertIsNone(u.parse_language_source_bytes(raw, "<"))
+
+    def test_rejects_duplicate_terms(self):
+        terms = [("Dup", ["a", "b", "c"], []), ("Dup", ["d", "e", "f"], [])]
+        raw = _ls_bytes(terms, self.LANGS)
+        self.assertIsNone(u.parse_language_source_bytes(raw, "<"))
+
+    def test_rejects_bad_code(self):
+        langs = [("English", "en", 0), ("Weird", "xx!!", 0)]
+        raw = _ls_bytes([("T1", ["Hi", "Yo"], [])], langs)
+        self.assertIsNone(u.parse_language_source_bytes(raw, "<"))
+
+    def test_rejects_no_code_at_all(self):
+        langs = [("Notes", "", 0), ("Status", "", 0)]
+        raw = _ls_bytes([("T1", ["a", "b"], [])], langs)
+        self.assertIsNone(u.parse_language_source_bytes(raw, "<"))
+
+    def test_rejects_garbage_and_empty(self):
+        self.assertIsNone(u.parse_language_source_bytes(b"", "<"))
+        self.assertIsNone(u.parse_language_source_bytes(b"\x00" * 200, "<"))
+        self.assertIsNone(u.parse_language_source_bytes(b"not a unity object" * 4, "<"))
+
+    def test_rejects_huge_trailing(self):
+        raw = _ls_bytes([("T1", ["Hi", "你好", "你好"], [])], self.LANGS,
+                        trailing=b"\x00" * 70000)
+        self.assertIsNone(u.parse_language_source_bytes(raw, "<"))
+
+    def test_rejects_control_char_in_term(self):
+        raw = _ls_bytes([("Bad\x01Term", ["Hi", "你好", "你好"], [])], self.LANGS)
+        self.assertIsNone(u.parse_language_source_bytes(raw, "<"))
+
+
+class TestLanguageSourceFields(unittest.TestCase):
+    def _val(self, langs, terms, wrap=True):
+        body = {"mLanguages": [{"Name": n, "Code": c} for n, c in langs],
+                "mTerms": [{"Term": t, "Languages": v} for t, v in terms]}
+        return {"mSource": body} if wrap else body
+
+    def test_from_fields_msource(self):
+        val = self._val([("English", "en"), ("German", "de")],
+                        [("T1", ["Hi", "Hallo"]), ("T2", ["", "Yo"])])
+        got = u.language_source_from_fields(val)
+        self.assertIsNotNone(got)
+        self.assertEqual(got["terms"][1]["values"], ["", "Yo"])
+
+    def test_from_fields_top_level(self):
+        val = self._val([("English", "en")], [("T1", ["Hi"])], wrap=False)
+        self.assertIsNotNone(u.language_source_from_fields(val))
+
+    def test_from_fields_rejects_length_mismatch(self):
+        val = self._val([("English", "en"), ("German", "de")],
+                        [("T1", ["Hi"])])
+        self.assertIsNone(u.language_source_from_fields(val))
+
+    def test_from_fields_rejects_no_code(self):
+        val = self._val([("Notes", "")], [("T1", ["x"])])
+        self.assertIsNone(u.language_source_from_fields(val))
+
+    def test_from_fields_rejects_non_dict(self):
+        self.assertIsNone(u.language_source_from_fields(None))
+        self.assertIsNone(u.language_source_from_fields({"mSource": []}))
+
+
 if __name__ == "__main__":
     unittest.main()
