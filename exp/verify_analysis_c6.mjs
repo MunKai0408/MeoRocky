@@ -2,7 +2,7 @@
 // Web đọc TMP_FontAsset rồi xuất KẾ HOẠCH fallback (JSON) + script C# cho
 // Unity Editor; KHÔNG đẩy lên GitHub.
 //
-// Chạy: node verify_analysis_c6.mjs (từ /home/hatch/workspace/pb3_web/exp)
+// Chạy: node verify_analysis_c6.mjs (từ thư mục exp/ của repo)
 // Kết quả: analysis_c6_results.json (bản này) + analysis_c6_results.md (báo cáo tay).
 //
 //  A. Tĩnh: node --check; py_compile; check_analysis_c6_static.py
@@ -26,9 +26,10 @@ import http from "node:http";
 import path from "node:path";
 import { execSync, execFileSync, spawnSync } from "node:child_process";
 
-const SITE = "/home/hatch/workspace/pb3_web/site";
-const EXP = "/home/hatch/workspace/pb3_web/exp";
-const VENDOR = "/home/hatch/workspace/pb3_web/vendor/ipa-localization-studio/IPA-LOCALIZATION-main";
+const ROOT = decodeURIComponent(new URL("..", import.meta.url).pathname).replace(/\/$/, "");
+const SITE = ROOT;
+const EXP = ROOT + "/exp";
+const VENDOR = path.join(path.dirname(ROOT), "IPA-LOCALIZATION-main");
 const FX = "/tmp/c6_fx";
 const sec = (ms) => Math.round(ms / 100) / 10;
 const results = {};

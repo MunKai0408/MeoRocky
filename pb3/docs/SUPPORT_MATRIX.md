@@ -52,6 +52,8 @@
 | Định dạng | Đọc | Ghi | Backend | Maturity |
 |---|---|---|---|---|
 | UnityFS v6/v7/v8 (bundle) | có | có (dựng lại bundle, giữ compression gốc) | Python thuần + lz4/lzma | M2 |
+| UnityFS v9 (bundle) | có (chỉ đọc; BlockInfo có offset u64, block căn 16) | không (v9 chỉ đọc — dựng lại bundle v9 chưa hỗ trợ) | Python thuần | M2 |
+| Zstd (block bundle, mã nén 5) | có — CHỈ trên web BearTea (qua fzstd, cầu nối JS) | không (ghi lại bằng block không nén, cờ 0) | fzstd 0.1.1 (MIT, vendored site/fzstd/) | M2 |
 | SerializedFile v15-23 (.assets) | có (metadata, object table, TextAsset) | có (patch TextAsset: PATCH_INPLACE / REBUILD_SECTION) | Python thuần | M2 |
 | LZ4 block / LZ4HC | có | có | binding lz4 (ưu tiên) / Python thuần (literal-only khi ghi) | M2 |
 | LZ4 frame | có | chỉ qua binding lz4 | binding lz4.frame (ưu tiên) / Python thuần (chỉ đọc) | M2 |
@@ -87,7 +89,7 @@ Mọi plugin/engine còn lại có fixture (chưa test game thật):
 - xml_strings
 - yaml_ini
 - zip
-- UnityFS v6/v7/v8 + SerializedFile v15–23 (đọc/ghi, fixture)
+- UnityFS v6/v7/v8/v9 + SerializedFile v15–23 (v9 chỉ đọc, Zstd chỉ đọc trên web, fixture)
 - Godot PCK v1/v2 (đọc, fixture)
 - Unreal PAK UE4/UE5 (đọc, fixture)
 

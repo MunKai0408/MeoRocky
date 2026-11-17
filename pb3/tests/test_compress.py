@@ -259,6 +259,29 @@ class TestSizeRules(TmpCase):
             c.decompress_archive(arc, out, progress=_noop_progress)
         self.assertEqual(ctx.exception.code, "E_OUTPUT_EXISTS")
 
+    def test_compress_dest_same_as_source_refused_even_with_force(self):
+        # Hoi quy chot dest != source (sua-loi): truoc day --force +
+        # --out trung nguon ghi de file goc thanh archive.
+        src = self.tmp / "game.ipa"
+        src.write_bytes(sample_ipa_bytes())
+        before = _sha(src)
+        with self.assertRaises(PB3Error) as ctx:
+            c.compress_ipa(src, src, force=True, progress=_noop_progress)
+        self.assertEqual(ctx.exception.code, "E_CONFIG_INVALID")
+        self.assertEqual(_sha(src), before)
+
+    def test_decompress_dest_same_as_source_refused_even_with_force(self):
+        src = self.tmp / "game.ipa"
+        src.write_bytes(sample_ipa_bytes())
+        arc = self.tmp / "game.tar.xz"
+        c.compress_ipa(src, arc, progress=_noop_progress)
+        before = _sha(arc)
+        with self.assertRaises(PB3Error) as ctx:
+            c.decompress_archive(arc, arc, force=True,
+                                 progress=_noop_progress)
+        self.assertEqual(ctx.exception.code, "E_CONFIG_INVALID")
+        self.assertEqual(_sha(arc), before)
+
     def test_cancel_token(self):
         src = self.tmp / "game.ipa"
         src.write_bytes(sample_ipa_bytes())

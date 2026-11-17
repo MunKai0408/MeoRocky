@@ -1,7 +1,7 @@
 // verify_analysis_c4.mjs — Kiểm chứng mục C4: cảnh báo file lớn + xuất ra
 // OPFS + blob concat (repo MunKai0408/MeoRocky).
 //
-// Chạy: node verify_analysis_c4.mjs (từ /home/hatch/workspace/pb3_web/exp)
+// Chạy: node verify_analysis_c4.mjs (từ thư mục exp/ của repo)
 // Kết quả: analysis_c4_results.md + analysis_c4_results.json
 //
 //  S. Tĩnh + Node vm:
@@ -51,8 +51,9 @@ import zlib from "node:zlib";
 import crypto from "node:crypto";
 import { execFileSync } from "node:child_process";
 
-const SITE = "/home/hatch/workspace/pb3_web/site";
-const EXP = "/home/hatch/workspace/pb3_web/exp";
+const ROOT = decodeURIComponent(new URL("..", import.meta.url).pathname).replace(/\/$/, "");
+const SITE = ROOT;
+const EXP = ROOT + "/exp";
 const FX_ZIP = EXP + "/fixtures/c4_entry_2mb.zip";
 const FX_SMALL = EXP + "/fixtures/extract_select_fixture.zip";
 const FAKE450 = "/tmp/c4_fake450.unity3d";
@@ -88,7 +89,7 @@ const indexSrc = fs.readFileSync(SITE + "/index.html", "utf8");
   const listed = listMatch ? [...listMatch[1].matchAll(/"([^"]+)"/g)].map((m) => m[1]) : [];
   const checks = {
     nodeCheck: bad.length === 0,
-    swVersionV10: ver === "v11-20261116",
+    swVersionV10: ver === "v20-20261117",
     swPrecacheOpfs: listed.includes("opfs.js"),
     opfsOnDisk: fs.existsSync(SITE + "/opfs.js"),
     indexLoadsOpfs: /<script src="opfs\.js"><\/script>/.test(indexSrc),
@@ -101,7 +102,7 @@ const indexSrc = fs.readFileSync(SITE + "/index.html", "utf8");
   const missing = Object.entries(checks).filter(([, v]) => !v).map(([k]) => k);
   rec("static_node_check_sw_modal", missing.length === 0,
     "node --check OK: app.js, sw.js, stream.js, opfs.js" + (bad.length ? " | LỖI: " + bad.join(", ") : "") +
-    "; CACHE_VERSION=" + ver + " (cần v11-20261116); precache có opfs.js=" + listed.includes("opfs.js") +
+    "; CACHE_VERSION=" + ver + " (cần v20-20261117); precache có opfs.js=" + listed.includes("opfs.js") +
     " (tổng " + listed.length + " mục); index.html nạp opfs.js + modal Tiếp tục/Hủy + nút Dọn file tạm + CSS modal: " +
     Object.entries(checks).map(([k, v]) => k + "=" + v).join(", ") +
     (missing.length ? " | THIẾU: " + missing.join(", ") : ""),

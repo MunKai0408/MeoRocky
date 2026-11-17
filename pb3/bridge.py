@@ -1772,6 +1772,75 @@ def plan_undo(plan_json, path):
         return _err(e)
 
 
+def rebuild_apply(path, translations_json, provenance_json=None,
+                  choices_json=None, dry_run=True, confirm=False):
+    """(E) Ép bản dịch lại vào file gốc [bước 5, P0-1].
+
+    Preview và apply là CÙNG 1 op với cờ dry_run (tiền lệ plan_apply /
+    mod_patch): dry_run=True (mặc định) chỉ tính toán + verify, không
+    ghi file nào; dry_run=False BẮT BUỘC confirm=True, nếu không trả
+    lỗi và không ghi gì. Nhóm bản dịch theo provenance (merge sidecar
+    ưu tiên, translation sidecar fallback, không provenance thì quét
+    tất cả), chọn bản thắng cho xung đột, 1 plan mỗi đơn vị, áp bằng
+    executor hiện có + đường rebuild streaming cho bundle .unity3d độc
+    lập lớn. Chỉ ghi TextAsset JSON dạng dict (G1); key MonoBehaviour
+    vào unmatched với reason rõ ràng. File gốc KHÔNG bị ghi đè; output
+    là đơn vị nhỏ nhất đã patch, KHÔNG phải IPA đóng gói lại.
+    Tiến độ thật kind "rebuild" qua _emit. Response: units[]/totals/
+    unmatched[]/conflicts[]/refused[]/outputs/dest/zip_path + note.
+    """
+    try:
+        from sdk import rebuild as rb
+
+        _check_size(path)
+        try:
+            translations = json.loads(translations_json)
+        except ValueError:
+            raise ValueError("translations phải là JSON object "
+                             "(key -> giá trị mới).")
+        provenance = None
+        if provenance_json:
+            try:
+                provenance = json.loads(provenance_json)
+            except ValueError:
+                raise ValueError("provenance_json không phải JSON hợp lệ.")
+        choices = None
+        if choices_json:
+            try:
+                choices = json.loads(choices_json)
+            except ValueError:
+                raise ValueError("choices_json không phải JSON hợp lệ.")
+        # JsNull (Pyodide) là falsy — dùng truthiness như plan_apply.
+        dry = bool(dry_run) if dry_run is not None else True
+        # dry_run=False + confirm=False: rebuild.apply_rebuild sẽ từ chối
+        # với E_CONFIG_INVALID, không ghi gì.
+        data = open(path, "rb").read()
+        orig_sha = hashlib.sha256(data).hexdigest()
+
+        def _pf(done, total):
+            _emit("rebuild", done, total)
+
+        res = rb.apply_rebuild(
+            data, source_name=os.path.basename(path),
+            translations=translations, provenance=provenance,
+            choices=choices, dry_run=dry, confirm=bool(confirm),
+            progress_fn=_pf, src_path=path)
+        # File gốc không đổi: xác minh sha sau khi chạy (mọi đường ghi
+        # đều ra /tmp/rebuild_out, không bao giờ ghi đè nguồn).
+        if hashlib.sha256(open(path, "rb").read()).hexdigest() != orig_sha:
+            raise ValueError("file gốc đã đổi trong lúc ép — từ chối kết quả.")
+        res["source_sha256"] = orig_sha
+        res["filename"] = None
+        if res.get("dest"):
+            res["filename"] = os.path.basename(res["dest"])
+        elif res.get("zip_path"):
+            res["filename"] = "rebuild-%s.zip" % (
+                res["units"][0]["plan_id"] if res.get("units") else "out")
+        return json.dumps(res, ensure_ascii=False)
+    except Exception as e:  # noqa: BLE001
+        return _err(e)
+
+
 def patch_pack(path, kind, payload_json):
     """Xuat patch pack nhi phan (muc C7): manifest JSON + script Python
     ap patch + README, dong goi 1 file .zip (/tmp/patch_pack.zip).

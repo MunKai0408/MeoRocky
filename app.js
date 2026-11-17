@@ -1303,6 +1303,7 @@ function setCurrentGameFile(obj) {
   state.extractEntries = [];
   state.lastMod = null;       // file mới -> kết quả Mod cũ hết hạn (mục C7)
   { const ppb = $("btn-mod-patch-pack"); if (ppb) ppb.disabled = true; }
+  if (typeof rebuildResetState === "function") rebuildResetState();
   $("file-info").textContent = obj.name + " · " + fmtBytes(obj.size);
   $("file-info").hidden = false;
   $("btn-clear-file").hidden = false;
@@ -1372,6 +1373,7 @@ function clearFile() {
   state.extractEntries = [];
   state.lastMod = null;        // bỏ file -> kết quả Mod cũ hết hạn (mục C7)
   { const ppb = $("btn-mod-patch-pack"); if (ppb) ppb.disabled = true; }
+  if (typeof rebuildResetState === "function") rebuildResetState();
   const inp = $("file-input");
   if (inp) inp.value = "";
   $("file-info").hidden = true;
@@ -1919,7 +1921,7 @@ function refreshTranslateSourceSelect() {
   let html = "";
   for (const f of files) {
     html += "<option value=\"" + esc(f.exported) + "\">" + esc(f.exported) +
-      (f.source ? " ← " + f.source : "") + "</option>";
+      (f.source ? " ← " + esc(f.source) : "") + "</option>";
   }
   sel.innerHTML = html;
   const def = defaultTranslateFile();
@@ -2644,7 +2646,7 @@ function refreshModJsonSourceSelect() {
   let html = "";
   for (const f of files) {
     html += "<option value=\"" + esc(f.exported) + "\">" + esc(f.exported) +
-      (f.source ? " ← " + f.source : "") + "</option>";
+      (f.source ? " ← " + esc(f.source) : "") + "</option>";
   }
   sel.innerHTML = html;
   const def = defaultTranslateFile();
@@ -3048,6 +3050,304 @@ $("plan-file").addEventListener("change", async (ev) => {
 planLoadLs();
 renderPlanList();
 
+// ---- Ép lại vào file gốc (E) — P0-1, bước 5 ----
+// Nguồn bản dịch 3 lựa chọn: bản dịch xong trong phiên (lastTranslated),
+// file JSON đang mở ở tab Mod (modJson), hoặc nhập file .json + sidecar
+// .provenance.json từ máy. Preview và ghi là cùng 1 op bridge
+// rebuild_apply với cờ dry_run (tiền lệ plan_apply/mod_patch); nút ghi
+// disabled tới khi preview xong; ghi cần confirm() + confirm riêng cho
+// file >400MB. Mọi dữ liệu từ file game/bản dịch đều qua esc() khi vẽ
+// HTML (luật textContent/esc của brief — 2 lỗ innerHTML ở dropdown
+// nguồn đã vá ở P0-1, xem refreshTranslateSourceSelect /
+// refreshModJsonSourceSelect). File gốc KHÔNG bị ghi đè; output không
+// phải IPA đóng gói lại; cần re-sign gói ngoài.
+state.rebuild = null;           // {translations, provenance, preview, applied, fileKey}
+state.rebuildFile = null;       // {translations, provenance, name} khi nhập file từ máy
+function rebuildFreshState() {
+  return { translations: null, provenance: null, preview: null,
+           applied: false, fileKey: null };
+}
+function rebuildResetState() {
+  // Reset khi đổi/bỏ file: chỉ hủy kết quả xem trước của file cũ
+  // (preview/applied/fileKey + nút Ghi) — KHÔNG xóa bản dịch + sidecar đã
+  // nhập (state.rebuildFile). Dữ liệu nhập là đầu vào của user, độc lập
+  // với file game (2 nguồn còn lại lastTranslated/modJson cũng không bị
+  // xóa khi đổi file); xóa nó làm luồng chọn lại file → cảnh báo khác tên
+  // không bao giờ chạy được ở chế độ nhập file (lỗi D2). An toàn vẫn giữ:
+  // preview cũ hết hạn, nút Ghi tắt tới khi xem trước lại, và rebuildRun
+  // vẫn confirm khi tên file khác tên lúc trích xuất.
+  state.rebuild = rebuildFreshState();
+  const r = $("rebuild-result");
+  if (r) r.innerHTML = "";
+  const info = $("rebuild-source-info");
+  // Chế độ nhập file + còn dữ liệu đã nhập: giữ nguyên dòng mô tả nguồn
+  // (nó mô tả dữ liệu đã nhập, không mô tả file game); các trường hợp
+  // còn lại về trạng thái trung lập như trước.
+  const sel = $("rebuild-source");
+  const keepInfo = info && sel && sel.value === "file" && state.rebuildFile;
+  if (info && !keepInfo) info.textContent = "Chưa chọn nguồn bản dịch.";
+  for (const id of ["btn-rebuild-apply", "btn-rebuild-reextract",
+                    "btn-rebuild-choose-all-kept",
+                    "btn-rebuild-choose-all-dropped"]) {
+    const b = $(id); if (b) b.disabled = true;
+  }
+  refreshRebuildFileInfo();
+}
+function rebuildFileKey() {
+  return state.file ? (state.file.name + "|" + state.file.size + "|" +
+    (state.file.lastModified || 0)) : null;
+}
+function rebuildExpectedGameFile(prov) {
+  if (!prov) return null;
+  if (prov.provenance && typeof prov.provenance === "object")
+    return prov.provenance.gameFile || null;
+  return prov.gameFile || prov.source || null;
+}
+// Provenance dùng để đối chiếu tên file: ưu tiên provenance của lần chạy
+// (E) gần nhất; nếu chưa chạy lần nào sau khi đổi file thì dùng sidecar đã
+// nhập ở chế độ nhập file — để cảnh báo khác tên hiện ngay khi chọn lại
+// file, không phải đợi tới lúc bấm Xem trước.
+function rebuildEffectiveProvenance() {
+  if (state.rebuild && state.rebuild.provenance) return state.rebuild.provenance;
+  const sel = $("rebuild-source");
+  if (sel && sel.value === "file" && state.rebuildFile) return state.rebuildFile.provenance;
+  return null;
+}
+function refreshRebuildFileInfo() {
+  const el = $("rebuild-file-info");
+  if (!el) return;
+  const cur = state.file ? state.file.name : null;
+  const prov = rebuildEffectiveProvenance();
+  const expected = rebuildExpectedGameFile(prov);
+  let text = cur ? ("File gốc đang chọn: " + cur + " (" + fmtBytes(state.file.size) + ").")
+    : "Chưa chọn file gốc — chọn lại file game đã trích xuất ở trên.";
+  if (expected && cur && expected !== cur)
+    text += " CẢNH BÁO: tên khác lúc trích xuất (" + expected +
+      ") — ép nhầm file sẽ bị từ chối ở bước kiểm tra, hoặc ép sai vị trí. Hãy chọn lại đúng file gốc.";
+  else if (expected && cur)
+    text += " Khớp tên file lúc trích xuất.";
+  el.textContent = text;
+}
+function rebuildSourceData() {
+  const sel = $("rebuild-source");
+  const mode = sel ? sel.value : "session";
+  if (mode === "session") {
+    const lt = state.lastTranslated;
+    if (!lt || !lt.translated) return { error: "Chưa có bản dịch xong trong phiên — dịch xong một file ở tab Dịch trước, hoặc chọn nguồn khác." };
+    const prov = lt.provenance ? { format: "beartea-translation-provenance/1",
+      translationFile: lt.name || "translated.vi.json",
+      provenance: lt.provenance } : null;
+    return { translations: lt.translated, provenance: prov,
+             label: "bản dịch trong phiên (" + (lt.name || "") + ")" };
+  }
+  if (mode === "modjson") {
+    const m = state.modJson;
+    if (!m || !m.entries) return { error: "Chưa mở file JSON nào ở tab Mod — lấy từ file trích xuất, bản dịch, hoặc nhập file .json rồi quay lại." };
+    return { translations: m.entries, provenance: m.provenance || null,
+             label: "file JSON đang mở (" + m.name + ")" };
+  }
+  const rf = state.rebuildFile;
+  if (!rf || !rf.translations) return { error: "Chưa nhập file .json nào — bấm “Nhập file .json…” (kèm sidecar .provenance.json nếu có)." };
+  return { translations: rf.translations, provenance: rf.provenance || null,
+           label: "file đã nhập (" + rf.name + ")" };
+}
+function rebuildErrorText(msg) {
+  const m = String(msg || "");
+  if (/E_ENCRYPTED/.test(m)) return "File/bundle MÃ HÓA — BearTea không giải mã, không vượt DRM/mã hóa. Dùng bản game không mã hóa (decrypted) hoặc file ngôn ngữ từ nguồn hợp lệ khác.";
+  if (/v9|UnityFS v9/.test(m) && /E_UNSUPPORTED_FORMAT/.test(m)) return "Bundle UnityFS v9 CHỈ ĐỌC trên bản web — chưa ghi được bundle v9. Dùng bản iSH/desktop hoặc bundle phiên bản cũ hơn.";
+  if (/E_UNSUPPORTED_FORMAT/.test(m)) return "Định dạng chưa hỗ trợ ghi (" + m + "). Thử Probe định dạng ở tab Chẩn đoán để xem engine/mức hỗ trợ thật.";
+  if (/E_TOO_LARGE/.test(m)) return "File/entry QUÁ LỚN cho bản web (" + m + "). Dùng bản iSH cho file này — iSH đọc/ghi streaming với giới hạn cao hơn.";
+  if (/E_VERIFY_FAILED/.test(m)) return "Kiểm tra sau khi ghi KHÔNG ĐẠT (before_sha lệch — file gốc có thể khác lúc lập kế hoạch, hoặc chuỗi gốc đã đổi). Không ghi file nào. Hãy chọn lại đúng file gốc rồi xem trước lại.";
+  if (/E_INPUT_NOT_FOUND|không nhận diện được container|không phải bundle/.test(m)) return "Không mở được file — file có thể bị mã hóa/FairPlay, bị hỏng, hoặc không phải định dạng BearTea hỗ trợ (" + m + "). BearTea không khẳng định chắc chắn khi chưa có bằng chứng; thử Probe định dạng ở tab Chẩn đoán.";
+  if (/Zstd/i.test(m)) return m + " Ghi Zstd chưa hỗ trợ — bundle sẽ ghi lại bằng block không nén nên file có thể to hơn.";
+  return m;
+}
+async function rebuildConfirmLargeFile() {
+  if (!state.file || state.file.size <= EXTRACT_WARN_BYTES) return true;
+  return confirm("File lớn: " + state.file.name + " (" + fmtBytes(state.file.size) + ").\n" +
+    "Ép lại đọc/ghi theo luồng (streaming) với bundle .unity3d độc lập lớn, nhưng RAM đỉnh ước tính ~" + fmtBytes(state.file.size * 2) +
+    " (file + entry lớn nhất đang xử lý); trên iPhone file trên ~400MB vẫn có thể làm chết tab.\n" +
+    "Bấm OK để tiếp tục, hoặc Huỷ để dùng bản iSH cho file này.");
+}
+function rebuildConflictChoices() {
+  const choices = {};
+  const box = $("rebuild-result");
+  if (!box) return choices;
+  const radios = box.querySelectorAll("input[data-rebuild-conflict]");
+  const seen = {};
+  radios.forEach((r) => {
+    const key = r.getAttribute("data-rebuild-conflict");
+    if (r.checked) choices[key] = r.value;
+    seen[key] = true;
+  });
+  return choices;
+}
+function rebuildRenderResult(parsed) {
+  const t = parsed.totals || {};
+  let html = "<p>Kết quả (E): <b>" + (parsed.dry_run ? "XEM TRƯỚC (dry-run — CHƯA ghi file nào)" : "ĐÃ GHI") +
+    "</b> · " + (t.changed || 0) + "/" + (t.keys || 0) + " key đã đổi · " +
+    (t.units || 0) + " đơn vị · " + (t.unmatched || 0) + " key không ép được · " +
+    (t.unchanged || 0) + " key giữ nguyên · " + (t.refused || 0) + " đơn vị bị từ chối</p>";
+  if ((parsed.warnings || []).length) html += "<p class=\"note\">Cảnh báo: " + esc(parsed.warnings.join("; ")) + "</p>";
+  if (parsed.scan_all) html += "<p class=\"note\">Không có provenance đầy đủ nên đã quét tất cả đơn vị để tìm key.</p>";
+  if ((parsed.units || []).length) {
+    html += "<table><tr><th>Đơn vị</th><th>Loại</th><th>Entry</th><th>Thay đổi</th><th>Chế độ</th><th>Kích thước</th></tr>";
+    for (const u of parsed.units) {
+      html += "<tr><td>" + esc(u.unit) + "</td><td>" + esc(u.kind) + "</td><td>" + u.entries +
+        "</td><td>" + u.changes + "</td><td>" + esc(u.mode) + (u.streaming ? " · streaming" : "") +
+        "</td><td>" + fmtBytes(u.size_before) + " → " + (u.size_after == null ? "?" : fmtBytes(u.size_after)) + "</td></tr>";
+      if ((u.warnings || []).length) html += "<tr><td colspan=\"6\" class=\"sub\">Cảnh báo: " + esc(u.warnings.join("; ")) + "</td></tr>";
+    }
+    html += "</table>";
+  }
+  const unmatched = parsed.unmatched || [];
+  if (unmatched.length) {
+    const REASONS = { monobehaviour: "MonoBehaviour/StringTable — (E) v1 chỉ ghi TextAsset JSON, chưa ghi được nhóm này",
+      not_found: "không tìm thấy trong đơn vị nào", not_json_dict: "TextAsset không phải JSON dạng dict",
+      non_string_value: "giá trị gốc không phải chuỗi" };
+    html += "<p>Không ép được (" + (parsed.unmatched_total || unmatched.length) + " key" +
+      (parsed.unmatched_truncated ? ", chỉ hiện " + unmatched.length + " key đầu" : "") + "):</p>" +
+      "<table><tr><th>Key</th><th>Lý do</th><th>Đơn vị</th></tr>";
+    for (const m of unmatched.slice(0, 200)) {
+      html += "<tr><td>" + esc(m.key) + "</td><td>" + esc(REASONS[m.reason] || m.reason) +
+        "</td><td>" + esc(m.unit || "") + "</td></tr>";
+    }
+    html += "</table>";
+  }
+  const conflicts = parsed.conflicts || [];
+  if (conflicts.length) {
+    html += "<p>Xung đột key (" + (parsed.conflicts_total || conflicts.length) + " — chọn bản thắng cho mỗi key; mặc định giữ bản đầu):</p>" +
+      "<table><tr><th>Key</th><th>Bản giữ (kept)</th><th>Bản loại (dropped)</th><th>Chọn</th></tr>";
+    for (const c of conflicts) {
+      const kept = c.kept || {}, dropped = c.dropped || {};
+      html += "<tr><td>" + esc(c.key) + "</td><td>" + esc(kept.value) +
+        "<br><span class=\"sub\">" + esc(kept.source || "") + "</span></td><td>" + esc(dropped.value) +
+        "<br><span class=\"sub\">" + esc(dropped.source || "") + "</span></td><td>" +
+        "<label><input type=\"radio\" data-rebuild-conflict=\"" + esc(c.key) + "\" value=\"kept\"" +
+        (c.choice !== "dropped" ? " checked" : "") + "> Giữ</label> " +
+        "<label><input type=\"radio\" data-rebuild-conflict=\"" + esc(c.key) + "\" value=\"dropped\"" +
+        (c.choice === "dropped" ? " checked" : "") + "> Loại</label></td></tr>";
+      if (c.warning) html += "<tr><td colspan=\"4\" class=\"sub\">" + esc(c.warning) + "</td></tr>";
+    }
+    html += "</table>";
+    if (parsed.conflicts_truncated) html += "<p class=\"note\">Chỉ hiện " + conflicts.length + " xung đột đầu trong tổng " + parsed.conflicts_total + " (giới hạn 500 của bước gộp).</p>";
+  }
+  if ((parsed.refused || []).length) {
+    html += "<p>Đơn vị bị từ chối:</p><table><tr><th>Đơn vị</th><th>Mã</th><th>Lý do</th></tr>";
+    for (const r of parsed.refused) html += "<tr><td>" + esc(r.unit) + "</td><td>" + esc(r.code) +
+      "</td><td>" + esc(rebuildErrorText(r.message)) + "</td></tr>";
+    html += "</table>";
+  }
+  if ((parsed.outputs || []).length) html += "<p>File đã ghi, đã sẵn sàng để lưu: <b>" + esc(parsed.outputs.join(", ")) + "</b> — bấm “Lưu / Chia sẻ” ở thanh Lưu file bên dưới để lưu về máy</p>";
+  html += "<p class=\"note\">" + esc(parsed.note || "") + "</p>";
+  $("rebuild-result").innerHTML = html;
+  const hasConf = conflicts.length > 0;
+  for (const id of ["btn-rebuild-choose-all-kept", "btn-rebuild-choose-all-dropped"]) {
+    const b = $(id); if (b) b.disabled = !hasConf;
+  }
+}
+async function rebuildRun(dryRun) {
+  if (!state.file) { showError("Chưa chọn file. Hãy chọn file ở trên trước."); return; }
+  const src = rebuildSourceData();
+  if (src.error) { showError(src.error); return; }
+  const st = state.rebuild || rebuildFreshState();
+  st.translations = src.translations;
+  st.provenance = src.provenance;
+  st.fileKey = rebuildFileKey();
+  state.rebuild = st;
+  refreshRebuildFileInfo();
+  const expected = rebuildExpectedGameFile(src.provenance);
+  if (expected && expected !== state.file.name) {
+    if (!confirm("Tên file gốc đang chọn (" + state.file.name + ") khác tên lúc trích xuất (" + expected + "). Tiếp tục ép vào file này? (Nên bấm Huỷ rồi chọn lại đúng file gốc.)")) return;
+  }
+  if (!dryRun) {
+    if (!st.preview) { showError("Chưa xem trước — bấm “Xem trước (dry-run)” trước khi ghi."); return; }
+    if (!confirm("Ghi bản dịch vào file đã chọn? File gốc KHÔNG bị ghi đè; output chỉ là bundle/.assets, không phải IPA đóng gói lại; cần re-sign gói ngoài thì game mới nhận.")) return;
+  }
+  if (!(await rebuildConfirmLargeFile())) { showError("Đã huỷ — dùng bản iSH cho file này nếu cần."); return; }
+  const choices = dryRun ? null : rebuildConflictChoices();
+  try {
+    const label = dryRun ? "Xem trước ép lại (E)" : "Ép lại vào file gốc (E)";
+    const { parsed } = await runOp(label, "rebuild_apply",
+      [inputPath(), JSON.stringify(src.translations),
+       src.provenance ? JSON.stringify(src.provenance) : null,
+       choices ? JSON.stringify(choices) : null, dryRun, !dryRun],
+      inputFileArgs(), !dryRun);
+    if (dryRun) {
+      st.preview = parsed;
+      const b = $("btn-rebuild-apply"); if (b) b.disabled = false;
+    } else {
+      st.applied = true;
+      const rb2 = $("btn-rebuild-reextract"); if (rb2) rb2.disabled = false;
+    }
+    rebuildRenderResult(parsed);
+  } catch (e) {
+    showError("Ép lại (E) lỗi: " + rebuildErrorText(e.message));
+  }
+}
+$("btn-translate-goto-rebuild").addEventListener("click", () => { goTool("mod"); });
+$("btn-rebuild-reselect-file").addEventListener("click", () => { const inp = $("file-input"); if (inp) inp.click(); });
+$("rebuild-source").addEventListener("change", () => {
+  const src = rebuildSourceData();
+  $("rebuild-source-info").textContent = src.error ? src.error : ("Nguồn: " + src.label + " · " + Object.keys(src.translations).length + " key.");
+  refreshRebuildFileInfo();
+});
+$("btn-rebuild-import-json").addEventListener("click", () => { $("rebuild-json-file").click(); });
+$("rebuild-json-file").addEventListener("change", async (ev) => {
+  const f = ev.target.files && ev.target.files[0];
+  ev.target.value = "";
+  if (!f) return;
+  try {
+    const obj = JSON.parse(await f.text());
+    if (!obj || typeof obj !== "object" || Array.isArray(obj)) throw new Error("file phải là JSON object key → giá trị.");
+    for (const [k, v] of Object.entries(obj)) if (typeof v !== "string") throw new Error("giá trị của key " + JSON.stringify(k) + " không phải chuỗi.");
+    state.rebuildFile = { translations: obj, provenance: (state.rebuildFile && state.rebuildFile.provenance) || null, name: f.name };
+    $("rebuild-source").value = "file";
+    $("rebuild-source-info").textContent = "Nguồn: file đã nhập (" + f.name + ") · " + Object.keys(obj).length + " key" + (state.rebuildFile.provenance ? " · đã có sidecar." : " · chưa có sidecar — sẽ quét tất cả đơn vị.");
+    clearError();
+  } catch (e) { showError("Nhập file .json lỗi: " + e.message); }
+});
+$("btn-rebuild-import-sidecar").addEventListener("click", () => { $("rebuild-sidecar-file").click(); });
+$("rebuild-sidecar-file").addEventListener("change", async (ev) => {
+  const f = ev.target.files && ev.target.files[0];
+  ev.target.value = "";
+  if (!f) return;
+  try {
+    const obj = JSON.parse(await f.text());
+    if (!obj || (obj.format !== "beartea-merge-provenance/1" && obj.format !== "beartea-translation-provenance/1")) throw new Error("sidecar phải có format beartea-merge-provenance/1 hoặc beartea-translation-provenance/1.");
+    if (!state.rebuildFile) state.rebuildFile = { translations: null, provenance: obj, name: "(chưa có file .json chính)" };
+    else state.rebuildFile.provenance = obj;
+    $("rebuild-source").value = "file";
+    $("rebuild-source-info").textContent = "Đã nhận sidecar " + obj.format + " (" + f.name + ")." + (state.rebuildFile.translations ? " · " + Object.keys(state.rebuildFile.translations).length + " key." : " Hãy nhập thêm file .json chính.");
+    clearError();
+  } catch (e) { showError("Nhập sidecar lỗi: " + e.message); }
+});
+$("btn-rebuild-preview").addEventListener("click", () => rebuildRun(true));
+$("btn-rebuild-apply").addEventListener("click", () => rebuildRun(false));
+$("btn-rebuild-choose-all-kept").addEventListener("click", () => {
+  document.querySelectorAll("input[data-rebuild-conflict][value=\"kept\"]").forEach((r) => { r.checked = true; });
+});
+$("btn-rebuild-choose-all-dropped").addEventListener("click", () => {
+  document.querySelectorAll("input[data-rebuild-conflict][value=\"dropped\"]").forEach((r) => { r.checked = true; });
+});
+$("btn-rebuild-reextract").addEventListener("click", async () => {
+  // Nạp lại file vừa ép (đang giữ trong lastDownload) làm file hiện tại
+  // rồi sang tab Trích xuất để kiểm vòng tròn. File lớn ghi qua OPFS
+  // thì hướng dẫn tải về rồi chọn lại (không ôm blob trong RAM).
+  const ld = state.lastDownload;
+  if (!ld || ld.via !== "memory" || !ld.blob) {
+    showError("Không còn file vừa ép trong bộ nhớ trang (file lớn ghi qua OPFS) — hãy tải file vừa ép về máy, chọn lại nó làm file gốc, rồi bấm Trích xuất để kiểm.");
+    return;
+  }
+  try {
+    const buf = await ld.blob.arrayBuffer();
+    setCurrentGameFile({ name: ld.name, size: buf.byteLength, lastModified: Date.now(), data: buf });
+    goTool("extract");
+    showError("Đã nạp file vừa ép (" + ld.name + ") — bấm “Trích xuất text” để kiểm vòng tròn.");
+  } catch (e) { showError("Nạp lại file vừa ép lỗi: " + e.message); }
+});
+rebuildResetState();
+
 // ---- Batch: pool worker + checkpoint từng game vào IndexedDB + watchdog hợp tác (Mục 4) ----
 // Kiến trúc:
 //  - app.js tách manifest bằng bridge.batch_split (1 lần, worker đơn) rồi
@@ -3056,7 +3356,8 @@ renderPlanList();
 //    user làm gì).
 //  - Mỗi worker là 1 thread hệ điều hành thật, chạy 1 Pyodide + PB3 riêng
 //    (KHÔNG pthreads, KHÔNG SharedArrayBuffer, KHÔNG COI) — pool N worker
-//    chạy SONG SONG THẬT (batch 2 game xong 24,6s trên file thật); chỉ BÊN
+//    chạy SONG SONG THẬT (batch 2 game xong 24,6s trên file thật — con số
+//    này không kèm log trong cây [CHƯA KIỂM CHỨNG]); chỉ BÊN
 //    TRONG một worker thì Python chạy tuần tự vì Pyodide không có pthreads.
 //    Thao tác đơn (list/inspect/extract/...) vẫn đi qua worker đơn cũ như
 //    trước — pool chỉ phục vụ batch (chọn cách đơn giản, ít rủi ro nhất:

@@ -8,16 +8,17 @@
 // -> Chẩn đoán -> Font -> Nén. Sau mỗi thao tác kiểm tra buffer gốc vẫn còn
 // nguyên (byteLength không đổi) và worker chỉ nhận file đúng 1 lần.
 //
-// Chạy: node verify_clone_fix.mjs (từ /home/hatch/workspace/pb3_web/exp)
+// Chạy: node verify_clone_fix.mjs (từ thư mục exp/ của repo)
 // Kết quả: clone_fix_results.md + clone_fix_results.json
 import { Worker } from "node:worker_threads";
-import { loadPyodide } from "../site/pyodide/pyodide.mjs";
+import { loadPyodide } from "../pyodide/pyodide.mjs";
 import vm from "node:vm";
 import fs from "node:fs";
 import { execFileSync, spawnSync } from "node:child_process";
 
-const SITE = "/home/hatch/workspace/pb3_web/site";
-const EXP = "/home/hatch/workspace/pb3_web/exp";
+const ROOT = decodeURIComponent(new URL("..", import.meta.url).pathname).replace(/\/$/, "");
+const SITE = ROOT;
+const EXP = ROOT + "/exp";
 const sec = (ms) => Math.round(ms / 100) / 10;
 const results = {};
 let failures = 0;

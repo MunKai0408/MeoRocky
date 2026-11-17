@@ -1,14 +1,14 @@
 // verify_analysis_c8.mjs — Kiểm chứng MỤC C8: format probe cho engine lạ (BearTea web).
 // (repo MunKai0408/MeoRocky, nhánh main; KHÔNG đẩy lên GitHub.)
 //
-// Chạy: node verify_analysis_c8.mjs (từ /home/hatch/workspace/pb3_web/exp)
+// Chạy: node verify_analysis_c8.mjs (từ thư mục exp/ của repo)
 // Kết quả: analysis_c8_results.json (+ analysis_c8_results.md báo cáo tay).
 //
 //  A. Tĩnh: node --check; py_compile; check_analysis_c8_static.py
 //     (format_probe.py stdlib-only + Python 3.9, không gọi mạng, không chuỗi
 //     cấm; ENGINE_SUPPORT trung thực — mọi engine đều có unsupported, unknown
-//     có supported rỗng; manifest files.json=93 / tests.json=164; sw.js
-//     precache + CACHE_VERSION v15; bridge có op format_probe; UI đủ nút
+//     có supported rỗng; manifest files.json=94 / tests.json=165; sw.js
+//     precache + CACHE_VERSION v20; bridge có op format_probe; UI đủ nút
 //     probe + input file riêng + nút tải JSON; tiếng Việt đủ dấu).
 //  B. Unit test Python: tests.test_format_probe (22) + tests.test_engine_detect
 //     (35, hồi quy đường discovery chung).
@@ -39,10 +39,11 @@ import path from "node:path";
 import zlib from "node:zlib";
 import { execFileSync, spawnSync } from "node:child_process";
 
-const SITE = "/home/hatch/workspace/pb3_web/site";
-const EXP = "/home/hatch/workspace/pb3_web/exp";
+const ROOT = decodeURIComponent(new URL("..", import.meta.url).pathname).replace(/\/$/, "");
+const SITE = ROOT;
+const EXP = ROOT + "/exp";
 const FX = EXP + "/fixtures";
-const VENV_PY = "/home/hatch/workspace/_ci_sim/venv/bin/python";
+const VENV_PY = "python3";
 const sec = (ms) => Math.round(ms / 100) / 10;
 const results = {};
 let failures = 0;
@@ -83,8 +84,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     if (j.fails && j.fails.length) { ok = false; detail = j.fails.join(" | "); }
     else detail = "format_probe.py stdlib-only + Python 3.9 + không gọi mạng " +
       "+ ENGINE_SUPPORT trung thực (mọi engine có unsupported, unknown " +
-      "supported rỗng) + files.json=93 / tests.json=164 + sw.js precache " +
-      "sdk/format_probe.py + CACHE_VERSION v19-20261116 + bridge format_probe " +
+      "supported rỗng) + files.json=94 / tests.json=165 + sw.js precache " +
+      "sdk/format_probe.py + CACHE_VERSION v20-20261117 + bridge format_probe " +
       "+ UI đủ nút probe/input riêng/tải JSON + gợi ý probe khi lỗi " +
       "E_UNSUPPORTED_FORMAT + tiếng Việt đủ dấu";
   } catch (e) { ok = false; detail = "không đọc được JSON: " + (r.stdout || "") + (r.stderr || ""); }
@@ -108,7 +109,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 }
 
 // ================= C. Node Pyodide + bridge thật =================
-const { loadPyodide } = await import("../site/pyodide/pyodide.mjs");
+const { loadPyodide } = await import("../pyodide/pyodide.mjs");
 async function bootPyodide() {
   const pyodide = await loadPyodide({ indexURL: SITE + "/pyodide/" });
   await pyodide.loadPackage("lz4");

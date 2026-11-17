@@ -1,7 +1,7 @@
 // verify_enjson.mjs — Kiểm chứng PHẦN A: fix trích xuất thiếu en.json
 // (repo MunKai0408/MeoRocky).
 //
-// Chạy: node verify_enjson.mjs (từ /home/hatch/workspace/pb3_web/exp)
+// Chạy: node verify_enjson.mjs (từ thư mục exp/ của repo)
 // Kết quả: enjson_fix_results.md + enjson_fix_results.json
 //
 //  0. Bằng chứng lỗi cũ: extract.zip thật của Joseph (log [] rỗng, bundle
@@ -15,10 +15,11 @@
 //  4. A3: tương thích ngược — extract không lọc (locales=None) vẫn ra đủ
 //     en+zh+fr+de+settings như trước.
 import fs from "node:fs";
-import { loadPyodide } from "../site/pyodide/pyodide.mjs";
+import { loadPyodide } from "../pyodide/pyodide.mjs";
 
-const SITE = "/home/hatch/workspace/pb3_web/site";
-const EXP = "/home/hatch/workspace/pb3_web/exp";
+const ROOT = decodeURIComponent(new URL("..", import.meta.url).pathname).replace(/\/$/, "");
+const SITE = ROOT;
+const EXP = ROOT + "/exp";
 const FX = EXP + "/fixtures/extract_select_fixture.zip";
 const BK = EXP + "/fixtures/extract_broken_bundle.zip";
 const REAL = "/home/hatch/workspace/user/files/extract.zip";

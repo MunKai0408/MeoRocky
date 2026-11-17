@@ -1,7 +1,7 @@
 // verify_extract_real_games.mjs — Kiểm chứng đợt sửa trích xuất 2026-11-16
 // (MonoBehaviour resources.assets + .unity3d 590MB streaming + CSV locale)
 // trên 4 file game THẬT của Joseph, cây site/ hiện tại (chưa đẩy).
-// Chạy: node verify_extract_real_games.mjs (từ /home/hatch/workspace/pb3_web/exp)
+// Chạy: node verify_extract_real_games.mjs (từ thư mục exp/ của repo)
 // Kết quả: extract_real_games_fix_results.md + extract_real_games_fix_results.json
 //   + out/extract_real_games/*.zip|png
 //
@@ -16,8 +16,9 @@ import path from "node:path";
 import http from "node:http";
 import { execSync } from "node:child_process";
 
-const SITE = "/home/hatch/workspace/pb3_web/site";
-const EXP = "/home/hatch/workspace/pb3_web/exp";
+const ROOT = decodeURIComponent(new URL("..", import.meta.url).pathname).replace(/\/$/, "");
+const SITE = ROOT;
+const EXP = ROOT + "/exp";
 const OUT = EXP + "/out/extract_real_games";
 const IPA9K = "/home/hatch/workspace/real_ipa/9kings.ipa";
 const IPAPB3 = "/home/hatch/workspace/real_ipa/polybridge3.ipa";

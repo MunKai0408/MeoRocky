@@ -102,10 +102,33 @@ def _apply_entry_changes(kind, unit_bytes, req_entry, entry, backend, lim,
     """Ap toan bo changes cua 1 entry len unit bytes (trong RAM).
 
     Dung dung sdk.unity.apply_patch nhu executor plan (sdk/plan.py) nen
-    after_sha tinh o day khop voi script ap o may dich.
+    after_sha tinh o day khop voi script ap o may dich. Thay theo KEY
+    truoc (plan_sdk._simulate_script, giong executor plan sau P0-1: span
+    gia tri cua key, lan xuat hien cuoi thang) — gia tri rong "" va gia
+    tri trung nhau giua cac key deu ap dung dung; thay theo gia tri tran
+    cu khong bao gio patch duoc "". Neu khong mo phong theo key duoc
+    (script khong phai JSON object, edit kieu Mod thay chuoi tran) thi
+    roi ve vong lap apply_patch tung change nhu cu. Script ap
+    (APPLY_SCRIPT) dung dung logic nay nen after_sha hai ben khop nhau.
     """
     cur = bytes(unit_bytes)
     from_container = bool(vpath) and _u.detect_bundle(source_bytes) is None
+    try:
+        _name, script = _read_script(
+            kind, cur, req_entry, int(entry["object"]), backend, lim)
+        new_script_b = plan_sdk._simulate_script(
+            script.encode("utf-8"), entry["changes"])
+    except Exception:  # noqa: BLE001 - mo phong key that bai -> duong cu
+        new_script_b = None
+        script = None
+    if new_script_b is not None:
+        req = _u.PatchRequest(
+            data=cur, kind=kind, entry=req_entry,
+            path_id=int(entry["object"]),
+            old_text=script, new_text=new_script_b.decode("utf-8"),
+            write_mode=entry["op"], backend=backend, temp_dir=None,
+            from_container=from_container)
+        return _u.apply_patch(req).output_bytes
     for ch in entry["changes"]:
         req = _u.PatchRequest(
             data=cur, kind=kind, entry=req_entry,
@@ -639,15 +662,36 @@ def main(argv=None):
                 break
             from_container = bool(unit["vpath"]) and \
                 unity_sdk.detect_bundle(data) is None
+            # Thay theo KEY truoc (giong executor plan sau P0-1 va giong
+            # phia xay pack): mo phong toan bo script theo span gia tri
+            # cua key, roi patch 1 lan. Gia tri rong "" ap dung dung.
+            # Neu khong mo phong duoc (edit kieu Mod) thi roi ve vong
+            # lap thay chuoi tran tung change nhu cu.
             try:
-                for ch in e["changes"]:
+                _sim_b = plan_sdk._simulate_script(
+                    script.encode("utf-8"), e["changes"])
+            except Exception:  # noqa: BLE001 - mo phong key that bai
+                _sim_b = None
+            try:
+                if _sim_b is not None:
                     req = unity_sdk.PatchRequest(
                         data=cur, kind=kind, entry=req_entry,
                         path_id=int(e["object"]),
-                        old_text=ch["before"], new_text=ch["after"],
+                        old_text=script,
+                        new_text=_sim_b.decode("utf-8"),
                         write_mode=e["op"], backend=backend, temp_dir=None,
                         from_container=from_container)
                     cur = unity_sdk.apply_patch(req).output_bytes
+                else:
+                    for ch in e["changes"]:
+                        req = unity_sdk.PatchRequest(
+                            data=cur, kind=kind, entry=req_entry,
+                            path_id=int(e["object"]),
+                            old_text=ch["before"], new_text=ch["after"],
+                            write_mode=e["op"], backend=backend,
+                            temp_dir=None,
+                            from_container=from_container)
+                        cur = unity_sdk.apply_patch(req).output_bytes
             except Exception as exc:  # noqa: BLE001
                 problems.append("%s: ap that bai (%s)."
                                 % (e.get("id"), exc))
@@ -689,6 +733,27 @@ def main(argv=None):
 
     out_dir = Path(args.out_dir) if args.out_dir else (
         target.parent / (target.stem + ".pb3-patched"))
+    # Chot dest != source: --out-dir do user chi co the trung thu muc
+    # chua file goc, va ten don vi co the trung ten file goc. Neu dich
+    # (hoac ban sao luu) trung file goc thi tu choi toan bo truoc khi
+    # ghi gi — neu khong, tuyen bo "KHONG BAO GIO ghi de file goc" se
+    # sai trong truong hop nay.
+    try:
+        _target_real = target.resolve()
+    except OSError:
+        _target_real = target.absolute()
+    for _out_name, _o, _n, _e in patched:
+        for _cand in (out_dir / _out_name,
+                      out_dir / "backup-goc" / _out_name):
+            try:
+                _cand_real = _cand.resolve()
+            except OSError:
+                _cand_real = _cand.absolute()
+            if _cand_real == _target_real:
+                _err("thu muc output %s se ghi de file goc %s (ten don "
+                     "vi %s trung ten file goc) — tu choi ap, khong ghi "
+                     "gi. Chon --out-dir khac." % (out_dir, target, _out_name))
+                return _REFUSE
     backup_dir = out_dir / "backup-goc"
     try:
         out_dir.mkdir(parents=True, exist_ok=True)

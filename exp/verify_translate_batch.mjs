@@ -1,6 +1,6 @@
 // verify_translate_batch.mjs — Kiểm chứng MỤC A: batch dịch (đợt bổ sung 13:52).
 //
-// Chạy: node verify_translate_batch.mjs (từ /home/hatch/workspace/pb3_web/exp)
+// Chạy: node verify_translate_batch.mjs (từ thư mục exp/ của repo)
 // Kết quả: translate_batch_results.md + translate_batch_results.json
 //
 //  A. gtx THẬT từ Node (UA Safari iPhone) — kiểm chứng trước khi hứa:
@@ -37,19 +37,20 @@
 import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
-import { loadPyodide } from "../site/pyodide/pyodide.mjs";
+import { loadPyodide } from "../pyodide/pyodide.mjs";
 import {
   googleTranslateOne, googleTranslateBatch, splitJoinedBatch,
   proxyTranslateBatch, translateBatchWithFallbacks,
   setTranslateProxyUrl, abortGoogleTranslate, resetGoogleTranslateAbort,
   parseGtResponse,
-} from "../site/gt.js";
+} from "../gt.js";
 
-const SITE = "/home/hatch/workspace/pb3_web/site";
-const EXP = "/home/hatch/workspace/pb3_web/exp";
+const ROOT = decodeURIComponent(new URL("..", import.meta.url).pathname).replace(/\/$/, "");
+const SITE = ROOT;
+const EXP = ROOT + "/exp";
 const FX1000 = EXP + "/fixtures/translate_1000.json";
 const FX1000_META = EXP + "/fixtures/translate_1000_meta.json";
-const GAME1 = "/home/hatch/workspace/pb3_fix/pb3/tests/fixtures/extract/game1.zip";
+const GAME1 = SITE + "/pb3/tests/fixtures/extract/game1.zip";
 const GT_EP = "https://translate.googleapis.com/translate_a/single";
 const UA_IPHONE = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1";
 const sec = (ms) => Math.round(ms / 100) / 10;

@@ -4,14 +4,15 @@
 // nạp được và chạy được. indexURL trỏ vào site/pyodide/, chặn mọi fetch http(s) trong lúc chạy.
 // Mô phỏng đúng cách worker.js khởi động: đọc file trong site/ (bản vendor),
 // ghi vào FS ảo /pb3web, import bridge, chạy từng tính năng trên fixture thật.
-// Chạy: node verify_module_worker.mjs (từ /home/hatch/workspace/pb3_web/exp)
+// Chạy: node verify_module_worker.mjs (từ thư mục exp/ của repo)
 // Kết quả: module_worker_results.md + module_worker_results.json
-import { loadPyodide } from "../site/pyodide/pyodide.mjs";
+import { loadPyodide } from "../pyodide/pyodide.mjs";
 import fs from "node:fs";
 
-const SITE = "/home/hatch/workspace/pb3_web/site";
-const PB3 = "/home/hatch/workspace/pb3_fix/pb3";
-const EXP = "/home/hatch/workspace/pb3_web/exp";
+const ROOT = decodeURIComponent(new URL("..", import.meta.url).pathname).replace(/\/$/, "");
+const SITE = ROOT;
+const PB3 = SITE + "/pb3";
+const EXP = ROOT + "/exp";
 const sec = (ms) => Math.round(ms / 100) / 10;
 const results = {};
 let failures = 0;
@@ -79,7 +80,7 @@ rec("no_http_fetch_during_load", httpFetchCount === 0, `http fetch trong lúc lo
   const bin = Buffer.from(b64, "base64");
   pyodide.FS.mkdirTree("/pb3web/fonts");
   pyodide.FS.writeFile("/pb3web/fonts/BeVietnamPro-Regular.ttf", new Uint8Array(bin));
-  rec("write_site_files", man.files.length === 93, `${man.files.length} file pb3/ + font b64 (${bin.length} byte) ghi vào /pb3web`, performance.now() - t0); // 93 = 92 + 1 (phần D thêm sdk/font_list.py, 2026-11-17)
+  rec("write_site_files", man.files.length === 94, `${man.files.length} file pb3/ + font b64 (${bin.length} byte) ghi vào /pb3web`, performance.now() - t0); // 94 = 93 + 1 (P0-1 thêm sdk/rebuild.py, 2026-11-17)
 }
 
 // progress callback: ghi lại event để chứng minh tiến độ chảy thật

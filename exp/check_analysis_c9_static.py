@@ -3,15 +3,15 @@
 tu dong 1 khi RAM thiet bi <= 4 GB, luu localStorage) + sua cau sai ve
 song song (pool chay song song THAT: moi worker 1 thread he dieu hanh
 that; chi ben trong 1 worker thi Python tuan tu vi Pyodide khong co
-pthreads). Manifest (files.json 93, tests.json 164) sau phan D; sw.js
-CACHE_VERSION v19-20261116; khong them file site nao.
+pthreads). Manifest (files.json 94, tests.json 165) sau phan D; sw.js
+CACHE_VERSION v20-20261117; khong them file site nao.
 In JSON {"fails": [...]}.
 """
 import json
 import sys
 from pathlib import Path
 
-SITE = Path(__file__).resolve().parent.parent / "site"
+SITE = Path(__file__).resolve().parent.parent  # P0-1: goc repo (Q2)
 fails = []
 
 app = (SITE / "app.js").read_text(encoding="utf-8")
@@ -95,15 +95,15 @@ for old in ("pool 2 worker song song",
 
 # 5. Manifest sau phan D (them sdk/font_list.py + tests/test_font_unify.py).
 files = json.loads((SITE / "pb3" / "files.json").read_text())["files"]
-if len(files) != 93:
-    fails.append("files.json co %d file, ky vong 93" % len(files))
+if len(files) != 94:
+    fails.append("files.json co %d file, ky vong 94" % len(files))
 tests = json.loads((SITE / "pb3" / "tests.json").read_text())["files"]
-if len(tests) != 164:
-    fails.append("tests.json co %d file, ky vong 164" % len(tests))
+if len(tests) != 165:
+    fails.append("tests.json co %d file, ky vong 165" % len(tests))
 
 # 6. sw.js CACHE_VERSION v19.
-if 'CACHE_VERSION = "v19-20261116"' not in sw:
-    fails.append("sw.js CACHE_VERSION khong phai v19-20261116")
+if 'CACHE_VERSION = "v20-20261117"' not in sw:
+    fails.append("sw.js CACHE_VERSION khong phai v20-20261117")
 if 'CACHE_VERSION = "v13-20261116"' in sw:
     fails.append("sw.js van con CACHE_VERSION v13")
 

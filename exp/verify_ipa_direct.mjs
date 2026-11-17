@@ -1,7 +1,7 @@
 // verify_ipa_direct.mjs — Kiểm chứng nhập trực tiếp file .ipa, không cần
 // đổi tên thành .zip (Joseph 14:35, repo MunKai0408/MeoRocky).
 //
-// Chạy: node verify_ipa_direct.mjs (từ /home/hatch/workspace/pb3_web/exp)
+// Chạy: node verify_ipa_direct.mjs (từ thư mục exp/ của repo)
 // Kết quả: ipa_direct_results.md + ipa_direct_results.json
 //
 // Trình duyệt THẬT (Playwright chromium headless shell, 390px, serve site
@@ -26,8 +26,9 @@ import http from "node:http";
 import path from "node:path";
 import { execSync } from "node:child_process";
 
-const SITE = "/home/hatch/workspace/pb3_web/site";
-const EXP = "/home/hatch/workspace/pb3_web/exp";
+const ROOT = decodeURIComponent(new URL("..", import.meta.url).pathname).replace(/\/$/, "");
+const SITE = ROOT;
+const EXP = ROOT + "/exp";
 const OUT = EXP + "/out/ipa_direct";
 const FX_ZIP = EXP + "/fixtures/extract_select_fixture.zip";
 const FX_IPA = EXP + "/fixtures/extract_select_fixture.ipa";

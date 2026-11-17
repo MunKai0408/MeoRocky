@@ -1349,6 +1349,23 @@ def rebuild_zip(source: Union[str, os.PathLike, bytes, bytearray],
     else:
         raise PB3Error("E_PLUGIN_INVALID", "rebuild_zip cần đường dẫn tệp hoặc bytes",
                        where="rebuild_zip")
+    if src_path is not None:
+        # Chốt dest != source (sửa-lỗi): không bao giờ ghi đè file gốc,
+        # kể cả khi caller truyền cùng đường dẫn qua dạng viết khác
+        # (realpath) hoặc symlink/hardlink (samefile). Trước đây
+        # rebuild_zip(src, src) ghi đè nguồn thành công.
+        if os.path.realpath(str(dest)) == os.path.realpath(str(src_path)):
+            raise PB3Error("E_CONFIG_INVALID",
+                           "không ghi đè file gốc: đích trùng nguồn",
+                           where=str(dest))
+        if os.path.exists(str(dest)):
+            try:
+                if os.path.samefile(str(src_path), str(dest)):
+                    raise PB3Error("E_CONFIG_INVALID",
+                                   "không ghi đè file gốc: đích trùng nguồn",
+                                   where=str(dest))
+            except OSError:
+                pass
     try:
         zf = (zipfile.ZipFile(str(src_path), "r") if src_path is not None
               else zipfile.ZipFile(io.BytesIO(src_bytes), "r"))

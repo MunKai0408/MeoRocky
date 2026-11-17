@@ -1,6 +1,6 @@
 // verify_analysis_reselect.mjs — Harness PHẦN (C): nút "Chọn lại file"
 // ở mục "File gần đây" (Trang chủ). Chạy trên code hiện tại (chưa đẩy).
-// Chạy: node verify_analysis_reselect.mjs (từ /home/hatch/workspace/pb3_web/exp)
+// Chạy: node verify_analysis_reselect.mjs (từ thư mục exp/ của repo)
 //   ONLY=1,2,3,4,5 — chỉ chạy section đó (để mỗi lượt vừa giới hạn phiên).
 // Kết quả: analysis_reselect_results.md + .json (ghi đè phần đã chạy)
 //   + out/reselect/*.png (ảnh UI 390px)
@@ -9,7 +9,7 @@
 //  1. Tĩnh/thuần: hàm chọn lại tồn tại + định tuyến đúng tab; renderRecent
 //     có nút "Chọn lại file" trên MỌI dòng (còn trong phiên: kèm "Tải lại";
 //     hết phiên: kèm ghi chú "hết phiên — chọn lại file từ máy", KHÔNG có
-//     "Tải lại"); sw.js CACHE_VERSION v18; files.json=93 / tests.json=164.
+//     "Tải lại"); sw.js CACHE_VERSION v20; files.json=94 / tests.json=165.
 //  2. UI 390px — CẢ 5 game thật, CÒN TRONG PHIÊN: mở file ở khung chính
 //     rồi bấm "Chọn lại file" trên dòng đó -> mở lại ngay (không mở hộp
 //     chọn file), đúng tab Danh sách, state.file vẫn là file đó.
@@ -33,8 +33,9 @@ import path from "node:path";
 import http from "node:http";
 import { execSync, spawnSync } from "node:child_process";
 
-const SITE = "/home/hatch/workspace/pb3_web/site";
-const EXP = "/home/hatch/workspace/pb3_web/exp";
+const ROOT = decodeURIComponent(new URL("..", import.meta.url).pathname).replace(/\/$/, "");
+const SITE = ROOT;
+const EXP = ROOT + "/exp";
 const OUT = EXP + "/out/reselect";
 const REAL = "/home/hatch/workspace/real_ipa";
 const EXTRACT_OUT = EXP + "/out/extract_5games";
@@ -172,11 +173,11 @@ if (want(1)) {
     if (c.includes("v17-20261116") || c.includes("v17 ")) noV17.push(f);
   }
   rec("static_counts_and_cache",
-    filesJson.files.length === 93 && testsJson.files.length === 164 &&
-    swJs.includes('CACHE_VERSION = "v19-20261116"') && !swJs.includes("v17-20261116") &&
+    filesJson.files.length === 94 && testsJson.files.length === 165 &&
+    swJs.includes('CACHE_VERSION = "v20-20261117"') && !swJs.includes("v19-20261116") &&
     noV17.length === 0,
-    "files.json=" + filesJson.files.length + " (ky vong 93) · tests.json=" + testsJson.files.length +
-    " (ky vong 164) · sw.js v19-20261116: " + swJs.includes('CACHE_VERSION = "v19-20261116"') +
+    "files.json=" + filesJson.files.length + " (ky vong 94) · tests.json=" + testsJson.files.length +
+    " (ky vong 165) · sw.js v20-20261117: " + swJs.includes('CACHE_VERSION = "v20-20261117"') +
     " · file exp con sot v17: " + (noV17.join(",") || "khong"), performance.now() - t);
   t = performance.now();
   const r = sh("node --check " + SITE + "/app.js && node --check " + SITE + "/worker.js && node --check " + SITE + "/worker-pool.js", EXP);

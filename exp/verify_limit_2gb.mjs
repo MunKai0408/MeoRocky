@@ -1,15 +1,16 @@
 // verify_limit_2gb.mjs — Kiểm chứng giới hạn file đầu vào 2GB của bản web.
-// Chạy: node verify_limit_2gb.mjs (từ /home/hatch/workspace/pb3_web/exp)
+// Chạy: node verify_limit_2gb.mjs (từ thư mục exp/ của repo)
 // Kết quả: limit_2gb_results.md + limit_2gb_results.json
 // Cách kiểm biên: KHÔNG tạo file 2GB thật. Trong Pyodide, monkeypatch
 // os.path.getsize để _check_size (hàm thật trong site/pb3/bridge.py) nhận
 // kích thước giả lập; ngoài ra kiểm bằng file sparse thật trên host
 // (truncate, ~0 byte đĩa) qua python3 hệ thống — xem limit_2gb_results.md.
-import { loadPyodide } from "../site/pyodide/pyodide.mjs";
+import { loadPyodide } from "../pyodide/pyodide.mjs";
 import fs from "node:fs";
 
-const SITE = "/home/hatch/workspace/pb3_web/site";
-const EXP = "/home/hatch/workspace/pb3_web/exp";
+const ROOT = decodeURIComponent(new URL("..", import.meta.url).pathname).replace(/\/$/, "");
+const SITE = ROOT;
+const EXP = ROOT + "/exp";
 const sec = (ms) => Math.round(ms / 100) / 10;
 const results = {};
 let failures = 0;
@@ -42,7 +43,7 @@ rec("no_http_fetch_during_load", httpFetchCount === 0, `http fetch trong lúc lo
     pyodide.FS.mkdirTree(target.slice(0, target.lastIndexOf("/")));
     pyodide.FS.writeFile(target, new Uint8Array(buf));
   }
-  rec("write_site_files", man.files.length === 93, `${man.files.length} file pb3/ ghi vào /pb3web`, performance.now() - t0); // 93 = 92 + 1 (phần D thêm sdk/font_list.py, 2026-11-17)
+  rec("write_site_files", man.files.length === 94, `${man.files.length} file pb3/ ghi vào /pb3web`, performance.now() - t0); // 94 = 93 + 1 (P0-1 thêm sdk/rebuild.py, 2026-11-17)
 }
 
 pyodide.runPython("import sys; sys.path.insert(0, '/pb3web')\nimport bridge");

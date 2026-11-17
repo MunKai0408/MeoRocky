@@ -5,12 +5,12 @@
 // không có pthreads). (repo MunKai0408/MeoRocky, nhánh main; KHÔNG đẩy
 // lên GitHub.)
 //
-// Chạy: node verify_analysis_c9.mjs (từ /home/hatch/workspace/pb3_web/exp)
+// Chạy: node verify_analysis_c9.mjs (từ thư mục exp/ của repo)
 // Kết quả: analysis_c9_results.json (+ analysis_c9_results.md báo cáo tay).
 //
 //  A. Tĩnh: node --check (app.js, sw.js, worker-pool.js) +
 //     check_analysis_c9_static.py (N cấu hình được, chuỗi cũ đã hết,
-//     files.json=93 / tests.json=163, CACHE_VERSION v15).
+//     files.json=94 / tests.json=165, CACHE_VERSION v20).
 //  B. Unit WorkerPool thật (site/worker-pool.js) với Worker GIẢ trong Node:
 //     B1 size 1 -> đúng 1 Worker, 3 job chậm chạy TUẦN TỰ trên slot 0;
 //     B2 size 2 -> đúng 2 Worker, 2 job chậm chạy CHỒNG NHAU (song song);
@@ -43,9 +43,10 @@ import vm from "node:vm";
 import zlib from "node:zlib";
 import { execFileSync, spawnSync } from "node:child_process";
 
-const SITE = "/home/hatch/workspace/pb3_web/site";
-const EXP = "/home/hatch/workspace/pb3_web/exp";
-const GAME1 = "/home/hatch/workspace/pb3_fix/pb3/tests/fixtures/extract/game1.zip";
+const ROOT = decodeURIComponent(new URL("..", import.meta.url).pathname).replace(/\/$/, "");
+const SITE = ROOT;
+const EXP = ROOT + "/exp";
+const GAME1 = SITE + "/pb3/tests/fixtures/extract/game1.zip";
 const BIG = EXP + "/fixtures/bigtest.zip";
 const sec = (ms) => Math.round(ms / 100) / 10;
 const results = {};
@@ -79,8 +80,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     if (j.fails && j.fails.length) { ok = false; detail = j.fails.join(" | "); }
     else detail = "check_analysis_c9_static.py xanh: N cấu hình được 1–2 " +
       "(mặc định 2, tự động 1 khi deviceMemory ≤ 4, localStorage " +
-      "pb3_pool_size, pool tôn trọng N, chuỗi cũ đã hết) + files.json=93 / " +
-      "tests.json=164 + CACHE_VERSION v19-20261116 + tiếng Việt đủ dấu";
+      "pb3_pool_size, pool tôn trọng N, chuỗi cũ đã hết) + files.json=94 / " +
+      "tests.json=165 + CACHE_VERSION v20-20261117 + tiếng Việt đủ dấu";
   } catch (e) { ok = false; detail = "không đọc được JSON: " + (r.stdout || "") + (r.stderr || ""); }
   rec("static_c9_checks", ok, detail, performance.now() - t0);
 }

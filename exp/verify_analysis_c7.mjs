@@ -3,14 +3,14 @@
 // script Python áp patch — để user mang sang iSH/desktop áp vào file gốc.
 // (repo MunKai0408/MeoRocky, nhánh main; KHÔNG đẩy lên GitHub.)
 //
-// Chạy: node verify_analysis_c7.mjs (từ /home/hatch/workspace/pb3_web/exp)
+// Chạy: node verify_analysis_c7.mjs (từ thư mục exp/ của repo)
 // Kết quả: analysis_c7_results.json (bản này) + analysis_c7_results.md (báo cáo tay).
 //
 //  A. Tĩnh: node --check; py_compile; check_analysis_c7_static.py
 //     (patch_pack.py stdlib-only + Python 3.9, không chuỗi cấm iSH-only,
-//     manifest files.json=90 / tests.json=159, sw.js precache +
-//     CACHE_VERSION v12, bridge có op patch_pack, UI đủ 2 nút).
-//  B. Unit test Python: tests.test_patch_pack (19) + tests.test_plan (13).
+//     manifest files.json=94 / tests.json=165, sw.js precache +
+//     CACHE_VERSION v20, bridge có op patch_pack, UI đủ 2 nút).
+//  B. Unit test Python: tests.test_patch_pack (23) + tests.test_plan (19).
 //  C. Node Pyodide + bridge thật (fixture item8_fixture.zip: bundle v7 LZ4,
 //     3 TextAsset JSON en/menu/dialog):
 //     C1 patch_pack(plan) -> zip 3 file, manifest đúng schema tương thích
@@ -36,8 +36,9 @@ import zlib from "node:zlib";
 import { createHash } from "node:crypto";
 import { execSync, execFileSync, spawnSync } from "node:child_process";
 
-const SITE = "/home/hatch/workspace/pb3_web/site";
-const EXP = "/home/hatch/workspace/pb3_web/exp";
+const ROOT = decodeURIComponent(new URL("..", import.meta.url).pathname).replace(/\/$/, "");
+const SITE = ROOT;
+const EXP = ROOT + "/exp";
 const FX = EXP + "/fixtures/item8_fixture.zip";
 const BUNDLE = "Payload/9Kings.app/Data/Raw/aa/iOS/localization-locales_assets_all.bundle";
 const CAB = "CAB-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -47,7 +48,7 @@ const VI = {
   start: "Bắt đầu chơi", options: "Tùy chọn", exit: "Thoát game",
   greeting: "Chào mừng, anh hùng!", farewell: "Tạm biệt!",
 };
-const VENV_PY = "/home/hatch/workspace/_ci_sim/venv/bin/python";
+const VENV_PY = "python3";
 const sec = (ms) => Math.round(ms / 100) / 10;
 const results = {};
 let failures = 0;
@@ -88,15 +89,15 @@ const sha256 = (buf) => createHash("sha256").update(buf).digest("hex");
     const j = JSON.parse(r.stdout || "{}");
     if (j.fails && j.fails.length) { ok = false; detail = j.fails.join(" | "); }
     else detail = "patch_pack.py stdlib-only + Python 3.9 + không chuỗi cấm " +
-      "iSH-only + script ap parse được (stdlib + core/sdk) + files.json=90 " +
-      "+ tests.json=159 + sw.js precache sdk/patch_pack.py + CACHE_VERSION " +
-      "v12-20261116 + bridge patch_pack + UI đủ 2 nút xuất pack";
+      "iSH-only + script ap parse được (stdlib + core/sdk) + files.json=94 " +
+      "+ tests.json=165 + sw.js precache sdk/patch_pack.py + CACHE_VERSION " +
+      "v20-20261117 + bridge patch_pack + UI đủ 2 nút xuất pack";
   } catch (e) { ok = false; detail = "không đọc được JSON: " + (r.stdout || "") + (r.stderr || ""); }
   rec("static_c7_checks", ok, detail, performance.now() - t0);
 }
 
 // ================= B. Unit test Python =================
-{ // B1. tests.test_patch_pack (19) + tests.test_plan (13, hồi quy đường chung)
+{ // B1. tests.test_patch_pack (23) + tests.test_plan (19, hồi quy đường chung)
   const t0 = performance.now();
   const r = spawnSync(VENV_PY,
     ["-m", "unittest", "tests.test_patch_pack", "tests.test_plan"],
@@ -112,7 +113,7 @@ const sha256 = (buf) => createHash("sha256").update(buf).digest("hex");
 }
 
 // ================= C. Node Pyodide + bridge thật =================
-const { loadPyodide } = await import("../site/pyodide/pyodide.mjs");
+const { loadPyodide } = await import("../pyodide/pyodide.mjs");
 async function bootPyodide() {
   const pyodide = await loadPyodide({ indexURL: SITE + "/pyodide/" });
   await pyodide.loadPackage("lz4");

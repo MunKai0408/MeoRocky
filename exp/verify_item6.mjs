@@ -2,7 +2,7 @@
 // (offline từ lần thăm thứ 2) + lazy boot (chỉ boot khi user chọn file),
 // shell tĩnh hiện ngay (repo MunKai0408/MeoRocky, KHÔNG đẩy lên GitHub).
 //
-// Chạy: node verify_item6.mjs (từ /home/hatch/workspace/pb3_web/exp)
+// Chạy: node verify_item6.mjs (từ thư mục exp/ của repo)
 // Kết quả: item6_results.md + item6_results.json
 //
 //  A. Tĩnh + Node vm: node --check; shell tĩnh đo thật (raw + gzip);
@@ -14,7 +14,7 @@
 //  B. Trình duyệt THẬT (Playwright chromium headless shell, 390px, serve
 //     site qua HTTP local): lần thăm 1 chưa chọn file thì không tải
 //     Pyodide/worker.js/pb3 (đo qua request thật + __PB3_BOOT_STATE);
-//     SW đăng ký được, precache đủ 127 mục (C5 thêm fzstd/index.mjs); chọn file -> boot tới
+//     SW đăng ký được, precache đủ 119 mục (P0-1: bỏ 13 wheel chết, thêm sdk/rebuild.py); chọn file -> boot tới
 //     "Sẵn sàng — 20 plugin" + list được file mẫu; lần thăm 2 OFFLINE
 //     (context.setOffline(true)) vẫn boot tới Sẵn sàng + list được;
 //     SW không phục vụ request dịch (fetch khác origin bị từ chối khi
@@ -28,9 +28,10 @@ import vm from "node:vm";
 import zlib from "node:zlib";
 import { execSync, execFileSync } from "node:child_process";
 
-const SITE = "/home/hatch/workspace/pb3_web/site";
-const EXP = "/home/hatch/workspace/pb3_web/exp";
-const PB3 = "/home/hatch/workspace/pb3_fix/pb3";
+const ROOT = decodeURIComponent(new URL("..", import.meta.url).pathname).replace(/\/$/, "");
+const SITE = ROOT;
+const EXP = ROOT + "/exp";
+const PB3 = SITE + "/pb3";
 const FLAT = EXP + "/fixtures/item5_flat.zip";
 const sec = (ms) => Math.round(ms / 100) / 10;
 const results = {};
@@ -124,11 +125,19 @@ for (const f of SHELL_FILES) {
     "pyodide/lz4-4.4.5-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
     "pb3/files.json", "pb3/bridge.py", "index.html", "app.js", "worker.js"];
   const coreMissing = core.filter((f) => !listed.includes(f));
+  // Breakdown dung lượng đo động từ đĩa (không ghi cứng: số ghi cứng cũ
+  // "Pyodide ~16,5MB + PB3 ~1,4MB" đã sai so với cây hiện tại).
+  const grpBytes = (p) => listed.filter((f) => f !== "./" && f.startsWith(p))
+    .reduce((s, f) => s + fs.statSync(SITE + "/" + f).size, 0);
+  const rootBytes = listed.filter((f) => f !== "./" && !f.includes("/"))
+    .reduce((s, f) => s + fs.statSync(SITE + "/" + f).size, 0);
+  const pyBytes = grpBytes("pyodide/"), pbBytes = grpBytes("pb3/");
+  const otherBytes = totalBytes - pyBytes - pbBytes - rootBytes;
   rec("sw_precache_list_matches_disk", missing.length === 0 && extra.length === 0 &&
     notOnDisk.length === 0 && coreMissing.length === 0,
     "precache " + listed.length + " mục (kỳ vọng " + expected.length + ", gồm './' trỏ scope root), " +
-    "tổng " + totalBytes + "B (" + (totalBytes / 1048576).toFixed(1) + "MiB: Pyodide ~16,5MB + PB3 ~1,4MB + " +
-    "shell ~0,24MB + font 0,18MB); thiếu so với đĩa: " + (missing.join(", ") || "không có") +
+    "tổng " + totalBytes + "B (" + (totalBytes / 1048576).toFixed(1) + "MiB: Pyodide " + pyBytes + "B + PB3 " + pbBytes + "B + " +
+    "shell/gốc " + rootBytes + "B + khác " + otherBytes + "B); thiếu so với đĩa: " + (missing.join(", ") || "không có") +
     "; thừa: " + (extra.join(", ") || "không có") + "; không có trên đĩa: " +
     (notOnDisk.join(", ") || "không có") + "; file lõi thiếu: " + (coreMissing.join(", ") || "không có"),
     performance.now() - t0);

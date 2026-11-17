@@ -144,6 +144,23 @@ class TestBuildPackFromPlan(unittest.TestCase):
         with self.assertRaises(ValueError):
             pp.build_patch_pack(_bundle_bytes(), "test.unity3d", "zip", {})
 
+    def test_empty_value_change_builds_pack(self):
+        # Hoi quy (sua-loi, cung loi plan.py P0-1 §4a): change co
+        # before="" truoc day bi E_CONFIG_INVALID o apply_patch (gia tri
+        # tran "" co 0 occurrence). Nay thay theo KEY nen pack duoc va
+        # after_sha khop dung plan (khong can tinh lai).
+        scripts = {"Version": "", "CreatedAt": "2020"}
+        bundle = _bundle_bytes(scripts=scripts)
+        plan = pl.build_plan(bundle, {"Version": "1.2.3",
+                                      "CreatedAt": "2021"},
+                             source_bundle="test.unity3d", entry=CAB)
+        man = pp.build_patch_pack(bundle, "test.unity3d", "plan", plan)
+        self.assertEqual(len(man["entries"]), 1)
+        self.assertEqual(man["entries"][0]["after_sha"],
+                         plan["entries"][0]["after_sha"])
+        warnings = " ".join(man["entries"][0].get("warnings") or [])
+        self.assertNotIn("after_sha tinh lai", warnings)
+
 
 class TestBuildPackFromMod(unittest.TestCase):
     def test_mod_edits_become_entries(self):
@@ -295,6 +312,59 @@ class TestPackZipAndScript(unittest.TestCase):
             self.assertEqual((out_dir / "backup-goc" / "test.unity3d")
                              .read_bytes(), bundle)
             self.assertEqual(Path(td, "test.unity3d").read_bytes(), bundle)
+
+    def test_script_applies_empty_value_change(self):
+        # Hoi quy dau-cuoi: pack tu plan co before="" phai ap duoc bang
+        # script (thay theo KEY ca hai ben), file goc khong doi.
+        scripts = {"Version": "", "CreatedAt": "2020"}
+        bundle = _bundle_bytes(scripts=scripts)
+        plan = pl.build_plan(bundle, {"Version": "1.2.3",
+                                      "CreatedAt": "2021"},
+                             source_bundle="test.unity3d", entry=CAB)
+        with tempfile.TemporaryDirectory() as td:
+            self._stage_pack(td, bundle, payload=plan)
+            r = self._run_script(td, "test.unity3d", "--allow-write")
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+            patched = Path(td, "test.pb3-patched") / "test.unity3d"
+            script = _script_of(patched.read_bytes())["en.json"]
+            self.assertEqual(json.loads(script),
+                             {"Version": "1.2.3", "CreatedAt": "2021"})
+            self.assertEqual(Path(td, "test.unity3d").read_bytes(), bundle)
+
+    def test_script_mod_raw_substring_fallback(self):
+        # Edit kieu Mod tren script khong phai JSON: khong mo phong theo
+        # key duoc -> roi ve thay chuoi tran nhu cu, ca hai ben.
+        sf = build_serialized_file(
+            version=17,
+            objects=[(1001, 0, text_asset_data("notes.txt",
+                                               "alpha beta alpha"))],
+            types=[(49, None)])
+        bundle = build_bundle(version=7, entries=[(CAB, 4, sf)],
+                              compression="lz4")
+        edits = [{"object": 1001, "old": "beta", "new": "BETA",
+                  "entry": CAB, "mode": "REBUILD_SECTION"}]
+        with tempfile.TemporaryDirectory() as td:
+            self._stage_pack(td, bundle, kind="mod", payload=edits)
+            r = self._run_script(td, "test.unity3d", "--allow-write")
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+            patched = Path(td, "test.pb3-patched") / "test.unity3d"
+            script = _script_of(patched.read_bytes())["notes.txt"]
+            self.assertEqual(script, "alpha BETA alpha")
+            self.assertEqual(Path(td, "test.unity3d").read_bytes(), bundle)
+
+    def test_script_out_dir_overwriting_target_refuses(self):
+        # Hoi quy chot dest != source (sua-loi): --out-dir trung thu muc
+        # chua file goc + ten don vi trung ten file goc thi truoc day
+        # script ghi de file goc (va van in "KHONG bi thay doi").
+        bundle = _bundle_bytes()
+        with tempfile.TemporaryDirectory() as td:
+            self._stage_pack(td, bundle)
+            r = self._run_script(td, "test.unity3d", "--allow-write",
+                                 "--out-dir", td)
+            self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
+            self.assertIn("ghi de file goc", r.stderr)
+            self.assertEqual(Path(td, "test.unity3d").read_bytes(), bundle)
+            self.assertFalse(Path(td, "backup-goc").exists())
 
     def test_script_refuses_wrong_before_sha(self):
         bundle = _bundle_bytes()

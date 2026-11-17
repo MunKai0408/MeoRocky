@@ -1,7 +1,7 @@
 // verify_item4_pool.mjs — Kiểm chứng MỤC 4: pool 2 worker + checkpoint
 // từng game vào IndexedDB + watchdog hợp tác (repo MunKai0408/MeoRocky).
 //
-// Chạy: node verify_item4_pool.mjs (từ /home/hatch/workspace/pb3_web/exp)
+// Chạy: node verify_item4_pool.mjs (từ thư mục exp/ của repo)
 // Kết quả: item4_results.md + item4_results.json
 //
 //  A. Unit WorkerPool thật (site/worker-pool.js) với Worker GIẢ trong Node
@@ -25,11 +25,12 @@ import path from "node:path";
 import vm from "node:vm";
 import { execFileSync, execSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { loadPyodide } from "../site/pyodide/pyodide.mjs";
+import { loadPyodide } from "../pyodide/pyodide.mjs";
 
-const SITE = "/home/hatch/workspace/pb3_web/site";
-const EXP = "/home/hatch/workspace/pb3_web/exp";
-const PB3 = "/home/hatch/workspace/pb3_fix/pb3";
+const ROOT = decodeURIComponent(new URL("..", import.meta.url).pathname).replace(/\/$/, "");
+const SITE = ROOT;
+const EXP = ROOT + "/exp";
+const PB3 = SITE + "/pb3";
 const GAME1 = PB3 + "/tests/fixtures/extract/game1.zip";
 const AMBIG = PB3 + "/tests/fixtures/extract/ambig.zip";
 const BIG = EXP + "/fixtures/bigtest.zip";

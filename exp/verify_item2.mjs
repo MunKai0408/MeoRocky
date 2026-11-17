@@ -1,7 +1,7 @@
 // verify_item2.mjs — Kiểm chứng Mục 2 (proxy dịch Cloudflare Worker +
 // trang Kiểm tra dịch + nối app.js/gt.js) và Mục 9 (ghi chú UI, tĩnh).
 //
-// Chạy: node verify_item2.mjs (từ /home/hatch/workspace/pb3_web/exp)
+// Chạy: node verify_item2.mjs (từ thư mục exp/ của repo)
 // Kết quả: item2_results.md + item2_results.json
 //
 // KHÔNG cần mạng thật, KHÔNG cần tài khoản Cloudflare hay API key Google:
@@ -14,7 +14,7 @@
 //     nếu 1 check tĩnh fail thì chạy lại sau khi merge head mới).
 import fs from "node:fs";
 import http from "node:http";
-import worker from "../site/cloudflare/worker.js";
+import worker from "../cloudflare/worker.js";
 import {
   googleTranslateOne,
   myMemoryTranslateOne,
@@ -22,10 +22,11 @@ import {
   setMyMemoryEndpoint,
   setTranslateProxyUrl,
   translateOneWithFallbacks,
-} from "../site/gt.js";
+} from "../gt.js";
 
-const SITE = "/home/hatch/workspace/pb3_web/site";
-const EXP = "/home/hatch/workspace/pb3_web/exp";
+const ROOT = decodeURIComponent(new URL("..", import.meta.url).pathname).replace(/\/$/, "");
+const SITE = ROOT;
+const EXP = ROOT + "/exp";
 const results = {};
 let failures = 0;
 function rec(name, ok, detail) {

@@ -6,16 +6,17 @@
 // 5) test.yml có 2 job unit + assets, STRICT_FIXTURES=1, gh release download fixtures-v1.
 // 6) Probe Pyodide: boot Pyodide vendor local, micropip cài pytest, ghi cây pb3+tests
 //    vào FS ảo rồi chạy pytest --tier smoke — kiểm chứng test.html/pyodide-node có khả thi không.
-// Chạy: node verify_phase1_ci.mjs (từ /home/hatch/workspace/pb3_web/exp)
+// Chạy: node verify_phase1_ci.mjs (từ thư mục exp/ của repo)
 // Kết quả: phase1_ci_harness.json (không ghi đè phase1_ci_results.md — báo cáo viết tay).
-import { loadPyodide } from "../site/pyodide/pyodide.mjs";
+import { loadPyodide } from "../pyodide/pyodide.mjs";
 import fs from "node:fs";
 import { execSync } from "node:child_process";
 
-const SITE = "/home/hatch/workspace/pb3_web/site";
-const WEB = "/home/hatch/workspace/pb3_web";
-const EXP = "/home/hatch/workspace/pb3_web/exp";
-const VENV_PY = "/home/hatch/workspace/_ci_sim/venv/bin/python";
+const ROOT = decodeURIComponent(new URL("..", import.meta.url).pathname).replace(/\/$/, "");
+const SITE = ROOT;
+const WEB = ROOT;
+const EXP = ROOT + "/exp";
+const VENV_PY = "python3";
 const sec = (ms) => Math.round(ms / 100) / 10;
 const results = {};
 let failures = 0;
@@ -61,7 +62,7 @@ function sh(cmd, opts = {}) {
 {
   const t0 = performance.now();
   try {
-    const out = sh(`cd ${SITE}/pb3 && touch tests/corpus/json_text.json && TMPDIR=/home/hatch/workspace/_ci_sim/tmp ${VENV_PY} -m pytest tests/test_support_matrix.py::TestGenerate::test_effective_maturity_uses_corpus_not_declared -q -p no:cacheprovider 2>&1 | tail -2`);
+    const out = sh(`cd ${SITE}/pb3 && touch tests/corpus/json_text.json && ${VENV_PY} -m pytest tests/test_support_matrix.py::TestGenerate::test_effective_maturity_uses_corpus_not_declared -q -p no:cacheprovider 2>&1 | tail -2`);
     const ok = /1 passed/.test(out);
     // Khôi phục mtime gốc 2026-11-15 để cây sạch.
     sh(`cd ${SITE}/pb3 && touch -d "2026-11-15 18:07:46 UTC" tests/corpus/json_text.json`);
@@ -112,7 +113,7 @@ function sh(cmd, opts = {}) {
   };
   const bad = Object.entries(checks).filter(([, v]) => !v).map(([k]) => k);
   const man = JSON.parse(fs.readFileSync(SITE + "/pb3/tests.json", "utf8"));
-  rec("test_html", bad.length === 0 && man.files.length === 164, // 164 = 163 + 1 (phần D thêm tests/test_font_unify.py, 2026-11-17)
+  rec("test_html", bad.length === 0 && man.files.length === 165, // 165 = 164 + 1 (P0-1 thêm tests/test_rebuild.py, 2026-11-17)
     Object.entries(checks).map(([k, v]) => `${k}=${v}`).join(" ") + ` | tests.json entries=${man.files.length}`,
     performance.now() - t0);
 }
@@ -220,7 +221,7 @@ globalThis.fetch = async (input, init) => {
     const boot = JSON.parse(b.boot());
     // ZIP fixture game1.zip đổi tên thành game1.ipa — bridge phải sniff nội
     // dung (ZIP) chứ không dựa vào đuôi .ipa.
-    const zipBytes = fs.readFileSync("/home/hatch/workspace/pb3_fix/pb3/tests/fixtures/extract/game1.zip");
+    const zipBytes = fs.readFileSync(SITE + "/pb3/tests/fixtures/extract/game1.zip");
     pyodide.FS.mkdirTree("/tmp/input");
     pyodide.FS.writeFile("/tmp/input/game1.ipa", new Uint8Array(zipBytes));
     const listed = JSON.parse(b.list_entries("/tmp/input/game1.ipa"));

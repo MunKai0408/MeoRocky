@@ -1,6 +1,6 @@
 // verify_analysis_translate_full.mjs — Harness muc A (tach ngon ngu per-string
 // + sua tab Dich + dich full khong sot), chay tren code hien tai (chua day).
-// Chay: node verify_analysis_translate_full.mjs (tu /home/hatch/workspace/pb3_web/exp)
+// Chay: node verify_analysis_translate_full.mjs (tu thu muc exp/ cua repo)
 //   ONLY=1,2,3,4,5,6 — chi chay section do (de moi luot vua gioi han phien).
 // Ket qua: analysis_translate_full_results.md + .json (ghi de phan da chay).
 //   + out/translate_full/*.png (anh UI 390px)
@@ -29,8 +29,9 @@ import path from "node:path";
 import http from "node:http";
 import { execSync, spawnSync } from "node:child_process";
 
-const SITE = "/home/hatch/workspace/pb3_web/site";
-const EXP = "/home/hatch/workspace/pb3_web/exp";
+const ROOT = decodeURIComponent(new URL("..", import.meta.url).pathname).replace(/\/$/, "");
+const SITE = ROOT;
+const EXP = ROOT + "/exp";
 const OUT = EXP + "/out/translate_full";
 const EXTRACT_OUT = EXP + "/out/extract_5games";
 const FIXTURE_IN = "/home/hatch/workspace/user/files/resources.monobehaviour.json";
@@ -65,7 +66,7 @@ if (want(1)) {
     (m ? m[1] + " test, " + m[2] : "khong doc duoc ket qua") + " | " + (r.stdout || "").trim().split("\n").slice(-3).join(" / "),
     performance.now() - t);
   t = performance.now();
-  const v = sh("python3 exp/validate_langdetect.py 2>&1", "/home/hatch/workspace/pb3_web");
+  const v = sh("python3 exp/validate_langdetect.py 2>&1", ROOT);
   const vm = (v.stdout || "").match(/Passpartout 15-ngon-ngu: (\d+)\/(\d+) dung = ([\d.]+)%/);
   const vm2 = (v.stdout || "").match(/9 Kings I2Languages: (\d+)\/(\d+) dung = ([\d.]+)%/);
   rec("py_langdetect_accuracy_real_games", !!vm && !!vm2,
@@ -76,7 +77,7 @@ if (want(1)) {
 
 // ================= 2. Bridge Pyodide (mock Google) =================
 if (want(2)) {
-  const { loadPyodide } = await import("../site/pyodide/pyodide.mjs");
+  const { loadPyodide } = await import("../pyodide/pyodide.mjs");
   const SAMPLE = {
     "Aristocrat_Catherine.s1": "Wie Extraordinär!",
     "Aristocrat_Catherine.s1#10": "Extraordinário!",
@@ -163,7 +164,7 @@ if (want(2)) {
 // ================= 3. Trich xuat 5 game that =================
 if (want(3)) {
   let t = performance.now();
-  const r = sh("python3 exp/extract_5games.py 2>&1 | tail -n 8", "/home/hatch/workspace/pb3_web");
+  const r = sh("python3 exp/extract_5games.py 2>&1 | tail -n 8", ROOT);
   const sum = JSON.parse(fs.readFileSync(EXTRACT_OUT + "/summary.json", "utf8"));
   const g = sum.games;
   const allOk = ["9kings", "data", "ek2", "pb3", "passpartout"].every((k) => g[k] && g[k].ok === true);
@@ -200,7 +201,7 @@ if (want(3)) {
 
 // ================= 4. Fixture recheck Passpartout (15.868 key that) =================
 if (want(4)) {
-  const { loadPyodide } = await import("../site/pyodide/pyodide.mjs");
+  const { loadPyodide } = await import("../pyodide/pyodide.mjs");
   const input = JSON.parse(fs.readFileSync(FIXTURE_IN, "utf8"));
   const badOut = JSON.parse(fs.readFileSync(FIXTURE_BAD, "utf8"));
   // Dem DONG tu file dau vao (khong hard-code tong): moi key goc = 1 dong

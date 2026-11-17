@@ -23,7 +23,7 @@ import re
 import sys
 
 ROOT = os.path.join(os.path.dirname(__file__), "..")
-SITE = os.path.join(ROOT, "site")
+SITE = ROOT  # P0-1: code o goc repo, khong co thu muc site/ (giong Q2)
 PB3 = os.path.join(SITE, "pb3")
 FAILS = []
 
@@ -134,14 +134,14 @@ for bad in ("new SharedArrayBuffer", "Cross-Origin-Opener-Policy",
 
 # ------------------------------------------------------------------ manifest
 files_json = json.load(open(os.path.join(PB3, "files.json"), encoding="utf-8"))
-chk(len(files_json["files"]) == 93,
-    "files.json %d file != 93 (phan D them sdk/font_list.py)"
+chk(len(files_json["files"]) == 94,
+    "files.json %d file != 94 (P0-1 them sdk/rebuild.py)"
     % len(files_json["files"]))
 tests_json = json.load(open(os.path.join(PB3, "tests.json"), encoding="utf-8"))
 chk("pb3/tests/test_tmp_fallback.py" in tests_json["files"],
     "tests.json thieu pb3/tests/test_tmp_fallback.py")
-chk(len(tests_json["files"]) == 164,
-    "tests.json %d file != 164" % len(tests_json["files"]))
+chk(len(tests_json["files"]) == 165,
+    "tests.json %d file != 165" % len(tests_json["files"]))
 
 print(json.dumps({"fails": FAILS}, ensure_ascii=False, indent=1))
 sys.exit(1 if FAILS else 0)

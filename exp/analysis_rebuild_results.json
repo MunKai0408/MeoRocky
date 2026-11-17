@@ -1,0 +1,71 @@
+{
+  "total": 13,
+  "failures": [],
+  "results": {
+    "static_node_py_check": {
+      "ok": true,
+      "detail": "node --check OK: app.js, sw.js, exp/verify_analysis_rebuild.mjs; python3 -m py_compile OK: bridge.py, sdk/rebuild.py, sdk/unity.py, sdk/plan.py, tests/test_rebuild.py",
+      "seconds": 0.5
+    },
+    "static_rebuild_checks": {
+      "ok": true,
+      "detail": "rebuild.py stdlib-only + Python 3.9 + không UnityPy/lz4 + không expose rebuild_zip + chốt dest!=source + files.json=94 / tests.json=165 + sw.js precache 119 mục có sdk/rebuild.py, không wheel chết, CACHE_VERSION v20-20261117 + bridge rebuild_apply + plan.py progress_fn + unity.py streaming + khóa REBUILD_ALL + UI đủ id (E) + 2 chỗ innerHTML f.source đã esc + render (E) esc",
+      "seconds": 0.2
+    },
+    "python_unit_rebuild_plan_unity": {
+      "ok": true,
+      "detail": "unittest tests.test_rebuild + tests.test_plan + tests.test_unity: Ran 157 tests, OK (exit=0)",
+      "seconds": 7.3
+    },
+    "C1_preview_scan_all": {
+      "ok": true,
+      "detail": "rebuild_apply preview (không provenance): ok=true, dry_run=true, units=1 (Payload/9Kings.app/Data/Raw/aa/iOS/localization-locales_assets_all.bundle::CAB-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:8), tổng changes=8 (kỳ vọng >= 8), refused=0, dest/zip_path=false (kỳ vọng không ghi), cảnh báo quét-tất-cả=true",
+      "seconds": 0.5
+    },
+    "C2_conflict_choices": {
+      "ok": true,
+      "detail": "mặc định: choice=kept, warning=false; chọn dropped: choice=dropped, warning=\"key 'hello': chon ban dropped nhung ban dich dich tu ban kept (gia tri goc khac nhau) — kiem tra lai ban dich cho key nay truoc khi ghi.\"; key lạ: ok=false, error=\"choice cho key la 'no_such_key' (khong co trong conflicts).\"",
+      "seconds": 0
+    },
+    "C3_apply_roundtrip_confirm_gate": {
+      "ok": true,
+      "detail": "confirm gate: ok=false, code=E_CONFIG_INVALID (kỳ vọng E_CONFIG_INVALID); apply: dest=/tmp/rebuild_out/localization-locales_assets_all.bundle, filename=localization-locales_assets_all.bundle; round-trip: en.hello=Xin chào, menu.start=Bắt đầu chơi, dialog.greeting=Chào mừng, anh hùng!; sha file gốc sau apply khớp trước=true; source_sha256 khớp=true; note có 'KHONG phai IPA'=true",
+      "seconds": 0.2
+    },
+    "C4_streaming_large_bundle": {
+      "ok": true,
+      "detail": "bundle tự sinh 68158149B (>= 64MiB) gồm 1 CAB TextAsset + 13 filler 5MiB; rebuild_apply apply: streaming=true, size_before=68158149, size_after=68158173, thời gian apply=2.5s, round-trip en.json khớp=true (RAM đỉnh đo ở hồi quy CPython, không đo trong Pyodide; RAM Safari = [CHƯA KIỂM CHỨNG])",
+      "seconds": 4.2
+    },
+    "C5_refusals_v9_encrypted": {
+      "ok": true,
+      "detail": "v9: ok=true, code=undefined, refused=[{\"unit\":\"CAB-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"code\":\"E_UNSUPPORTED_FORMAT\",\"message\":\"E_UNSUPPORTED_FORMAT: Bundle UnityFS v9 chỉ đọc — chưa hỗ trợ patch. (bundle UnityFS v9 chỉ đọc — chưa hỗ trợ patch (ghi lại bundle v9 chưa được hỗ trợ))\"}]; mã hóa: ok=true, code=undefined, refused=[{\"unit\":\"<quet tat ca>\",\"code\":\"E_ENCRYPTED\",\"message\":\"E_ENCRYPTED: Dữ liệu hoặc binary được mã hóa/bảo vệ. (bundle mã hóa (flag 0x240))\"}]; không sinh được fixture Zstd (thiếu gói zstandard) — Zstd->none+warning chỉ kiểm ở unit test test_rebuild. (gen stdout: \"zstd-skip: sinh fixture Zstd cần gói `zstandard` (pip install zstandard); chưa cài nên bỏ qua\")",
+      "seconds": 0.1
+    },
+    "browser_rebuild_preview_apply": {
+      "ok": true,
+      "detail": "nút Ghi tắt trước preview=true, bật sau preview=true; preview: \"Kết quả (E): XEM TRƯỚC (dry-run — CHƯA ghi file nào) · 8/8 key đã đổi · 1 đơn vị · 0 key không ép được · 0 key giữ nguyên · 0 đơn vị bị từ chốiCảnh báo: khong co provenance: quet tat ca don vi trong f\"; apply: \"Kết quả (E): ĐÃ GHI · 8/8 key đã đổi · 1 đơn vị · 0 key không ép được · 0 key giữ nguyên · 0 đơn vị bị từ chốiCảnh báo: khong co provenance: quet tat ca don vi trong file de tim key (cham hon va key t\"; download nhận được=true",
+      "seconds": 7.5
+    },
+    "browser_rebuild_reselect_mismatch": {
+      "ok": true,
+      "detail": "sau khi chọn lại file tên khác (ten-khac.zip) rồi preview: rebuild-file-info: \"File gốc đang chọn: ten-khac.zip (828 B). CẢNH BÁO: tên khác lúc trích xuất (item8_fixture.zip) — ép nhầm file sẽ bị từ chối ở bước kiểm tra, hoặc ép sai vị trí. Hãy chọn lại đúng file gốc.\"; confirm khác tên hiện=true ([\"Tên file gốc đang chọn (ten-khac.zip) khác tên lúc trích xuất (item8_fixture.zip). Tiếp tục ép vào file này? (Nên bấm Huỷ rồi chọn lại đúng file gốc.)\"])",
+      "seconds": 0.1
+    },
+    "browser_rebuild_over_400mb_confirm": {
+      "ok": true,
+      "detail": "dialogs khi preview file 401MB: [\"Tên file gốc đang chọn (lon-401mb.unity3d) khác tên lúc trích xuất (item8_fixture.zip). Tiếp tục ép vào file này? (Nên bấm Huỷ rồi chọn lại đúng file gốc.)\",\"File lớn: lon-401mb.unity3d (401 MB).\\nÉp lại đọc/ghi theo luồng (streaming) với bundle .unity3d độc lập lớn, nhưng RAM đỉnh ước tính ~802 MB (file + entry lớn nhất đang xử lý); trên iPhone file trên ~400MB vẫn có thể làm chết tab.\\nBấm OK để tiếp tục, hoặc Huỷ để dùng bản iSH cho file này.\"] (kỳ vọng có confirm nhắc 400MB/streaming/RAM)",
+      "seconds": 15.9
+    },
+    "browser_390_no_overflow_no_errors": {
+      "ok": true,
+      "detail": "scrollWidth=390 clientWidth=390; pageerror/console-error thật: không có",
+      "seconds": 0
+    },
+    "shell_size_after_rebuild": {
+      "ok": true,
+      "detail": "shell lần tải đầu sau P0-1: index.html raw=66689B gzip=18802B; kb-store.js raw=8192B gzip=3212B; worker-pool.js raw=14840B gzip=5227B; stream.js raw=18358B gzip=6141B; opfs.js raw=12753B gzip=4045B; app.js raw=280168B gzip=77217B; gt.js raw=34379B gzip=9599B | TỔNG raw=435379B (425.2KB), gzip=124243B (121.3KB). Ngưỡng ĐÃ chốt 102400B: raw CHƯA đạt, gzip CHƯA đạt — ĐÍNH CHÍNH: nhãn \"(gzip đạt)\" ở báo cáo (B)/(C)/(D) là SAI nếu hiểu là gzip ≤ ngưỡng khi số đo thật không đạt; số thật ở đây là căn cứ duy nhất. P0-1 thêm code UI (E) nên app.js tăng so với trước.",
+      "seconds": 0.1
+    }
+  }
+}
