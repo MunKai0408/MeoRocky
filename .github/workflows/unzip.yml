@@ -1,0 +1,105 @@
+# Giải nén ZIP (bản an toàn — port từ IPA-LOCALIZATION, viết lại).
+#
+# Khác bản gốc (bản gốc tự chạy khi push *.zip rồi commit + push thẳng
+# main — nguy hiểm: zip lạ có thể ghi đè workflow/.git rồi chạy với token):
+# - Chỉ chạy thủ công (workflow_dispatch) với đường dẫn zip do người gọi
+#   nhập; không tự chạy khi push.
+# - Giải nén vào thư mục staging riêng, kiểm tra từng entry: cấm thư mục
+#   .git, symlink, và mọi thứ dưới .github/ (không bao giờ ghi đè
+#   workflow); cấm đường dẫn zip/đích tuyệt đối hoặc chứa "..".
+# - Chỉ tạo branch + Pull Request, KHÔNG push thẳng main. Người review
+#   thấy đủ diff (thêm file đã giải nén, xóa zip gốc) rồi mới gộp.
+name: Giải nén ZIP (an toàn)
+
+on:
+  workflow_dispatch:
+    inputs:
+      zip_path:
+        description: "Đường dẫn file ZIP trong repo (vd: uploads/game.zip)"
+        required: true
+        type: string
+      target_dir:
+        description: "Thư mục đích trong repo (mặc định: unzipped/<tên-zip>)"
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  unzip:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Kiểm tra đầu vào
+        id: check
+        run: |
+          set -euo pipefail
+          zip="${{ inputs.zip_path }}"
+          case "$zip" in
+            /*|*..*|.github/*|.github) echo "::error::Đường dẫn zip không hợp lệ: $zip"; exit 1;;
+          esac
+          if [ ! -f "$zip" ]; then echo "::error::Không thấy file zip: $zip"; exit 1; fi
+          if [ "${zip##*.}" != "zip" ]; then echo "::error::Không phải file .zip: $zip"; exit 1; fi
+          name="$(basename "$zip" .zip)"
+          target="${{ inputs.target_dir }}"
+          if [ -z "$target" ]; then target="unzipped/$name"; fi
+          case "$target" in
+            /*|*..*|.github/*|.github) echo "::error::Thư mục đích không hợp lệ: $target"; exit 1;;
+          esac
+          if [ -e "$target" ]; then echo "::error::Thư mục đích đã tồn tại: $target"; exit 1; fi
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+          echo "target=$target" >> "$GITHUB_OUTPUT"
+          echo "zip=$zip" >> "$GITHUB_OUTPUT"
+
+      - name: Giải nén vào staging + kiểm tra an toàn
+        run: |
+          set -euo pipefail
+          zip="${{ steps.check.outputs.zip }}"
+          staging="$(mktemp -d)"
+          echo "STAGING=$staging" >> "$GITHUB_ENV"
+          unzip -q "$zip" -d "$staging"
+          # unzip đã chặn đường dẫn tuyệt đối/".."; kiểm tra lại cho chắc:
+          # cấm .git, symlink, và .github trong zip.
+          if find "$staging" -name .git -print -quit | grep -q .; then
+            echo "::error::ZIP chứa thư mục .git"; exit 1
+          fi
+          if find "$staging" -type l -print -quit | grep -q .; then
+            echo "::error::ZIP chứa symlink"; exit 1
+          fi
+          if [ -e "$staging/.github" ]; then
+            echo "::error::ZIP chứa .github (không được ghi đè workflow)"; exit 1
+          fi
+          if [ "$(find "$staging" -mindepth 1 -print -quit | wc -l)" = "0" ]; then
+            echo "::error::ZIP rỗng"; exit 1
+          fi
+          # Một thư mục duy nhất ở gốc thì lấy thẳng nội dung trong đó.
+          if [ "$(ls "$staging" | wc -l)" = "1" ] && [ -d "$staging/$(ls "$staging")" ]; then
+            echo "SRC=$staging/$(ls "$staging")" >> "$GITHUB_ENV"
+          else
+            echo "SRC=$staging" >> "$GITHUB_ENV"
+          fi
+
+      - name: Tạo branch + PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          target="${{ steps.check.outputs.target }}"
+          zip="${{ steps.check.outputs.zip }}"
+          name="${{ steps.check.outputs.name }}"
+          mkdir -p "$(dirname "$target")"
+          cp -a "$SRC/." "$target/"
+          chmod -R u+rwX "$target"
+          rm -f "$zip"
+          branch="unzip/$name-$GITHUB_RUN_ID"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$branch"
+          git add -A
+          git commit -m "Giải nén $zip -> $target"
+          git push -u origin "$branch"
+          gh pr create --title "Giải nén $zip" --body "Giải nén \`$zip\` vào \`$target/\` (workflow_dispatch, run #$GITHUB_RUN_NUMBER). Xem kỹ diff trước khi gộp — file trong ZIP chưa được kiểm tra nội dung, chỉ kiểm tra đường dẫn/.git/symlink/.github." --base main --head "$branch"
