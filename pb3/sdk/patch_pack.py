@@ -482,7 +482,11 @@ def _find_pb3_root():
         if c in seen:
             continue
         seen.append(c)
-        if (c / "sdk" / "unity.py").is_file():
+        try:
+            found_here = (c / "sdk" / "unity.py").is_file()
+        except OSError:
+            continue
+        if found_here:
             return c
     return False
 
