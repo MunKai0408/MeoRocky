@@ -86,6 +86,17 @@
 
 ## Đã xong
 
+### Tái tạo atlas SDF TextMeshPro (thử nghiệm) — XONG 2026-11-18 [ĐÃ ĐO THẬT] (nhánh `feat/tmp-sdf-regen`)
+
+- Vấn đề: PR #19 kết luận TMP SDF "không tái tạo được" (cần Unity Editor FontEngine); game dùng TMP SDF atlas mà font Việt thiếu glyph thì không có đường tái tạo atlas. User lệnh "Fix hết toàn bộ" (00:30 +07 2026-11-18).
+- Sửa: `pb3/sdk/sdf.py` (mới): parse font TTF glyf + CFF/Type 2 (incl. subrs), flatten outline, SDF chính xác (khớp brute-force diff 0), pack atlas, bảng glyph 2 layout (36B cũ / 52B mới), `is_sdf_atlas` (phân biệt atlas SDF vs bitmap, ngưỡng 15% pixel trung gian). `pb3/sdk/tmp_sdf.py` (mới): parse Texture2D (Unity 2022 + 6000), tìm font nguồn nhúng, tìm atlas, `regen_tmp_asset` (dry-run, fail-closed; pad mặc định 5 + `pad_estimated` khi FaceInfo mới không có padding; fail-closed khi atlas là bitmap). `pb3/sdk/tmp_font.py`: layout glyph mới 52B, `find_face_info_new` (pt INT + family/style), scan-start fix, `read_glyph_records`, `is_unity_entry` public. `pb3/sdk/gate.py`: `check_tmp_sdf` (kiểm tra cấu trúc atlas + bảng glyph). `pb3/bridge.py`: op `tmp_sdf_regen` (dry-run, trả atlas .raw + plan JSON + báo cáo MAE). UI: nút "Tái tạo atlas SDF (thử nghiệm)" + hiện median/mean MAE, pct<3, PASS/FAIL, worst glyphs.
+- Mô hình SDF [ĐÃ ĐO THẬT]: value = clamp(round(126.5 + s·255/(2·spread))), spread = padding + 1; atlas BOTTOM-UP. Lệch còn lại là font-version (font nhúng khác version font build atlas) + hinting, không phải bug generator (placement shift 0,0 tốt nhất; glyph tốt 'H'/'!'/'A' MAE 1,15–2,21).
+- Kiểm chứng [ĐÃ ĐO THẬT] (exp/verify_sdf_regen.py + exp/sdf_regen_results.md): 8 asset / 3 game, 3 PASS (PB3 Aniara_Graphics/Light/Regular — median MAE 1,52–2,36, ngưỡng < 3,0). LiberationSans/NotoSans FAIL (median 4,20/7,55) do font-version. ContinuumBold (PvZ Fusion) là atlas BITMAP (95% pixel 0/255) — không thuộc phạm vi SDF; SDK fail-closed rõ ràng. Afterimage: Drive quota, không tải được. Khảo sát 11 IPA đầy đủ.
+- Kiểm chứng sau rebase lên main a5ec640 (v43, PR #29): [SỐ LIỆU CUỐI ĐIỀN SAU KHI CHẠY XONG — test đích + 10 check tĩnh + smoke + harness + full suite vs baseline a5ec640].
+- `CACHE_VERSION` v43→**v44-20261118**; `files.json` 102→104 (thêm sdf.py, tmp_sdf.py), `tests.json` 179→180 (thêm test_sdf_regen.py), precache 127→129 mục, dung lượng precache đo lại: [SỐ ĐIỀN SAU — đo được 16.702.987 B (PB3 2.351.930 B, shell/gốc 533.661 B)]. Nhánh rebase lên main `a5ec640` (PR #29 caps-po lấy v43 trong lúc nhánh đang chạy); xung đột ở 8 file check tĩnh + sw.js, giải quyết bằng cách lấy bản HEAD rồi cập nhật count lên 104/180/129 + v44, và khôi phục `struct` trong STDLIB của check_delivery_gate_static.py (gate.py dùng struct ở check_tmp_sdf — suýt mất khi lấy bản HEAD).
+- Còn lại / thành thật: SDF là THỬ NGHIỆM — UI + note ghi rõ sai số trung vị MAE; ghi ngược vào file game (M1/M2) là bước sau, KHÔNG có trong nhánh này. Font-version khiến một số atlas FAIL ngưỡng dù generator đúng; generator dùng đúng font nhúng nên tự nhất quán.
+- Sau khi bản v44 lên live, user trên Safari cần tải lại trang 2 lần như các bản trước.
+
 ### IPA-LOCALIZATION: Heaps PAK, CastleDB, BMFont, unzip.yml an toàn, xcstrings parity — XONG 2026-11-18 [ĐÃ ĐO THẬT] (nhánh `feat/ipa-loc-integration`)
 
 - Vấn đề: IPA-LOCALIZATION (app JS phân tích tĩnh v0.21.1) có 6 mảnh MeoRocky chưa có: Heaps PAK, CastleDB, BMFont, unzip.yml an toàn, fixture builder, .xcstrings/.stringsdict parity.
