@@ -100,6 +100,12 @@ async function boot() {
     status("Không tải được fzstd — bundle nén Zstd sẽ báo lỗi rõ ràng.");
   }
 
+  // files.json CHỈ liệt kê file worker CẦN trong FS Pyodide; vòng lặp
+  // dưới fail-fast theo thiết kế (1 file thiếu là boot chết — đúng cho
+  // mã PB3). Tài sản web (script UI nạp bằng <script> ở main thread)
+  // KHÔNG được đưa vào đây: P0 2026-11-18, colab_handoff.js 404 do
+  // cache deploy đã giết toàn bộ boot. File shell như vậy ở trong
+  // sw.js precache + tự xử lý lỗi nạp ở chỗ dùng nó.
   status("Đang tải mã PB3…");
   const man = await (await fetch("pb3/files.json")).json();
   const files = man.files;

@@ -1,6 +1,5 @@
 {
  "files": [
-  "colab_handoff.js",
   "pb3/bridge.py",
   "pb3/config/default.toml",
   "pb3/core/__init__.py",

@@ -17,25 +17,27 @@
 //
 // Lưu ý dung lượng (đo thật từ đĩa, cùng phương pháp kiểm A3 của
 // harness mục 6: tổng các file trong PRECACHE_URLS, chưa tính "./" là
-// alias của index.html): precache 16.865.729 B (16,08 MiB) = Pyodide
-// 13.605.176 B (12,97 MiB, 7 file) + PB3 2.452.005 B (2,34 MiB) +
-// shell/gốc 596.328 B + font 177.264 B + fzstd 24.407 B +
+// alias của index.html): precache 16.867.154 B (16,09 MiB) = Pyodide
+// 13.605.176 B (12,97 MiB, 7 file) + PB3 2.451.983 B (2,34 MiB) +
+// shell/gốc 597.775 B + font 177.264 B + fzstd 24.407 B +
 // icons/fixtures 10.549 B. Nạp 1 lần ở lần thăm đầu (nền, không chặn
 // vẽ trang); lần sau đọc từ Cache Storage, không tốn mạng nữa.
 
 // ĐỔI SỐ NÀY MỖI KHI DEPLOY BẢN MỚI (bất kỳ file nào trong PRECACHE_URLS
 // đổi nội dung). Bản cũ sẽ bị xóa ở activate.
-const CACHE_VERSION = "v49-20261118";
+const CACHE_VERSION = "v50-20261118";
 const CACHE_NAME = "beartea-" + CACHE_VERSION;
 // Cache riêng cho prefetch Pyodide sau first paint (Mục C3): app.js ghi
 // file đã tải trước vào đây; SW dùng làm dự phòng khi cache chính trượt
 // (vd precache lúc install thiếu file) rồi mới ra mạng.
 const PREFETCH_CACHE = "beartea-prefetch-v1";
 
-// Danh sách precache: shell tĩnh + Pyodide vendored + mã PB3 (khớp đúng
-// pb3/files.json mà worker.js tải lúc boot) + font đi kèm + fixture tự
-// kiểm tra (C2/C3: fixtures/selftest.zip để lần thăm 2 offline vẫn chạy
-// được "Tự kiểm tra"). Sinh từ đĩa lúc viết file này (134 mục);
+// Danh sách precache: shell tĩnh + Pyodide vendored + mã PB3 (khớp
+// pb3/files.json mà worker.js tải lúc boot, CỘNG file shell nạp bằng
+// <script> như colab_handoff.js — ngoài files.json từ v50 vì P0 boot
+// 404) + font đi kèm + fixture tự kiểm tra (C2/C3:
+// fixtures/selftest.zip để lần thăm 2 offline vẫn chạy được
+// "Tự kiểm tra"). Sinh từ đĩa lúc viết file này (134 mục);
 // thêm/bớt file vendored thì cập nhật cả danh sách này, không thì
 // lần thăm 2 offline sẽ thiếu file đó.
 const PRECACHE_URLS = [

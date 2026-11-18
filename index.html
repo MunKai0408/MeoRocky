@@ -1331,6 +1331,20 @@
 <script src="stream.js"></script>
 <script src="opfs.js"></script>
 <script src="colab_handoff.js"></script>
+<script>
+// Colab handoff là tính năng PHỤ: nếu file nạp lỗi (404 do cache/deploy
+// hoặc lỗi parse), app vẫn phải khởi động bình thường — chỉ hiện cảnh
+// báo ở panel Colab. P0 2026-11-18: colab_handoff.js 404 đã giết toàn
+// bộ boot vì nó từng nằm trong pb3/files.json (đã gỡ); đây là lưới an
+// toàn thứ hai cho đường <script> ở main thread.
+if (typeof window.ColabHandoff === "undefined") {
+  try {
+    console.warn("[colab] Không tải được colab_handoff.js — tính năng Colab tạm thời không dùng được.");
+    var s = document.getElementById("colab-handoff-status");
+    if (s) s.textContent = "Không tải được Colab handoff (lỗi mạng/cache) — tính năng Colab tạm thời không dùng được, thử tải lại trang; các tính năng khác vẫn chạy bình thường.";
+  } catch (e) { /* không để cảnh báo tự nó làm chết trang */ }
+}
+</script>
 <script src="app.js"></script>
 </body>
 </html>
