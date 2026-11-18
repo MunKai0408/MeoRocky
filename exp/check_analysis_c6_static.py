@@ -134,14 +134,14 @@ for bad in ("new SharedArrayBuffer", "Cross-Origin-Opener-Policy",
 
 # ------------------------------------------------------------------ manifest
 files_json = json.load(open(os.path.join(PB3, "files.json"), encoding="utf-8"))
-chk(len(files_json["files"]) == 105,
-    "files.json %d file != 105 (P0-2 them sdk/gate.py)"
+chk(len(files_json["files"]) == 107,
+    "files.json %d file != 107 (P0-2 them sdk/gate.py)"
     % len(files_json["files"]))
 tests_json = json.load(open(os.path.join(PB3, "tests.json"), encoding="utf-8"))
 chk("pb3/tests/test_tmp_fallback.py" in tests_json["files"],
     "tests.json thieu pb3/tests/test_tmp_fallback.py")
-chk(len(tests_json["files"]) == 186,
-    "tests.json %d file != 186" % len(tests_json["files"]))
+chk(len(tests_json["files"]) == 187,
+    "tests.json %d file != 187" % len(tests_json["files"]))
 
 print(json.dumps({"fails": FAILS}, ensure_ascii=False, indent=1))
 sys.exit(1 if FAILS else 0)

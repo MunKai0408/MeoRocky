@@ -17,15 +17,15 @@
 //
 // Lưu ý dung lượng (đo thật từ đĩa, cùng phương pháp kiểm A3 của
 // harness mục 6: tổng các file trong PRECACHE_URLS, chưa tính "./" là
-// alias của index.html): precache 16.709.474 B (15,94 MiB) = Pyodide
-// 13.605.176 B (12,97 MiB, 7 file) + PB3 2.336.269 B (2,23 MiB) +
-// shell/gốc 555.809 B + font 177.264 B + fzstd 24.407 B +
+// alias của index.html): precache 16.808.596 B (16,03 MiB) = Pyodide
+// 13.605.176 B (12,97 MiB, 7 file) + PB3 2.432.478 B (2,32 MiB) +
+// shell/gốc 558.722 B + font 177.264 B + fzstd 24.407 B +
 // icons/fixtures 10.549 B. Nạp 1 lần ở lần thăm đầu (nền, không chặn
 // vẽ trang); lần sau đọc từ Cache Storage, không tốn mạng nữa.
 
 // ĐỔI SỐ NÀY MỖI KHI DEPLOY BẢN MỚI (bất kỳ file nào trong PRECACHE_URLS
 // đổi nội dung). Bản cũ sẽ bị xóa ở activate.
-const CACHE_VERSION = "v47-20261118";
+const CACHE_VERSION = "v48-20261118";
 const CACHE_NAME = "beartea-" + CACHE_VERSION;
 // Cache riêng cho prefetch Pyodide sau first paint (Mục C3): app.js ghi
 // file đã tải trước vào đây; SW dùng làm dự phòng khi cache chính trượt
@@ -149,8 +149,10 @@ const PRECACHE_URLS = [
   "pb3/sdk/rawscan.py",
   "pb3/sdk/rebuild.py",
   "pb3/sdk/repack.py",
+  "pb3/sdk/sdf.py",
   "pb3/sdk/support_matrix.py",
   "pb3/sdk/tmp_font.py",
+  "pb3/sdk/tmp_sdf.py",
   "pb3/sdk/translate.py",
   "pb3/sdk/types.py",
   "pb3/sdk/unity.py",

@@ -1811,7 +1811,8 @@ def font_merge(path, donor_path, target_face=0, donor_face=0):
 
     Trả font mới ra /tmp/merged.ttf (hoặc /tmp/merged.ttc khi đích là
     .ttc) để JS tải về. Chỉ font TrueType glyf; atlas SDF của
-    TextMeshPro không tái tạo được (giới hạn thật của PB3). TTC: chọn
+    TextMeshPro tái tạo bằng tính năng thử nghiệm tmp_sdf_regen (nút
+    "Tái tạo atlas SDF" ở mục TMP). TTC: chọn
     face bằng target_face/donor_face (mặc định face 0).
     """
     try:
@@ -1847,8 +1848,10 @@ def tmp_font_read(path):
     LineHeight, Padding, kích thước atlas), bảng glyph 36 byte, độ phủ
     tiếng Việt (134 chữ + 8 dấu), tham chiếu Material/Texture2D/Font.
     Ghi kế hoạch glyph ra /tmp/tmp_glyph_plan.json để JS tải về nạp vào
-    Unity Editor. Atlas SDF KHÔNG tái tạo được trên web — sinh lại atlas
-    bắt buộc làm trong Unity Editor (script site/unity_editor/).
+    Unity Editor. Atlas SDF tái tạo được bằng tính năng thử nghiệm
+    tmp_sdf_regen (nút "Tái tạo atlas SDF" ở mục TMP — đo MAE so với
+    atlas gốc); script Unity Editor (site/unity_editor/) vẫn là
+    phương án dự phòng.
     """
     try:
         from sdk import tmp_font as tf
@@ -1929,6 +1932,196 @@ def tmp_font_fallback(path):
             "files_scanned": list(res["files_scanned"] or []),
             "bundle_nodes": int(res["bundle_nodes"]),
             "fallback_plan": plan,
+        }, ensure_ascii=False)
+    except Exception as e:  # noqa: BLE001
+        return _err(e)
+
+
+def _parse_extra_codepoints(extra):
+    """Chuoi ky tu can them -> list codepoint (sap xep, khong trung).
+
+    Nhan: chuoi ky tu thuong ("aàáâ...") hoac "U+1EA0,U+1EA1" / "768,769".
+    """
+    if not extra:
+        return []
+    extra = str(extra).strip()
+    if not extra:
+        return []
+    if "U+" in extra.upper() or "," in extra:
+        out = []
+        for part in extra.replace(";", ",").split(","):
+            part = part.strip()
+            if not part:
+                continue
+            if part.upper().startswith("U+"):
+                out.append(int(part[2:], 16))
+            else:
+                out.append(int(part, 0))
+        return sorted(set(out))
+    return sorted(set(ord(ch) for ch in extra))
+
+
+def _iter_tmp_sf(path):
+    """Yield (display, sf, ress_slice) cho moi SerializedFile trong nguon.
+
+    Nguon: thu muc / ZIP/IPA / file .assets/.unity3d doc lap (nhu
+    tmp_font.scan_source). ress_slice(path, offset, size) doc 1 lat cat
+    cua file .resS tuong ung (trong ZIP hoac roi tren dia).
+    """
+    from sdk import containers as cont
+    from sdk import unity as uni
+
+    src = str(path)
+    if os.path.isdir(src):
+        for dirpath, _dirs, files in os.walk(src):
+            for fn in sorted(files):
+                if not tf.is_unity_entry(fn):
+                    continue
+                full = os.path.join(dirpath, fn)
+                try:
+                    data = open(full, "rb").read()
+                    sf = uni.parse_serialized(data, where=full)
+                except Exception:
+                    continue
+
+                def _slice(p, off, size, _full=full):
+                    ress_path = _full + ".resS"
+                    if not os.path.exists(ress_path):
+                        # resS co the nam canh file goc theo ten stream
+                        base = os.path.dirname(_full)
+                        cand = os.path.join(base, os.path.basename(p))
+                        ress_path = cand
+                    with open(ress_path, "rb") as fh:
+                        fh.seek(off)
+                        return fh.read(size)
+
+                yield full, sf, _slice
+        return
+    if zipfile.is_zipfile(src):
+        vfs = cont.open_vfs(src)
+        entries = list(vfs.iter_entries())
+        by_suffix = {}
+        for name in entries:
+            by_suffix[name] = name
+            base = name.rsplit("/", 1)[-1]
+            by_suffix.setdefault(base, name)
+        for name in entries:
+            if not tf.is_unity_entry(name):
+                continue
+            try:
+                data = vfs.read(name)
+                sf = uni.parse_serialized(data, where=name)
+            except Exception:
+                continue
+
+            def _slice(p, off, size, _vfs=vfs, _map=by_suffix):
+                entry = _map.get(p) or _map.get(p.rsplit("/", 1)[-1])
+                if entry is None:
+                    for cand in _map.values():
+                        if cand.endswith("/" + p) or cand.endswith(p):
+                            entry = cand
+                            break
+                if entry is None:
+                    raise PB3Error("khong co file resS %s" % p)
+                return bytes(_vfs.slice(entry, off, size))
+
+            yield name, sf, _slice
+        return
+    # File .assets/.unity3d doc lap.
+    data = open(src, "rb").read()
+    sf = uni.parse_serialized(data, where=src)
+
+    def _slice(p, off, size, _src=src):
+        ress_path = _src + ".resS"
+        if not os.path.exists(ress_path):
+            base = os.path.dirname(_src)
+            ress_path = os.path.join(base, os.path.basename(p))
+        with open(ress_path, "rb") as fh:
+            fh.seek(off)
+            return fh.read(size)
+
+    yield src, sf, _slice
+
+
+def tmp_sdf_regen(path, asset_name=None, extra=""):
+    """Tai tao atlas SDF cho 1 TMP_FontAsset (THU NGHIEM, dry-run).
+
+    path: file game (IPA/.assets/.unity3d/thu muc). asset_name: ten TMP
+    asset (vd "Aniara_Light SDF") hoac so thu tu trong danh sach quet;
+    None = asset dau tien co font nguon nhung. extra: chuoi ky tu can
+    them (vd chu Viet thieu) hoac "U+1EA0,U+1EA1".
+    Chi tai tao trong cung kich thuoc atlas (fail-closed neu khong xep
+    vua). KHONG ghi vao file game — tra atlas moi (.raw) + bang glyph
+    moi + bao cao MAE de tai ve; ghi nguoc la buoc sau (M1/M2).
+    """
+    try:
+        from sdk import tmp_font as tf
+        from sdk import tmp_sdf as ts
+
+        _check_size(path)
+        extra_cps = _parse_extra_codepoints(extra)
+        # Tim asset: quet cac SerializedFile, khop ten (chinh xac truoc,
+        # roi chuoi con, roi so thu tu).
+        found = None
+        scanned_names = []
+        for display, sf, ress_slice in _iter_tmp_sf(path):
+            for f in tf.find_tmp_font_assets(sf):
+                if not f["is_tmp"]:
+                    continue
+                try:
+                    raw = sf.object_bytes(f["path_id"])
+                    dec = tf.decode_object(raw, sf.endian)
+                except Exception:
+                    continue
+                nm = dec.get("name") or ""
+                scanned_names.append(nm)
+                match = False
+                if asset_name is None:
+                    match = True
+                elif str(asset_name).isdigit():
+                    match = len(scanned_names) - 1 == int(asset_name)
+                elif nm == str(asset_name):
+                    match = True
+                elif str(asset_name) in nm:
+                    match = True
+                if match and dec.get("glyph_table"):
+                    found = (display, sf, f["path_id"], ress_slice, dec)
+                    break
+            if found:
+                break
+        if found is None:
+            return _err(PB3Error(
+                "khong tim thay TMP asset %r (da quet: %s)"
+                % (asset_name, ", ".join(scanned_names) or "khong co")))
+        display, sf, pid, ress_slice, dec = found
+        rep = ts.regen_tmp_asset(sf, pid, extra_cps, ress_slice)
+        # Ghi atlas moi + ke hoach JSON ra /tmp de JS tai ve.
+        safe = "".join(c if c.isalnum() or c in ("-", "_") else "_"
+                       for c in rep["name"])
+        atlas_out = "/tmp/tmp_sdf_%s.raw" % safe
+        with open(atlas_out, "wb") as fh:
+            fh.write(rep["new_atlas"])
+        plan = {k: v for k, v in rep.items()
+                if k not in ("new_atlas", "new_table")}
+        plan["atlas_file"] = atlas_out
+        plan["source"] = display
+        plan["table_bytes"] = len(rep["new_table"])
+        plan_out = "/tmp/tmp_sdf_%s.json" % safe
+        with open(plan_out, "w", encoding="utf-8") as fh:
+            json.dump(plan, fh, ensure_ascii=False, indent=1)
+        return json.dumps({
+            "ok": True, "dest": atlas_out, "plan": plan_out,
+            "filename": os.path.basename(atlas_out),
+            "name": rep["name"], "layout": rep["layout"],
+            "point_size": rep["point_size"], "padding": rep["padding"],
+            "atlas": rep["atlas"], "font_source": rep["font_source"],
+            "glyphs_old": rep["glyphs_old"],
+            "glyphs_new": rep["glyphs_new"], "added": len(rep["added"]),
+            "added_cps": rep["added"],
+            "unfitted": rep["unfitted"], "empty": rep["empty"],
+            "median_mae": rep["median_mae"], "mean_mae": rep["mean_mae"],
+            "pct_lt3": rep["pct_lt3"], "pass": rep["pass"],
+            "worst": rep["worst"], "note": rep["note"],
         }, ensure_ascii=False)
     except Exception as e:  # noqa: BLE001
         return _err(e)

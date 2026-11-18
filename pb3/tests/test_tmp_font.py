@@ -42,6 +42,26 @@ def _pptr(file_id, pid, e):
     return struct.pack(e + "iq", file_id, pid)
 
 
+def _glyphs_new(ids, e, aw=1024, ah=1024, ph_ids=()):
+    """Bang glyph layout MOI (52 byte/record): id=glyph index (u32) +
+    5 float metrics + rect 4 int (x, y tu BOTTOM, w, h) + scale +
+    atlasIndex + trailing."""
+    ids = list(ids)
+    b = b""
+    for i, gid in enumerate(ids):
+        x, yb, w, h = (i % 30) * 32, (i // 30) * 32 % (ah - 32), 30, 30
+        if gid in ph_ids:
+            w, h = 0, 0
+            x, yb = 0, 0
+            b += struct.pack(e + "I5f4ifii", gid, 0.0, 0.0, 0.0, 0.0,
+                             20.0, 0, 0, 0, 0, 1.0, 0, 0)
+        else:
+            b += struct.pack(e + "I5f4ifii", gid, float(w), float(h), 1.5,
+                             24.0, 20.0, int(x), int(yb), int(w), int(h),
+                             1.0, 0, 0)
+    return struct.pack(e + "i", len(ids)) + b
+
+
 def _glyphs(ids, e, aw=1024, ah=1024, ph_ids=()):
     ids = list(ids)
     b = b""
@@ -64,20 +84,44 @@ def _faceinfo(name, e, pt=36.0, count=0, aw=1024.0, ah=1024.0, legacy=False):
             + struct.pack(e + "%df" % len(after), *after))
 
 
+def _faceinfo_new(family, style, e, pt=87, count=0, lh=118.78):
+    """FaceInfo MOI (TMP 3.x): 2 chuoi (family + style) + pointSize INT
+    + scale float + characterCount int + lineHeight/ascender/capHeight.
+    Khong co padding/atlas (xem sdk/tmp_font.find_face_info_new)."""
+    return (_astr(family.encode(), e) + _astr(style.encode(), e)
+            + struct.pack(e + "i", pt) + struct.pack(e + "f", 1.0)
+            + struct.pack(e + "i", count)
+            + struct.pack(e + "fff", lh, 92.97, 62.0))
+
+
 def _tmp_asset(name, e, script_pid=5, face=None, ids=None, declared=None,
                atlas_pid=20, mat_pid=30, font_pid=40, no_glyphs=False,
-               aw=1024.0, ah=1024.0, legacy_fi=False, ph_ids=()):
+               aw=1024.0, ah=1024.0, legacy_fi=False, ph_ids=(),
+               layout="old", face_new=None):
     hdr = _pptr(0, 0, e) + b"\1\0\0\0" + _pptr(0, script_pid, e) \
         + _astr(name.encode(), e)
     body = struct.pack(e + "i", 1)
     if font_pid:
         body += _pptr(0, font_pid, e)
-    body += _faceinfo(face, e, count=declared if declared is not None
-                      else len(ids or []), aw=aw, ah=ah, legacy=legacy_fi)
+    if face_new is not None:
+        # FaceInfo moi (TMP 3.x), khong co ban sao cu. characterCount
+        # phai khop so glyph (neu khong decode tra 'partial').
+        fam, sty = face_new
+        body += _faceinfo_new(
+            fam, sty, e,
+            count=declared if declared is not None else len(ids or []))
+    else:
+        body += _faceinfo(face, e, count=declared if declared is not None
+                          else len(ids or []), aw=aw, ah=ah, legacy=legacy_fi)
     if atlas_pid:
         body += _pptr(0, atlas_pid, e)
-    body += (bytes(2000) if no_glyphs
-             else _glyphs(ids, e, aw=int(aw), ah=int(ah), ph_ids=ph_ids))
+    if layout == "new":
+        body += (bytes(2000) if no_glyphs
+                 else _glyphs_new(ids, e, aw=int(aw), ah=int(ah),
+                                  ph_ids=ph_ids))
+    else:
+        body += (bytes(2000) if no_glyphs
+                 else _glyphs(ids, e, aw=int(aw), ah=int(ah), ph_ids=ph_ids))
     if mat_pid:
         body += _pptr(0, mat_pid, e)
     return hdr + body + bytes(96)
@@ -316,6 +360,87 @@ class TestDecodeObject(TmpCase):
                        ph_ids={10, 32, 0xA0, 0x3000}), "<")
         self.assertEqual(d["status"], "parsed")
         self.assertEqual(d["glyph_table"]["placeholder_glyphs"], 4)
+
+    def test_new_layout_parsed(self):
+        # Layout moi 52 byte/record (TMP 3.x, gap tren LiberationSans PB3):
+        # id = glyph index, rect y tu BOTTOM.
+        gids = [3, 4, 5, 66, 1999]
+        d = tf.decode_object(
+            _tmp_asset("NewLayout SDF", "<", face="New Font", ids=gids,
+                       layout="new"), "<")
+        self.assertEqual(d["status"], "parsed")
+        gt = d["glyph_table"]
+        self.assertEqual(gt["layout"], "new")
+        self.assertEqual(gt["stride"], 52)
+        self.assertEqual(gt["count"], 5)
+        self.assertEqual(gt["sample"][0]["id"], 3)
+        self.assertEqual(gt["sample"][0]["scale"], 1.0)
+        self.assertEqual(gt["sample"][0]["atlas_index"], 0)
+        self.assertEqual(d["code_points"]["kind"], "glyph_index")
+        self.assertEqual(d["code_points"]["count"], 5)
+        # layout moi: vietnamese = unknown (can cmap font nguon)
+        self.assertEqual(d["vietnamese"]["level"], "unknown")
+
+    def test_new_layout_placeholder(self):
+        gids = [3, 4, 5]
+        d = tf.decode_object(
+            _tmp_asset("NewPlaceholders SDF", "<", face="New Font",
+                       ids=gids, layout="new", ph_ids={3}), "<")
+        self.assertEqual(d["status"], "parsed")
+        self.assertEqual(d["glyph_table"]["layout"], "new")
+        self.assertEqual(d["glyph_table"]["placeholder_glyphs"], 1)
+
+    def test_read_glyph_records_new(self):
+        gids = [3, 4, 5, 66]
+        raw = _tmp_asset("NewRecords SDF", "<", face="New Font", ids=gids,
+                         layout="new")
+        d = tf.decode_object(raw, "<")
+        gt = d["glyph_table"]
+        recs = tf.read_glyph_records(raw, gt["offset"], gt["count"],
+                                     gt["stride"], "<")
+        self.assertEqual([r["id"] for r in recs], gids)
+        self.assertEqual(recs[0]["width"], 30.0)
+        self.assertEqual(recs[0]["height"], 30.0)
+        self.assertEqual(recs[0]["rect"][2], 30)
+        self.assertEqual(recs[0]["rect"][3], 30)
+        self.assertEqual(recs[0]["trailing"], 0)
+
+    def test_find_face_info_new(self):
+        # FaceInfo moi truc tiep: 2 chuoi + pointSize INT.
+        raw = _faceinfo_new("Noto Sans", "Regular", "<", pt=87, lh=118.78)
+        fi = tf.find_face_info_new(raw, 0, "<")
+        self.assertIsNotNone(fi)
+        self.assertEqual(fi["family_name"], "Noto Sans")
+        self.assertEqual(fi["style_name"], "Regular")
+        self.assertEqual(fi["point_size"], 87.0)
+        self.assertEqual(fi["scale"], 1.0)
+        self.assertEqual(fi["line_height"], 118.78)
+        self.assertIsNone(fi["padding"])
+        self.assertIsNone(fi["atlas_width"])
+
+    def test_find_face_info_new_rejects_old(self):
+        # FaceInfo cu (1 chuoi + pointSize FLOAT) khong duoc nhan la moi.
+        raw = _faceinfo("Old Font", "<", pt=86.0)
+        self.assertIsNone(tf.find_face_info_new(raw, 0, "<"))
+        # Rac ngau nhien cung khong duoc nhan.
+        self.assertIsNone(tf.find_face_info_new(b"\x00" * 200, 0, "<"))
+
+    def test_decode_uses_new_faceinfo(self):
+        # Asset chi co FaceInfo moi (khong ban sao cu): decode_object lay
+        # pt + family tu FaceInfo moi; padding/atlas = None.
+        gids = [3, 4, 5]
+        d = tf.decode_object(
+            _tmp_asset("NewFI SDF", "<", ids=gids, layout="new",
+                       face_new=("Noto Sans", "Regular")), "<")
+        self.assertEqual(d["status"], "parsed")
+        fi = d["font_info"]
+        self.assertIsNotNone(fi)
+        self.assertEqual(fi["point_size"], 87.0)
+        self.assertEqual(fi["family_name"], "Noto Sans")
+        self.assertEqual(fi["style_name"], "Regular")
+        self.assertEqual(fi["format"], "new")
+        self.assertIsNone(fi["padding"])
+        self.assertIsNone(fi["atlas_width"])
 
     def test_garbage_is_layout_unknown(self):
         d = tf.decode_object(b"khong phai TMP gi ca" * 8, "<")

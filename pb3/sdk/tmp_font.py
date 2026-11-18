@@ -6,21 +6,23 @@ với sdk/font.py (bộ 134 chữ cái tiếng Việt + 8 dấu kết hợp = 14
 
 RANH GIỚI (đọc kỹ trước khi dùng):
 - Đây CHỈ ĐỌC: neo FaceInfo (tên font, PointSize, Scale, CharacterCount,
-  LineHeight, Padding, kích thước atlas) + bảng glyph 36 byte/phần tử
-  (id, x, y, width, height, xOffset, yOffset, xAdvance, scale) + tham
-  chiếu PPtr tới Texture2D/Material/Font/TMP_FontAsset khác. KHÔNG giải
-  mã ảnh atlas (Texture2D), KHÔNG đọc giá trị shader SDF trong material
-  (vd _FaceDilate, độ rộng outline) — các giá trị đó chỉ đọc được trong
+  LineHeight, Padding, kích thước atlas) + bảng glyph 2 bố cục (36
+  byte/phần tử cũ: id=codepoint; 52 byte/phần tử mới TMP 3.x: id=glyph
+  index, rect y tính từ ĐÁY atlas) + tham chiếu PPtr tới
+  Texture2D/Material/Font/TMP_FontAsset khác. KHÔNG giải mã ảnh atlas
+  (Texture2D), KHÔNG đọc giá trị shader SDF trong material (vd
+  _FaceDilate, độ rộng outline) — các giá trị đó chỉ đọc được trong
   Unity Editor (xem site/unity_editor/TMP_VietnameseAtlas.cs).
 - Bố cục TMP_Glyph 36 byte + FaceInfo 20 trường (Unity 5.6) đã xác nhận
   trên DATA WING thật (3/7 asset, theo studio); bản 18 trường là dự
-  phòng. 9 Kings dùng Unity 6 + TMP mới hơn — bố cục CÓ THỂ khác: khi
-  không khớp, hàm trả `glyph_table_not_found` kèm chẩn đoán (hex head +
-  count_hits) chứ KHÔNG bịa danh sách ký tự.
-- Atlas SDF KHÔNG tái tạo được trên web/điện thoại: sinh lại atlas SDF
-  bắt buộc làm trong Unity Editor (script kèm theo). Web chỉ làm được:
-  đọc tham số + tính độ phủ + xuất "glyph plan" (chữ thiếu + tham số
-  atlas cần giữ) để nạp vào Editor.
+  phòng. Bố cục 52 byte đã xác nhận trên PB3 LiberationSans SDF thật
+  (250 glyph). 9 Kings dùng Unity 6 + TMP mới hơn — bố cục CÓ THỂ khác:
+  khi không khớp, hàm trả `glyph_table_not_found` kèm chẩn đoán (hex head
+  + count_hits) chứ KHÔNG bịa danh sách ký tự.
+- Atlas SDF tái tạo ĐƯỢC bằng Python thuần: xem sdk/sdf.py (đo thật trên
+  atlas Aniara Light: MAE trung vị 1.34, xem exp/verify_sdf_regen.py).
+  Layout mới lưu glyph INDEX thay vì codepoint nên độ phủ tiếng Việt
+  cần cmap của font nguồn (sdk/sdf.py) mới tính được.
 - Chỉ stdlib, tương thích Python 3.9 (iSH Alpine 3.14). Không COI, không
   SharedArrayBuffer.
 """
@@ -37,6 +39,11 @@ from sdk import font as font_sdk
 
 #: Buoc nhay bang glyph: id:int32 + 8 float32 = 36 byte (xac nhan DATA WING).
 STRIDE = 36
+#: Buoc nhay bang glyph MOI (TMP 3.x, Unity 2022.3+): id:uint32 (glyph index)
+#: + 5 float32 metrics + rect 4 int32 (x, y tu DAY atlas, w, h) + scale
+#: float32 + atlasIndex int32 + trailing int32 = 52 byte (xac nhan PB3
+#: LiberationSans SDF, 250 glyph, 191/250 record khop nghiem ngat).
+STRIDE_NEW = 52
 MAX_ASSETS = 200
 MAX_ASSET_BYTES = 64 * 1024 * 1024
 MAX_FILE_BYTES = 256 * 1024 * 1024
@@ -60,9 +67,8 @@ NOT_DONE = [
     "giải mã ảnh atlas (Texture2D) và kiểm glyph có hình",
     "liên kết TextMeshPro component -> TMP_FontAsset đang dùng thật",
     "bảng kerning, fallback font, font weights, giá trị shader SDF trong material",
-    "ghi ngược/tạo lại atlas SDF (cần Unity Editor, xem site/unity_editor/)",
     "tạo TMP_FontAsset fallback trên web (mục C6 làm phần kế hoạch + script "
-    "Editor; atlas SDF của fallback cũng chỉ sinh được trong Editor)",
+    "Editor; atlas SDF của fallback sinh bằng sdk/sdf.py)",
 ]
 
 
@@ -151,6 +157,10 @@ def _f32(data: bytes, off: int, endian: str) -> float:
 
 def _i32(data: bytes, off: int, endian: str) -> int:
     return struct.unpack_from(endian + "i", data, off)[0]
+
+
+def _u32(data: bytes, off: int, endian: str) -> int:
+    return struct.unpack_from(endian + "I", data, off)[0]
 
 
 def read_monobehaviour_header(data: bytes, endian: str):
@@ -268,6 +278,66 @@ def find_face_info(data: bytes, start: int, endian: str):
     return None
 
 
+def find_face_info_new(data: bytes, start: int, endian: str):
+    """Neo FaceInfo MOI (TMP 3.x): 2 chuoi (familyName + styleName) +
+    pointSize INT + scale float + characterCount int + lineHeight float.
+
+    Bo cuc moi khac cu: cu chi co 1 chuoi roi pointSize FLOAT; moi co 2
+    chuoi roi pointSize INT. Chi doc cac truong chac chan (family/style/
+    pointSize/scale/characterCount/lineHeight/ascender/capHeight);
+    padding/atlas KHONG nam trong FaceInfo moi (do tren LiberationSans
+    + NotoSans: 15 float sau characterCount, khong co 9.0/1024) — tra
+    None, de nguoi goi lay tu ban sao cu hoac Texture2D. Tra dict nhu
+    find_face_info (them family_name/style_name/format="new") hoac None.
+    """
+    n = len(data)
+    p = _align4(start)
+    while p + 8 <= n:
+        length = _i32(data, p, endian)
+        if 1 <= length <= 60 and p + 4 + length <= n \
+                and _printable_ascii(data, p + 4, length):
+            e = _align4(p + 4 + length)
+            if e + 8 <= n:
+                length2 = _i32(data, e, endian)
+                if 1 <= length2 <= 40 and e + 4 + length2 <= n \
+                        and _printable_ascii(data, e + 4, length2):
+                    f = _align4(e + 4 + length2)
+                    if f + 4 * 6 <= n:
+                        pt = _i32(data, f, endian)
+                        sc = _f32(data, f + 4, endian)
+                        cc = _i32(data, f + 8, endian)
+                        lh = _f32(data, f + 12, endian)
+                        if (10 <= pt <= 500 and 0 < sc <= 64
+                                and 0 <= cc <= MAX_GLYPHS
+                                and 0 < lh <= 20000
+                                and pt * 0.5 < lh < pt * 3.0):
+                            fam = data[p + 4:p + 4 + length].decode("latin-1")
+                            sty = data[e + 4:e + 4 + length2].decode("latin-1")
+                            info = {
+                                "offset": p, "name": fam,
+                                "family_name": fam, "style_name": sty,
+                                "point_size": float(pt),
+                                "scale": round(sc, 3),
+                                "declared_char_count": cc,
+                                "line_height": round(lh, 2),
+                                "atlas_width": None, "atlas_height": None,
+                                "atlas_basis": None, "format": "new",
+                            }
+                            info["ascender"] = _f32(data, f + 16, endian)
+                            info["cap_height"] = _f32(data, f + 20, endian)
+                            for key in ("baseline", "descender", "center_line",
+                                        "superscript_offset",
+                                        "subscript_offset", "sub_size",
+                                        "underline", "underline_thickness",
+                                        "strikethrough",
+                                        "strikethrough_thickness",
+                                        "tab_width", "padding"):
+                                info[key] = None
+                            return info
+        p += 4
+    return None
+
+
 # ------------------------------------------------------------------ bang glyph
 def _is_invisible_id(cp: int) -> bool:    return (cp <= 0x20 or (0x7F <= cp <= 0xA0) or cp == 0xAD or cp == 0x1680
             or (0x2000 <= cp <= 0x200F) or (0x2028 <= cp <= 0x202F)
@@ -288,24 +358,93 @@ def _glyph_kind(data: bytes, off: int, endian: str, aw, ah) -> int:
     x, y, w, h, sc = f[0], f[1], f[2], f[3], f[7]
     if w < 0 or h < 0 or x < -0.5 or y < -0.5 or not (0 < sc <= 1000):
         return 0
+    if w == 0 and h == 0:
+        # Glyph rong (placeholder, vd 'y' cua Aniara_Graphics): chap nhan
+        # du x/y co nam ngoai atlas.
+        return 2
     if aw is not None and (x + w > aw + 1 or y + h > ah + 1):
         return 2 if _is_invisible_id(cp) else 0
     return 1
 
 
-def _table_check(data: bytes, p: int, n: int, endian: str, aw, ah) -> dict:
+def _glyph_kind_new(data: bytes, off: int, endian: str, aw, ah) -> int:
+    """0 = khong hop le; 1 = hop le (trong atlas); 2 = placeholder rong.
+
+    Bo cuc MOI 52 byte: id uint32 = glyph index; metrics 5 float32
+    (width, height, bearingX, bearingY, advance); rect 4 int32 (x, y tu
+    DAY atlas, w, h); scale float32; atlasIndex int32; trailing int32.
+    """
+    gid = _u32(data, off, endian) if off + 4 <= len(data) else 0
+    if gid > MAX_GLYPHS:
+        return 0
+    f = []
+    for k in range(5):
+        v = _f32(data, off + 4 + 4 * k, endian)
+        if not math.isfinite(v) or abs(v) > 100000:
+            return 0
+        f.append(v)
+    w, h, bx, by, adv = f
+    if w < 0 or h < 0 or adv < 0 or bx < -1000 or by < -1000:
+        return 0
+    rx = _i32(data, off + 24, endian)
+    ry = _i32(data, off + 28, endian)
+    rw = _i32(data, off + 32, endian)
+    rh = _i32(data, off + 36, endian)
+    sc = _f32(data, off + 40, endian)
+    ai = _i32(data, off + 44, endian)
+    tr = _i32(data, off + 48, endian)
+    if not (0 < sc <= 1000) or ai != 0 or tr != 0:
+        return 0
+    if rw < 0 or rh < 0 or rx < 0 or ry < 0:
+        return 0
+    if w == 0 and h == 0 and rw == 0 and rh == 0:
+        return 2
+    if aw is not None and (rx + rw > aw + 1 or ry + rh > ah + 1):
+        return 0
+    # Rect phai khop metrics (lam tron): w/h rect ~ metrics w/h.
+    if abs(rw - round(w)) > 2 or abs(rh - round(h)) > 2:
+        return 0
+    return 1
+
+
+def _table_check(data: bytes, p: int, n: int, endian: str, aw, ah,
+                 stride=STRIDE, kind=None) -> dict:
     """Chẩn đoán: vì sao bảng N phần tử tại p bị từ chối."""
+    kind = kind or _glyph_kind
     out = {"records": n, "fail_count": 0, "placeholder_glyphs": 0,
-           "first_fail": None}
+           "first_fail": None, "stride": stride}
     for i in range(n):
-        o = p + 4 + STRIDE * i
-        k = _glyph_kind(data, o, endian, aw, ah)
+        o = p + 4 + stride * i
+        k = kind(data, o, endian, aw, ah)
         if k == 2:
             out["placeholder_glyphs"] += 1
         if k != 0:
             continue
         out["fail_count"] += 1
         if out["first_fail"] is None:
+            if stride == STRIDE_NEW:
+                gid = _u32(data, o, endian)
+                f = [_f32(data, o + 4 + 4 * j, endian) for j in range(5)]
+                r = [_i32(data, o + 24 + 4 * j, endian) for j in range(4)]
+                sc = _f32(data, o + 40, endian)
+                finite = all(math.isfinite(v) and abs(v) <= 100000
+                             for v in f) and math.isfinite(sc)
+                if gid > MAX_GLYPHS:
+                    reason = "id_not_glyph_index"
+                elif not finite:
+                    reason = "non_finite_or_huge"
+                elif r[2] < 0 or r[3] < 0 or r[0] < 0 or r[1] < 0:
+                    reason = "negative_rect"
+                elif not (0 < sc <= 1000):
+                    reason = "bad_scale"
+                else:
+                    reason = "outside_atlas_or_rect_mismatch"
+                out["first_fail"] = {
+                    "index": i, "id": gid, "reason": reason,
+                    "metrics": f if finite else None,
+                    "rect": r, "scale": sc if finite else None,
+                }
+                continue
             cp = _i32(data, o, endian)
             f = [_f32(data, o + 4 + 4 * j, endian) for j in range(8)]
             finite = all(math.isfinite(v) and abs(v) <= 100000 for v in f)
@@ -328,23 +467,19 @@ def _table_check(data: bytes, p: int, n: int, endian: str, aw, ah) -> dict:
     return out
 
 
-def find_glyph_table(data: bytes, start: int, endian: str, aw, ah,
-                     declared: int):
-    """Tìm bảng glyph: mọi ứng viên TOÀN BỘ phần tử hợp lệ.
-
-    Chọn bảng có số phần tử = CharacterCount khai báo (nếu có); không thì
-    bảng LỚN NHẤT. Trả None nếu không có ứng viên.
-    """
+def _scan_table_stride(data: bytes, start: int, endian: str, aw, ah,
+                       stride, kind):
+    """Quet ung vien bang glyph voi 1 stride: tra list candidate."""
     n = len(data)
     cands = []
     p = _align4(start)
-    while p + 4 + STRIDE <= n:
+    while p + 4 + stride <= n:
         count = _i32(data, p, endian)
-        if 1 <= count <= MAX_GLYPHS and p + 4 + STRIDE * count <= n:
+        if 1 <= count <= MAX_GLYPHS and p + 4 + stride * count <= n:
             ph = 0
             ok = True
             for i in range(count):
-                k = _glyph_kind(data, p + 4 + STRIDE * i, endian, aw, ah)
+                k = kind(data, p + 4 + stride * i, endian, aw, ah)
                 if k == 0:
                     ok = False
                     break
@@ -354,29 +489,92 @@ def find_glyph_table(data: bytes, start: int, endian: str, aw, ah,
                 ids = set()
                 dup = 0
                 for i in range(count):
-                    cp = _i32(data, p + 4 + STRIDE * i, endian)
+                    if stride == STRIDE_NEW:
+                        cp = _u32(data, p + 4 + stride * i, endian)
+                    else:
+                        cp = _i32(data, p + 4 + stride * i, endian)
                     if cp in ids:
                         dup += 1
                     else:
                         ids.add(cp)
                 if dup <= max(0, count // 100):
-                    cands.append({"offset": p, "count": count,
+                    cands.append({"offset": p, "count": count, "stride": stride,
                                   "duplicate_ids": dup,
                                   "placeholder_glyphs": ph})
         p += 4
+    return cands
+
+
+def find_glyph_table(data: bytes, start: int, endian: str, aw, ah,
+                     declared: int):
+    """Tìm bảng glyph: mọi ứng viên TOÀN BỘ phần tử hợp lệ (ca 2 bo cuc).
+
+    Thu ca stride 36 (cu, id=codepoint) va 52 (moi, id=glyph index).
+    Chọn bảng có số phần tử = CharacterCount khai báo (nếu có); không thì
+    bảng LỚN NHẤT. Hoa: cung count thi uu tien stride 52 (rang buoc chat
+    hon: trailing/atlasIndex = 0, rect khop metrics). Trả None nếu không
+    có ứng viên.
+    """
+    cands = (_scan_table_stride(data, start, endian, aw, ah, STRIDE,
+                                _glyph_kind)
+             + _scan_table_stride(data, start, endian, aw, ah, STRIDE_NEW,
+                                  _glyph_kind_new))
     if not cands:
         return None
     pick = None
     if declared > 0:
-        for c in cands:
-            if c["count"] == declared:
-                pick = c
-                break
+        same = [c for c in cands if c["count"] == declared]
+        if same:
+            pick = max(same, key=lambda c: c["stride"])
     if pick is None:
-        pick = max(cands, key=lambda c: c["count"])
-    pick["others"] = [{"offset": c["offset"], "count": c["count"]}
-                       for c in cands if c is not pick][:4]
+        pick = max(cands, key=lambda c: (c["count"], c["stride"]))
+    pick["others"] = [{"offset": c["offset"], "count": c["count"],
+                       "stride": c["stride"]}
+                      for c in cands if c is not pick][:4]
     return pick
+
+
+def read_glyph_records(data: bytes, offset: int, count: int,
+                       stride: int, endian: str) -> List[dict]:
+    """Doc TOAN BO record cua 1 bang glyph (da duoc find_glyph_table tim).
+
+    offset: vi tri so luong (int32 count); record bat dau o offset + 4.
+    stride 36 (layout cu): id = codepoint (int32) + 8 float
+    (x, y, width, height, x_offset, y_offset, x_advance, scale).
+    stride 52 (layout moi): id = glyph index (uint32) + 5 float
+    (width, height, x_offset, y_offset, x_advance) + rect 4 int
+    (x, y-from-BOTTOM, w, h) + scale float + atlasIndex int + trailing int.
+    """
+    out = []
+    for i in range(count):
+        o = offset + 4 + stride * i
+        if stride == STRIDE_NEW:
+            out.append({
+                "id": _u32(data, o, endian),
+                "width": _f32(data, o + 4, endian),
+                "height": _f32(data, o + 8, endian),
+                "x_offset": _f32(data, o + 12, endian),
+                "y_offset": _f32(data, o + 16, endian),
+                "x_advance": _f32(data, o + 20, endian),
+                "rect": [_i32(data, o + 24 + 4 * j, endian)
+                         for j in range(4)],
+                "scale": _f32(data, o + 40, endian),
+                "atlas_index": _i32(data, o + 44, endian),
+                "trailing": _i32(data, o + 48, endian),
+            })
+        else:
+            out.append({
+                "id": _i32(data, o, endian),
+                "x": _f32(data, o + 4, endian),
+                "y": _f32(data, o + 8, endian),
+                "width": _f32(data, o + 12, endian),
+                "height": _f32(data, o + 16, endian),
+                "x_offset": _f32(data, o + 20, endian),
+                "y_offset": _f32(data, o + 24, endian),
+                "x_advance": _f32(data, o + 28, endian),
+                "scale": _f32(data, o + 32, endian),
+            })
+    return out
 
 
 def _ranges(cps) -> List[List[int]]:
@@ -495,9 +693,16 @@ def decode_object(data: bytes, endian: str, ctx=None) -> dict:
         out["name"] = hdr["name"]
     start = hdr["data_start"] if hdr is not None else 0
     fi = find_face_info(data, start, endian)
+    if fi is None:
+        # Asset layout moi (TMP 3.x) khong co ban sao FaceInfo cu:
+        # lay FaceInfo chinh (2 chuoi + pointSize INT).
+        fi = find_face_info_new(data, start, endian)
     if fi is not None:
         out["font_info"] = {
             "name": fi["name"],
+            "family_name": fi.get("family_name") or fi["name"],
+            "style_name": fi.get("style_name"),
+            "format": fi.get("format", "old"),
             "point_size": fi["point_size"],
             "scale": fi["scale"],
             "declared_char_count": fi["declared_char_count"],
@@ -528,7 +733,10 @@ def decode_object(data: bytes, endian: str, ctx=None) -> dict:
     def hex_head(off, count):
         return " ".join("%02x" % b for b in data[off:min(len(data), off + count)])
 
-    gt = find_glyph_table(data, fi["offset"] if fi is not None else start,
+    # Quet bang glyph tu data_start (khong phai tu FaceInfo): layout moi
+    # co the dat bang TRUOC ban sao FaceInfo ma find_face_info tim thay
+    # (vd LiberationSans: bang @244, FaceInfo duplicate @23336).
+    gt = find_glyph_table(data, start,
                           endian,
                           fi["atlas_width"] if fi is not None else None,
                           fi["atlas_height"] if fi is not None else None,
@@ -538,11 +746,12 @@ def decode_object(data: bytes, endian: str, ctx=None) -> dict:
         "data_start": start,
         "faceinfo_offset": fi["offset"] if fi is not None else None,
         "hex_head": hex_head(start, HEX_HEAD_BYTES),
-        "stride": STRIDE,
+        "stride": gt["stride"] if gt is not None else None,
     }
     if gt is None:
         out["status"] = "glyph_table_not_found" if fi is not None else "layout_unknown"
-        out["reason"] = ("Không thấy bảng glyph 36 byte/phần tử hợp lệ"
+        out["reason"] = ("Không thấy bảng glyph hợp lệ (36 byte/phần tử "
+                         "cu hay 52 byte/phần tử mới)"
                          + (" (FaceInfo: %s, khai báo %d ký tự)"
                             % (fi["name"], fi["declared_char_count"])
                             if fi is not None else "")
@@ -555,10 +764,19 @@ def decode_object(data: bytes, endian: str, ctx=None) -> dict:
                 if _i32(data, p, endian) == fi["declared_char_count"]:
                     h = {"offset": p,
                          "next_hex": hex_head(p + 4, 48)}
-                    if p + 4 + STRIDE * fi["declared_char_count"] <= len(data):
-                        h["table_check"] = _table_check(
-                            data, p, fi["declared_char_count"], endian,
-                            fi["atlas_width"], fi["atlas_height"])
+                    best_tc = None
+                    for st, kd in ((STRIDE, _glyph_kind),
+                                   (STRIDE_NEW, _glyph_kind_new)):
+                        if p + 4 + st * fi["declared_char_count"] <= len(data):
+                            tc = _table_check(
+                                data, p, fi["declared_char_count"], endian,
+                                fi["atlas_width"], fi["atlas_height"],
+                                stride=st, kind=kd)
+                            if (best_tc is None
+                                    or tc["fail_count"] < best_tc["fail_count"]):
+                                best_tc = tc
+                    if best_tc is not None:
+                        h["table_check"] = best_tc
                     hits.append(h)
                 p += 4
             out["diagnostics"]["count_hits"] = hits
@@ -573,25 +791,21 @@ def decode_object(data: bytes, endian: str, ctx=None) -> dict:
                 d["offset"] = best["offset"]
                 out["diagnostics"]["best_table_check"] = d
         return out
-    ids = [_i32(data, gt["offset"] + 4 + STRIDE * i, endian)
-           for i in range(gt["count"])]
-    sample = []
-    for i in range(min(3, gt["count"])):
-        o = gt["offset"] + 4 + STRIDE * i
-        sample.append({
-            "id": _i32(data, o, endian),
-            "x": _f32(data, o + 4, endian), "y": _f32(data, o + 8, endian),
-            "width": _f32(data, o + 12, endian),
-            "height": _f32(data, o + 16, endian),
-            "x_offset": _f32(data, o + 20, endian),
-            "y_offset": _f32(data, o + 24, endian),
-            "x_advance": _f32(data, o + 28, endian),
-            "scale": _f32(data, o + 32, endian),
-        })
+    stride = gt["stride"]
+    is_new = stride == STRIDE_NEW
+    if is_new:
+        ids = [_u32(data, gt["offset"] + 4 + stride * i, endian)
+               for i in range(gt["count"])]
+    else:
+        ids = [_i32(data, gt["offset"] + 4 + stride * i, endian)
+               for i in range(gt["count"])]
+    sample = read_glyph_records(data, gt["offset"], min(3, gt["count"]),
+                                stride, endian)
     idset = set(ids)
     rg = _ranges(idset)
     out["glyph_table"] = {
-        "offset": gt["offset"], "stride": STRIDE, "count": gt["count"],
+        "offset": gt["offset"], "stride": stride,
+        "layout": "new" if is_new else "old", "count": gt["count"],
         "duplicate_ids": gt["duplicate_ids"],
         "count_matches_declared": (fi["declared_char_count"] == gt["count"]
                                    if fi is not None else None),
@@ -599,13 +813,29 @@ def decode_object(data: bytes, endian: str, ctx=None) -> dict:
         "other_tables": gt["others"], "sample": sample,
     }
     out["code_points"] = {
+        "kind": "glyph_index" if is_new else "code_point",
         "count": len(idset),
         "ranges": rg[:MAX_RANGES],
         "ranges_total": len(rg),
         "ranges_truncated": len(rg) > MAX_RANGES,
     }
-    out["vietnamese"] = vietnamese_coverage(idset)
-    skip = gt["offset"] + 4 + STRIDE * gt["count"]
+    if is_new:
+        # Layout moi luu glyph INDEX, khong phai codepoint: khong biet do
+        # phu tieng Viet neu khong co cmap cua font nguon (xem sdk/sdf.py).
+        out["vietnamese"] = {
+            "level": "unknown", "required": len(vietnamese_letters_134()),
+            "covered": 0, "missing_count": 0, "missing": [],
+            "missing_codepoints": [], "percent": 0.0,
+            "ascii_letters_ok": False, "ascii_missing": [],
+            "marks": {"required": len(combining_marks_8()), "covered": 0,
+                      "missing_count": 0, "missing": [],
+                      "missing_codepoints": []},
+            "note": "layout moi: id la glyph index; can cmap font nguon "
+                    "de doi sang codepoint (sdk/sdf.py)",
+        }
+    else:
+        out["vietnamese"] = vietnamese_coverage(idset)
+    skip = gt["offset"] + 4 + stride * gt["count"]
     out["refs"] = _find_refs(data, endian, [[start, gt["offset"]],
                                             [skip, len(data)]], ctx)
     if fi is not None:
@@ -643,10 +873,15 @@ def decode_object(data: bytes, endian: str, ctx=None) -> dict:
                         "buộc chung")
         status = "partial"
     out["status"] = status
-    out["reason"] = ("Atlas có %d ký tự khác nhau; tiếng Việt %d/%d (%s)"
-                     % (len(idset), out["vietnamese"]["covered"],
-                        out["vietnamese"]["required"],
-                        out["vietnamese"]["level"]))
+    if is_new:
+        out["reason"] = ("Atlas có %d glyph (layout mới, id = glyph index; "
+                         "cần cmap font nguồn để biết codepoint/độ phủ "
+                         "tiếng Việt)" % len(idset))
+    else:
+        out["reason"] = ("Atlas có %d ký tự khác nhau; tiếng Việt %d/%d (%s)"
+                         % (len(idset), out["vietnamese"]["covered"],
+                            out["vietnamese"]["required"],
+                            out["vietnamese"]["level"]))
     return out
 
 
@@ -900,12 +1135,16 @@ def _scan_unity_bytes(data: bytes, display: str, out: dict) -> None:
     out["files_scanned"].append(display)
 
 
-def _is_unity_entry(name: str) -> bool:
+def is_unity_entry(name: str) -> bool:
     low = name.lower()
     if low.endswith((".assets", ".unity3d", ".bundle")):
         return True
     base = os.path.basename(low)
     return base.startswith("level") or base.startswith("sharedassets")
+
+
+def _is_unity_entry(name: str) -> bool:
+    return is_unity_entry(name)
 
 
 def scan_source(path: str) -> dict:

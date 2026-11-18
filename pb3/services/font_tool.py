@@ -18,8 +18,10 @@ thư mục đích rồi thay trong bản copy.
 
 GIỚI HẠN TRUNG THỰC (in ra khi chạy + ghi trong handoff/final_font.md):
 - Chế độ (1) nặng nhất: gộp glyph + tái tạo atlas SDF của TextMeshPro
-  trên điện thoại rất nặng; atlas SDF KHÔNG tái tạo được trong đợt này
-  (gặp font SDF thì báo rõ, hướng dùng chế độ 3/4 thay thế).
+  trên điện thoại rất nặng; atlas SDF tái tạo được bằng tính năng thử
+  nghiệm tmp_sdf_regen (sdk/sdf.py + bridge, đo MAE so với atlas gốc),
+  gặp font SDF thì báo rõ + hướng dùng nút tái tạo SDF (chế độ 3/4 là
+  phương án dự phòng).
 - Font nhúng trong SerializedFile (Font object, class 128): đợt này chỉ
   liệt kê, KHÔNG sửa được bytes object; thay thế chỉ làm được với file
   .ttf rời hoặc entry .ttf trong container ZIP/IPA.
@@ -759,7 +761,7 @@ def run_interactive(app, input_fn: Optional[Callable[[str], str]] = None,
     out = say if say is not None else default_print
     out(title("CÔNG CỤ FONT (4 chế độ)"))
     out("quét/gộp/thay font để game hiển thị đúng tiếng Việt.")
-    out("Giới hạn: atlas SDF của TextMeshPro không tái tạo được trong đợt này;")
+    out("Giới hạn: atlas SDF của TextMeshPro tái tạo được bằng tính năng thử nghiệm (nút 'Tái tạo atlas SDF' ở mục TMP);")
     out("font nhúng trong bundle Unity chỉ liệt kê, chưa sửa được.")
     while True:
         out("  [1] Quét 1 loạt: font nào thiếu chữ thì dựng lại cho đầy đủ")
