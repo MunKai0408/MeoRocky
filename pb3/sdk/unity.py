@@ -467,6 +467,9 @@ class UnityBackend:
         self.probe = probe
         self.has_lz4_binding = probe["lz4"]["status"] == "ok"
         self.has_unitypy = probe["unitypy"]["status"] == "ok"
+        # Cầu nối JS lz4js (chỉ có trên web): thử 1 lần, nếu lỗi không
+        # phải do input hỏng thì tắt cho backend này (rơi về lz4pure).
+        self._lz4_js_broken = False
         if mode == "LIBRARY":
             missing = [k for k in ("lz4", "unitypy") if probe[k]["status"] != "ok"]
             if missing:
@@ -544,6 +547,54 @@ class UnityBackend:
                            % (len(raw), uncompressed_size), where=where)
         return raw
 
+    def _decompress_lz4_js(self, data, uncompressed_size, where="unity"):
+        """Giải nén 1 block LZ4 qua lz4js bên JS (tốc độ, mục C1).
+
+        Cầu nối theo đúng tiền lệ Zstd/fzstd: worker.js công bố
+        `globalThis.pb3_lz4_decompress(data, size)` (hàm JS đồng bộ,
+        trả Uint8Array); Python gọi qua module `js`. Chỉ có trên web
+        (CPython/iSH: không có module `js`, hoặc worker chưa nạp được
+        lz4js) thì trả None để bên gọi rơi về binding/lz4pure — không
+        raise, không crash. Lỗi input hỏng (JS ném LZ4_CORRUPT) thì
+        raise E_CORRUPT như lz4pure; lỗi JS khác thì đánh dấu cầu nối
+        hỏng cho backend này rồi trả None (bên gọi dùng lz4pure).
+        Pyodide chuyển bytes Python -> Uint8Array cho JS, và trả
+        Uint8Array về dưới dạng JsProxy (có buffer protocol nên
+        bytes(...) dùng được; dự phòng to_py())."""
+        if self._lz4_js_broken:
+            return None
+        try:
+            import js as _js
+            _lz4 = getattr(_js, "pb3_lz4_decompress", None)
+        except Exception:
+            _lz4 = None
+        if _lz4 is None:
+            return None
+        try:
+            out = _lz4(bytes(data), int(uncompressed_size))
+        except PB3Error:
+            raise
+        except Exception as exc:  # noqa: BLE001 - lỗi JS -> fallback hoặc E_CORRUPT
+            if "LZ4_CORRUPT" in str(exc):
+                detail = str(exc).split("LZ4_CORRUPT", 1)[1].lstrip(": ").strip()
+                raise PB3Error("E_CORRUPT", "LZ4 (JS): %s" % (detail or "block hỏng"),
+                               where=where)
+            self._lz4_js_broken = True
+            return None
+        try:
+            raw = bytes(out)
+        except Exception:
+            to_py = getattr(out, "to_py", None)
+            if not callable(to_py):
+                raise PB3Error("E_CORRUPT",
+                               "pb3_lz4_decompress trả về kiểu không đọc được: %s"
+                               % type(out).__name__, where=where)
+            raw = bytes(to_py())
+        if len(raw) != uncompressed_size:
+            raise PB3Error("E_CORRUPT", "LZ4 (JS) giải nén được %d/%d byte"
+                           % (len(raw), uncompressed_size), where=where)
+        return raw
+
     def decompress(self, data, uncompressed_size, compression, where="unity"):
         """Giải nén một khối theo mã compression (0 none, 1 lzma, 2 lz4, 3 lz4hc, 5 zstd)."""
         if compression == 0:
@@ -569,6 +620,12 @@ class UnityBackend:
                     raise PB3Error("E_CORRUPT", "lz4.block lỗi: %s" % type(exc).__name__,
                                    where=where)
                 return bytes(out)
+            # Web (mọi mode, kể cả NATIVE): thử cầu nối JS lz4js trước
+            # lz4pure — nhanh hơn hàng chục lần; vắng cầu nối thì trả None và
+            # rơi về lz4pure như trước, không đổi hành vi.
+            js_out = self._decompress_lz4_js(data, uncompressed_size, where=where)
+            if js_out is not None:
+                return js_out
             return lz4pure.decompress_block(data, uncompressed_size, where=where)
         if compression == COMPRESSION_ZSTD:
             return self._decompress_zstd(data, uncompressed_size, where=where)

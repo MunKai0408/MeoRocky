@@ -537,8 +537,8 @@ def _parse_unity_bytes(data, name):
 def unity_inspect(path):
     """Inspect Unity: bundle (.unity3d) hoặc file .assets độc lập.
 
-    Dùng parser thuần của PB3 (sdk/unity.py) + backend NATIVE (binding lz4
-    nếu loadPackage('lz4') đã chạy, nếu không thì lz4pure). Không dùng
+    Dùng parser thuần của PB3 (sdk/unity.py) + backend NATIVE (cầu nối JS
+    lz4js nếu worker đã nạp, nếu không thì lz4pure). Không dùng
     UnityPy (không cài được trên Pyodide).
 
     File ZIP/IPA thì KHÔNG parse thẳng cả file (trước đây rơi xuống
