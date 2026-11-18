@@ -38,7 +38,10 @@ MANIFEST = {
     "docs": "Plist XML/nhị phân, .stringsdict (số nhiều) và .xcstrings (catalog JSON "
             "theo locale). Plist nhị phân chỉ đọc, không ghi ngược. Plist XML ghi ngược "
             "qua plistlib nên comment/DTD trong XML gốc không được giữ. .xcstrings giữ "
-            "nguyên cấu trúc, chỉ đổi giá trị chuỗi. Không hỗ trợ plist đã mã hóa.",
+            "nguyên cấu trúc, chỉ đổi giá trị chuỗi. Mục xcstrings không có "
+            "localizations thì lấy khóa gốc theo sourceLanguage; localization chỉ "
+            "có variations thì ghi hàng rỗng — cả hai đều chưa ghi lại được "
+            "(không có localization sẵn để sửa). Không hỗ trợ plist đã mã hóa.",
 }
 
 _PLURAL_RULES = {
@@ -234,10 +237,18 @@ def _walk_xcstrings_variations(key: str, loc: Optional[str], variations: Dict[st
             su = vobj.get("stringUnit")
             if isinstance(su, dict) and isinstance(su.get("value"), str):
                 pairs.append((key + "." + str(vtype) + "." + str(vname), su["value"], "ok", [], loc))
+            else:
+                # Biến thể không có stringUnit: ghi hàng rỗng để thấy (như
+                # parseXcstrings của JS: "variations: chưa trích") thay vì
+                # bỏ im lặng. Hàng này không ghi lại được (không có chỗ
+                # ghi) nên build sẽ từ chối nếu người dùng sửa giá trị.
+                pairs.append((key + "." + str(vtype) + "." + str(vname), "", "ok",
+                              ["variations: chưa trích"], loc))
 
 
 def _walk_xcstrings_entry(key: str, ent: Dict[str, Any], pairs: List[Tuple],
-                          warnings: List[Dict[str, Any]]) -> None:
+                          warnings: List[Dict[str, Any]],
+                          source_lang: Optional[str] = None) -> None:
     found = False
     locs = ent.get("localizations")
     if isinstance(locs, dict):
@@ -248,6 +259,11 @@ def _walk_xcstrings_entry(key: str, ent: Dict[str, Any], pairs: List[Tuple],
             su = lobj.get("stringUnit")
             if isinstance(su, dict) and isinstance(su.get("value"), str):
                 pairs.append((key, su["value"], "ok", [], str(loc)))
+            elif isinstance(lobj.get("variations"), dict):
+                # Localization chỉ có variations, không có stringUnit:
+                # ghi hàng rỗng (như parseXcstrings của JS) thay vì bỏ.
+                pairs.append((key, "", "ok", ["variations: chưa trích"],
+                              str(loc)))
             variations = lobj.get("variations")
             if isinstance(variations, dict):
                 _walk_xcstrings_variations(key, str(loc), variations, pairs)
@@ -256,8 +272,16 @@ def _walk_xcstrings_entry(key: str, ent: Dict[str, Any], pairs: List[Tuple],
         found = True
         _walk_xcstrings_variations(key, None, variations, pairs)
     if not found:
-        warnings.append({"code": "E_PARSE_PARTIAL", "key": key,
-                         "msg": "mục xcstrings không có localization nào"})
+        if source_lang:
+            # Không có localization nào nhưng có sourceLanguage: lấy khóa
+            # gốc làm text (như parseXcstrings của JS). Hàng này chỉ để
+            # thấy — chưa hỗ trợ thêm localization mới nên build sẽ từ
+            # chối nếu người dùng sửa giá trị.
+            pairs.append((key, key, "ok",
+                          ["khóa gốc (chưa có localizations)"], source_lang))
+        else:
+            warnings.append({"code": "E_PARSE_PARTIAL", "key": key,
+                             "msg": "mục xcstrings không có localization nào"})
 
 
 def _parse_xcstrings(data: bytes, path: str, locale: Optional[str]) -> Dict[str, Any]:
@@ -270,12 +294,15 @@ def _parse_xcstrings(data: bytes, path: str, locale: Optional[str]) -> Dict[str,
         raise PB3Error("E_UNSUPPORTED_FORMAT", "xcstrings thiếu mục strings", where=path)
     pairs: List[Tuple] = []
     warnings: List[Dict[str, Any]] = []
+    source_lang = root.get("sourceLanguage")
+    if not isinstance(source_lang, str) or not source_lang:
+        source_lang = None
     for key, ent in root["strings"].items():
         if not isinstance(ent, dict):
             warnings.append({"code": "E_PARSE_PARTIAL", "key": str(key),
                              "msg": "mục xcstrings không phải object"})
             continue
-        _walk_xcstrings_entry(str(key), ent, pairs, warnings)
+        _walk_xcstrings_entry(str(key), ent, pairs, warnings, source_lang)
     entries, conflicts = make_entries(pairs, path, len(data), doc.encoding, locale)
     return {"entries": entries,
             "schema_hint": {"flavor": "xcstrings", "kind": "xcstrings"},

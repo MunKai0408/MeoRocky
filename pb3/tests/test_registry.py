@@ -465,13 +465,15 @@ class TestRegistry(PluginTree):
         # Claude 08 thêm 7 plugin engine game thật (decisions #154-160):
         # godot_pck, godot_translation, unreal_pak, unreal_locres,
         # cocos_detect, defold_detect, gamemaker_detect.
+        # IPA-LOC (2026-11-18) thêm castle_db (CastleDB, Dead Cells data.cdb).
         # Vẫn không có plugin MẪU/giả (decisions #19): mọi id dưới đây đều có
         # plugin thật + fixture + test.
         from tests.helpers import ROOT
         r = build_registry(str(ROOT))
         rows = {row["id"]: row for row in r.rows()}
-        self.assertEqual(sorted(rows), ["apple_plist", "apple_strings", "cocos_detect",
-                                        "csv_table", "defold_detect", "gamemaker_detect",
+        self.assertEqual(sorted(rows), ["apple_plist", "apple_strings", "castle_db",
+                                        "cocos_detect", "csv_table", "defold_detect",
+                                        "gamemaker_detect",
                                         "generic_strings", "godot_pck", "godot_translation",
                                         "json_text", "po_mo", "properties",
                                         "resx", "sqlite_loc", "unreal_locres", "unreal_pak",
@@ -490,6 +492,10 @@ class TestRegistry(PluginTree):
             self.assertEqual(rows[pid]["maturity"], "M2", pid)
         self.assertEqual(rows["sqlite_loc"]["kind"], "format")
         self.assertEqual(rows["generic_strings"]["kind"], "extractor")
+        # IPA-LOC: castle_db (CastleDB, format/M2, có fixture + test).
+        self.assertEqual(rows["castle_db"]["state"], "ok")
+        self.assertEqual(rows["castle_db"]["kind"], "format")
+        self.assertEqual(rows["castle_db"]["maturity"], "M2")
         # Claude 08: plugin engine game (decisions #154-160).
         for pid in ("godot_pck", "unreal_pak"):
             self.assertEqual(rows[pid]["state"], "ok", pid)
