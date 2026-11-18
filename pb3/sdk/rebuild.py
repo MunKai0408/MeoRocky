@@ -330,7 +330,8 @@ def _enumerate_units(source_bytes, backend, lim, refused=None):
 
     File doc lap bundle/.assets -> don vi cua chinh no; ZIP/IPA -> moi
     bundle/.assets o cap 1 (entry > max_entry_bytes thi bo qua, ghi chu
-    trong warnings cua ket qua). Khong mo container long sau hon 1 cap.
+    trong warnings cua ket qua). Entry > max_memory_read_bytes (duong ep
+    doc tron vao RAM) cung bo qua. Khong mo container long sau hon 1 cap.
     Bundle ma hoa trong ZIP: ghi vao danh sach `refused` (neu duoc truyen
     vao) voi ma E_ENCRYPTED thay vi bo qua im lang; loi doc khac (bundle
     hong/khong phai Unity) van bo qua vi khong phan biet duoc voi du
@@ -362,7 +363,13 @@ def _enumerate_units(source_bytes, backend, lim, refused=None):
     units = []
     with zf:
         for info in zf.infolist():
-            if info.is_dir() or info.file_size > lim.max_entry_bytes:
+            # Don vi ep phai doc tron vao RAM (max_memory_read_bytes,
+            # 128 MiB); entry lon hon chi gay refused gia (E_TOO_LARGE bi
+            # doi thanh "khong tim thay" o _sdk_resolve_vpath) — bo qua
+            # nhu truoc caps-po (tran 64 MiB). Duong trich xuat streaming
+            # (extraction.py) khong anh huong.
+            if (info.is_dir() or info.file_size > lim.max_entry_bytes
+                    or info.file_size > lim.max_memory_read_bytes):
                 continue
             try:
                 entry_data = zf.read(info.filename)
