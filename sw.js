@@ -35,7 +35,7 @@ const PREFETCH_CACHE = "beartea-prefetch-v1";
 // Danh sách precache: shell tĩnh + Pyodide vendored + mã PB3 (khớp đúng
 // pb3/files.json mà worker.js tải lúc boot) + font đi kèm + fixture tự
 // kiểm tra (C2/C3: fixtures/selftest.zip để lần thăm 2 offline vẫn chạy
-// được "Tự kiểm tra"). Sinh từ đĩa lúc viết file này (127 mục);
+// được "Tự kiểm tra"). Sinh từ đĩa lúc viết file này (132 mục);
 // thêm/bớt file vendored thì cập nhật cả danh sách này, không thì
 // lần thăm 2 offline sẽ thiếu file đó.
 const PRECACHE_URLS = [
@@ -47,6 +47,7 @@ const PRECACHE_URLS = [
   "stream.js",
   "opfs.js",
   "kb-store.js",
+  "colab_handoff.js",
   "gt.js",
   "fzstd/index.mjs",
   "manifest.webmanifest",
@@ -122,6 +123,7 @@ const PRECACHE_URLS = [
   "pb3/sdk/arbitration.py",
   "pb3/sdk/batch.py",
   "pb3/sdk/bmfont.py",
+  "pb3/sdk/colab_job.py",
   "pb3/sdk/compress.py",
   "pb3/sdk/containers.py",
   "pb3/sdk/csvutil.py",
