@@ -24,6 +24,14 @@ Khong co verdict thi khong giao file. Canh bao (warning) khong chan,
 nhung luon hien ro; khong co trang thai "skip": kiem tra nao khong
 chay duoc thi FAIL kem ly do (fail-closed).
 
+Fail-fast (gate-crash-fix): (a) hoac (b) da FAIL thi bo qua mo phong
+nang (preview + lap plan + verify) vi verdict da la FAIL — (c)/(e)
+ghi "fail" kem ly do skipped_simulation, ket qua them co
+simulation_skipped; (d) font van chay (re, khong mo phong). Mo phong
+nang tren IPA day du ton ~5-6x dung luong file RAM Python (IPA 9K
+173 MB: ~921 MB) + ~3x tren tab web -> sap tab Safari; bo qua no khi
+verdict da dinh la cach re nhat tranh sap.
+
 Che do:
   - pre_write (khong co pressed_bytes): mo phong ep trong RAM theo
     dung duong (E) roi doc lai bytes da mo phong de diffverify. Khong
@@ -656,37 +664,24 @@ def _build_plans(source_bytes: bytes, source_name: str,
                  ) -> Dict[str, Any]:
     """Lap plan moi don vi theo DUNG duong (E): group_by_unit ->
     _expand_group_units -> build_plan -> _apply_unit_plan (executor
-    hien co), roi phan loai key thua nhu apply_rebuild (gom SF cua
-    tat ca don vi voi file ZIP de join StringTable). Tra plans (kem
-    bytes da mo phong), refused, unmatched, unchanged. Loi tung don
-    vi vao refused, khong fail ca dot (nhu (E)). source_locale: cot
-    ngon ngu goc de ghi vao MonoBehaviour (mac dinh "en")."""
+    hien co), roi phan loai key thua nhu apply_rebuild (quet nhe tat ca
+    don vi voi file ZIP de join StringTable — chi giu du lieu dan xuat,
+    tha SF ngay, xem _scan_units_derived). Tra plans (kem bytes da mo
+    phong), refused, unmatched, unchanged. Loi tung don vi vao refused,
+    khong fail ca dot (nhu (E)). source_locale: cot ngon ngu goc de ghi
+    vao MonoBehaviour (mac dinh "en")."""
     grouped = _rb.group_by_unit(translations, provenance, choices)
     groups = grouped["groups"]
     refused: List[Dict[str, str]] = []
     unit_plans: List[Tuple[Any, Any, Dict[str, Any]]] = []
     planned_keys: Set[str] = set()
-    sfs_by_unit: Dict[str, Any] = {}
     total_changes = 0
-    # M1 (G1): mb_index nhu apply_rebuild (SharedTableData co the nam o
-    # bundle khac StringTable) — quet truoc khi lap plan.
-    mb_index: Dict[str, Dict[str, int]] = {}
-    try:
-        for (vpath, _kind) in _rb._enumerate_units(source_bytes, be, lim):
-            key = vpath or "<file>"
-            if key not in sfs_by_unit:
-                try:
-                    sfs_by_unit[key] = _rb._unit_sfs(
-                        source_bytes, vpath, be, lim)
-                except PB3Error:
-                    pass
-    except PB3Error:
-        pass
-    try:
-        mb_index = _plan.build_mb_shared_index(
-            [sf for lst in sfs_by_unit.values() for sf in lst])
-    except Exception:
-        mb_index = {}
+    # M1 (G1) + gate-crash-fix: quet nhe nhu apply_rebuild
+    # (SharedTableData co the nam o bundle khac StringTable) — chi giu
+    # du lieu dan xuat, tha SF ngay (SF giu toan bo bytes goc).
+    scan = _rb._scan_units_derived(source_bytes, be, lim,
+                                   source_locale=source_locale)
+    mb_index: Dict[str, Dict[str, int]] = scan["mb_index"]
     for group_unit in sorted(groups, key=lambda g: "" if g is None else str(g)):
         grp = groups[group_unit]
         try:
@@ -698,12 +693,10 @@ def _build_plans(source_bytes: bytes, source_name: str,
                             "code": exc.code, "message": _err_text(exc)})
             continue
         for (vpath, _kind) in unit_list:
-            if (vpath or "<file>") not in sfs_by_unit:
-                try:
-                    sfs_by_unit[vpath or "<file>"] = _rb._unit_sfs(
-                        source_bytes, vpath, be, lim)
-                except PB3Error:
-                    pass
+            # Bo sung du lieu dan xuat cho don vi mo rong chua co trong
+            # scan (nhu apply_rebuild).
+            _rb._scan_add_unit(scan, source_bytes, vpath, be, lim,
+                               source_locale=source_locale)
             try:
                 plan = _plan.build_plan(
                     source_bytes, grp["translations"],
@@ -738,29 +731,18 @@ def _build_plans(source_bytes: bytes, source_name: str,
                       "plan": plan, "kind": kind, "label": label,
                       "mode": mode, "size_before": int(size_before),
                       "simulated": cur})
-    if zipfile.is_zipfile(io.BytesIO(source_bytes)):
-        try:
-            for (vpath, _kind) in _rb._enumerate_units(source_bytes, be, lim):
-                if (vpath or "<file>") in sfs_by_unit:
-                    continue
-                try:
-                    sfs_by_unit[vpath or "<file>"] = _rb._unit_sfs(
-                        source_bytes, vpath, be, lim)
-                except PB3Error:
-                    pass
-        except PB3Error:
-            pass
-    try:
-        all_sfs = [sf for lst in sfs_by_unit.values() for sf in lst]
-        mb_terms = _rb._collect_mb_keys(all_sfs)
-    except Exception:
-        all_sfs, mb_terms = [], set()
+    # Phan loai key thua tu du lieu dan xuat cua scan (SF da tha).
+    # LUU Y: khong truyen mb_values o day — giu Y HET hanh vi cu cua
+    # _build_plans (apply_rebuild thi co truyen; hai duong von lech nhau
+    # o diem nay, dung "sua" o day keo doi verdict).
     leftover = [k for k in translations if k not in planned_keys]
     unmatched, unchanged = _rb._classify_unmatched(
-        leftover, translations, all_sfs, mb_terms,
+        leftover, translations, scan["text_values"], scan["mb_terms"],
+        mb_index=mb_index,
         csv_values=_rb._collect_csv_values(source_bytes, be, lim,
                                            source_locale),
-        source_locale=source_locale)
+        source_locale=source_locale,
+        nondict_scripts=scan["nondict_scripts"])
     for item in unmatched:
         item["unit"] = None
     for grp_unit, grp in groups.items():
@@ -1223,22 +1205,43 @@ def run_gate(source_bytes: bytes, *, source_name: str,
         allowed=allow["allowed_placeholders"])
     _prog(2)
 
-    # Preview (E) de doi chieu + ke hoach rieng cua cong.
+    # Fail-fast (gate-crash-fix): (a) hoac (b) da FAIL thi verdict da la
+    # FAIL — bo qua mo phong nang (preview + lap plan + verify) vi no
+    # khong doi duoc verdict, chi ton RAM (IPA 9K: dinh Python ~921 MB,
+    # tab Safari ~1,65 GB -> sap tab). group_by_unit re (khong doc file)
+    # nen van chay de giu conflicts/warnings/scan_all that; kiem tra
+    # font (d) van chay binh thuong (re, khong mo phong). (c)/(e) se
+    # ghi "fail" kem ly do o duoi (cong fail-closed, khong co trang
+    # thai "skip").
+    early_fail = (check_a["status"] != "pass"
+                  or check_b["status"] != "pass")
     preview = None
     preview_error = None
-    try:
-        preview = _rb.build_rebuild_preview(
-            source_bytes, source_name=source_name,
-            translations=translations, provenance=provenance,
-            choices=choices, backend=be, limits=lim, src_path=None,
-            source_locale=source_locale)
-    except ValueError:
-        raise
-    except PB3Error as exc:
-        preview_error = exc
-    built = _build_plans(source_bytes, source_name, translations,
-                         provenance, choices, be, lim,
-                         source_locale=source_locale)
+    if early_fail:
+        _early_grouped = _rb.group_by_unit(translations, provenance,
+                                           choices)
+        built = {"grouped": _early_grouped, "plans": [], "refused": [],
+                 "unmatched": [], "unmatched_total": 0, "unchanged": 0,
+                 "planned_keys": set(), "total_changes": 0}
+        verify = {"units": [], "mismatches": [], "structural": [],
+                  "verified_keys": set()}
+    else:
+        # Preview (E) de doi chieu + ke hoach rieng cua cong.
+        try:
+            preview = _rb.build_rebuild_preview(
+                source_bytes, source_name=source_name,
+                translations=translations, provenance=provenance,
+                choices=choices, backend=be, limits=lim, src_path=None,
+                source_locale=source_locale)
+        except ValueError:
+            raise
+        except PB3Error as exc:
+            preview_error = exc
+        built = _build_plans(source_bytes, source_name, translations,
+                             provenance, choices, be, lim,
+                             source_locale=source_locale)
+        verify = _verify_pressed_units(source_bytes, built["plans"],
+                                       pressed_bytes, be, lim)
     _prog(3)
     plan_items = built["plans"]
     refused = built["refused"]
@@ -1246,9 +1249,6 @@ def run_gate(source_bytes: bytes, *, source_name: str,
     unmatched_total = built["unmatched_total"]
     unchanged = built["unchanged"]
     planned_changes = built["total_changes"]
-
-    verify = _verify_pressed_units(source_bytes, plan_items, pressed_bytes,
-                                   be, lim)
     _prog(4)
 
     # (d) font.
@@ -1377,6 +1377,25 @@ def run_gate(source_bytes: bytes, *, source_name: str,
          "source_sha256": source_sha,
          "pressed_sha256": pressed_sha})
 
+    if early_fail:
+        # Fail-fast: (c)/(e) khong chay mo phong — ghi "fail" kem ly do
+        # (cong fail-closed, khong co trang thai "skip"). Counts giu
+        # nguyen (0 thay doi / 0 don vi — chua mo phong).
+        _skip_msg = ("Không chạy mô phỏng ép/kiểm vì kiểm tra (a)/(b) đã "
+                     "CHƯA ĐẠT — sửa bản dịch/bản gốc rồi kiểm lại. Mô phỏng "
+                     "không đổi được verdict FAIL nên đã bỏ qua để tránh "
+                     "tốn RAM.")
+        check_c = _check(
+            CHECK_DIFFVERIFY, check_c["name"], "fail",
+            "Bỏ qua mô phỏng: " + _skip_msg,
+            [{"kind": "skipped_simulation", "message_vi": _skip_msg}],
+            check_c["warnings"], check_c["counts"])
+        check_e = _check(
+            CHECK_INTEGRITY, check_e["name"], "fail",
+            "Bỏ qua mô phỏng: " + _skip_msg,
+            [{"kind": "skipped_simulation", "message_vi": _skip_msg}],
+            check_e["warnings"], check_e["counts"])
+
     checks = [check_a, check_b, check_c, check_d, check_e]
     verdict = "PASS" if all(c["status"] == "pass" for c in checks) else "FAIL"
     errors: List[str] = []
@@ -1402,7 +1421,7 @@ def run_gate(source_bytes: bytes, *, source_name: str,
     return {
         "ok": True, "gate_version": GATE_VERSION,
         "verdict": verdict, "delivery_allowed": verdict == "PASS",
-        "mode": mode,
+        "mode": mode, "simulation_skipped": bool(early_fail),
         "source_name": source_name, "source_sha256": source_sha,
         "pressed_name": pressed_name,
         "pressed_sha256": pressed_sha,

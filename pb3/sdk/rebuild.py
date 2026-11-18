@@ -549,6 +549,170 @@ def _collect_mb_keys(sfs, mb_index=None):
     return terms
 
 
+def _derive_unit_text(sfs, source_locale="en"):
+    """(text_values, nondict_scripts) tu list SF cua 1 don vi.
+
+    text_values: {key: gia tri} gop tu moi TextAsset JSON dang dict
+    (first-wins theo thu tu SF) + gia tri CSV trong TextAsset (M3).
+    nondict_scripts: script TextAsset khong phai JSON dict (de phan
+    loai not_json_dict). Logic Y HET vong SF trong _classify_unmatched
+    cu — chi tach ra de quet nhe co the tha SF ngay sau khi trich.
+    """
+    from sdk.csvutil import csv_values as _csv_values
+    from sdk.csvutil import is_csv_text_asset
+
+    text_values: Dict[str, Any] = {}
+    nondict_scripts: List[str] = []
+    for sf in sfs or []:
+        for _pid, _name, script in sf.text_assets():
+            try:
+                obj = json.loads(script)
+            except (ValueError, UnicodeDecodeError):
+                # M3: TextAsset CSV trong SF — lay gia tri cot nguon.
+                try:
+                    if is_csv_text_asset(script, _name):
+                        for k, v in _csv_values(
+                                script.encode("utf-8"), _name,
+                                source_locale).items():
+                            text_values.setdefault(k, v)
+                except Exception:
+                    pass
+                continue
+            if isinstance(obj, dict):
+                for k, v in obj.items():
+                    text_values.setdefault(k, v)
+            else:
+                nondict_scripts.append(script)
+    return text_values, nondict_scripts
+
+
+def _scan_units_derived(source_bytes, backend, lim, source_locale="en",
+                        mb_index=None):
+    """Quet nhe TAT CA don vi trong file: chi giu du lieu dan xuat NHO,
+    tha SerializedFile ngay sau khi trich xong tung don vi.
+
+    Dong co (gate-crash-fix): SerializedFile giu toan bo bytes goc
+    (raw=data); giu SF cua tat ca don vi trong IPA cung luc (sfs_by_unit
+    cu) la dinh RAM lon nhat cua cong/ep (IPA 9K 173 MB: dinh Python
+    ~921 MB, tab Safari ~1,65 GB -> sap tab). Quet nay trich xong 1 don
+    vi la tha SF cua no, nen dinh chi con ~1 don vi lon nhat + file goc.
+
+    Tra dict:
+    - "units": [(vpath, kind)] theo thu tu _enumerate_units.
+    - "mb_index": {collection: {key: m_Id}} da gop mb_index ngoai
+      (du lieu file dang chon thang khi trung — nhu code cu).
+    - "mb_terms": set term MB; "mb_values": {key: {gia tri goc}}.
+    - "text_values": {key: gia tri} gop tu TextAsset (first-wins).
+    - "nondict_scripts": [script TextAsset khong phai JSON dict].
+    - "seen": {vpath-or-"<file>"} cac don vi da quet (de caller bo sung
+      don vi mo rong sau ma khong quet lai).
+
+    Thu tu + ngu nghia setdefault/last-wins giu y nhu code cu (don vi
+    theo thu tu _enumerate_units; key trung: text_values first-wins,
+    mb_index last-wins). Liet ke that bai thi tra dict rong tuong duong
+    (mb_index={}...), nhu code cu. Loi tung don vi thi bo qua don vi do,
+    khong fail ca dot. Moi don vi duoc parse 2 lan (1 cho mb_index, 1
+    cho terms/text — vi StringTable can full index moi dat ten duoc):
+    ton them CPU, khong ton them RAM giu.
+    """
+    try:
+        units = _enumerate_units(source_bytes, backend, lim)
+    except PB3Error:
+        units = []
+    seen = set()
+    # Pha 1: mb_index (SharedTableData thuong nam o bundle khac ST).
+    mb_index_self: Dict[str, Dict[str, int]] = {}
+    for (vpath, _kind) in units:
+        key = vpath or "<file>"
+        if key in seen:
+            continue
+        seen.add(key)
+        try:
+            sfs = _unit_sfs(source_bytes, vpath, backend, lim)
+        except PB3Error:
+            continue
+        try:
+            idx = _plan.build_mb_shared_index(sfs)
+        except Exception:
+            idx = {}
+        for coll, keys in (idx or {}).items():
+            mb_index_self.setdefault(coll, {}).update(keys or {})
+        del sfs
+    if mb_index:
+        merged_index: Dict[str, Dict[str, int]] = {}
+        for coll, keys in (mb_index or {}).items():
+            merged_index[coll] = dict(keys or {})
+        for coll, keys in mb_index_self.items():
+            merged_index.setdefault(coll, {}).update(keys or {})
+        mb_index = merged_index
+    else:
+        mb_index = mb_index_self
+    # Pha 2: terms/values/text (can full mb_index de dat ten ST).
+    mb_terms: Set[str] = set()
+    mb_values: Dict[str, Set[str]] = {}
+    text_values: Dict[str, Any] = {}
+    nondict_scripts: List[str] = []
+    for (vpath, _kind) in units:
+        try:
+            sfs = _unit_sfs(source_bytes, vpath, backend, lim)
+        except PB3Error:
+            continue
+        try:
+            terms, values = _collect_mb_info(
+                sfs, source_locale=source_locale, mb_index=mb_index)
+        except Exception:
+            terms, values = set(), {}
+        mb_terms |= set(terms or [])
+        for k, vs in (values or {}).items():
+            mb_values.setdefault(k, set()).update(vs or [])
+        try:
+            tv, nds = _derive_unit_text(sfs, source_locale=source_locale)
+        except Exception:
+            tv, nds = {}, []
+        for k, v in tv.items():
+            text_values.setdefault(k, v)
+        nondict_scripts.extend(nds)
+        del sfs
+    return {"units": list(units), "mb_index": mb_index,
+            "mb_terms": mb_terms, "mb_values": mb_values,
+            "text_values": text_values, "nondict_scripts": nondict_scripts,
+            "seen": seen}
+
+
+def _scan_add_unit(scan, source_bytes, vpath, backend, lim,
+                   source_locale="en"):
+    """Bo sung 1 don vi (khong co trong liet ke ban dau — vd don vi mo
+    rong tu provenance) vao scan. Dung mb_index HIEN TAI, KHONG gop
+    SharedTableData cua don vi nay vao index — khop hanh vi cu:
+    mb_index chi build 1 lan truoc Vong 1, don vi them sau khong duoc
+    vao index (chi term/text cua no duoc tinh)."""
+    key = vpath or "<file>"
+    if key in scan["seen"]:
+        return
+    scan["seen"].add(key)
+    try:
+        sfs = _unit_sfs(source_bytes, vpath, backend, lim)
+    except PB3Error:
+        return
+    try:
+        terms, values = _collect_mb_info(
+            sfs, source_locale=source_locale,
+            mb_index=scan["mb_index"])
+    except Exception:
+        terms, values = set(), {}
+    scan["mb_terms"] |= set(terms or [])
+    for k, vs in (values or {}).items():
+        scan["mb_values"].setdefault(k, set()).update(vs or [])
+    try:
+        tv, nds = _derive_unit_text(sfs, source_locale=source_locale)
+    except Exception:
+        tv, nds = {}, []
+    for k, v in tv.items():
+        scan["text_values"].setdefault(k, v)
+    scan["nondict_scripts"].extend(nds)
+    del sfs
+
+
 def _collect_csv_values(source_bytes, backend, lim, source_locale):
     """{key: value} cot nguon cua moi file CSV doc lap trong input (M3).
 
@@ -604,9 +768,9 @@ def _st_key_in_index(key, mb_index):
     return isinstance(keys, dict) and bare in keys
 
 
-def _classify_unmatched(keys, translations, sfs, mb_terms, mb_values=None,
-                        mb_index=None, csv_values=None,
-                        source_locale="en"):
+def _classify_unmatched(keys, translations, text_values, mb_terms,
+                        mb_values=None, mb_index=None, csv_values=None,
+                        source_locale="en", nondict_scripts=None):
     """Phan loai key khong vao plan: unchanged / non_string_value /
     not_json_dict / string_table_other_unit / monobehaviour / not_found.
     Tra (unmatched, unchanged). mb_values: {key: {gia tri goc}} — key ma
@@ -615,33 +779,18 @@ def _classify_unmatched(keys, translations, sfs, mb_terms, mb_values=None,
     ST khong co trong file dang chon -> string_table_other_unit.
     csv_values (M3): {key: value} cot nguon cua file CSV doc lap — uu
     tien cao nhat (nhu extraction: CSV la nguon dau). TextAsset CSV
-    trong SF cung duoc doc o day (cot source_locale)."""
+    trong SF cung duoc doc o day (cot source_locale).
+    text_values/nondict_scripts (gate-crash-fix): du lieu dan xuat tu
+    _scan_units_derived thay cho list SF — SF da tha sau khi trich
+    (khong giu list SF trong RAM). Thu tu gop y nhu vong SF cu:
+    csv_values truoc (ghi de), text_values sau (first-wins).
+    """
     dict_values = {}  # key -> (value, is_str)
-    nondict_scripts = []
     for k, v in (csv_values or {}).items():
         dict_values[k] = v
-    for sf in sfs:
-        for _pid, _name, script in sf.text_assets():
-            try:
-                obj = json.loads(script)
-            except (ValueError, UnicodeDecodeError):
-                # M3: TextAsset CSV trong SF — lay gia tri cot nguon.
-                try:
-                    from sdk.csvutil import csv_values as _csv_values
-                    from sdk.csvutil import is_csv_text_asset
-                    if is_csv_text_asset(script, _name):
-                        for k, v in _csv_values(
-                                script.encode("utf-8"), _name,
-                                source_locale).items():
-                            dict_values.setdefault(k, v)
-                except Exception:
-                    pass
-                continue
-            if isinstance(obj, dict):
-                for k, v in obj.items():
-                    dict_values.setdefault(k, v)
-            else:
-                nondict_scripts.append(script)
+    for k, v in (text_values or {}).items():
+        dict_values.setdefault(k, v)
+    nondict_scripts = list(nondict_scripts or [])
     unmatched = []
     unchanged = 0
     for key in keys:
@@ -817,42 +966,23 @@ def apply_rebuild(source_bytes, *, source_name, translations,
     refused: List[Dict[str, str]] = []
     patched: List[Tuple[Tuple[str, str, str], bytes]] = []
     planned_keys = set()
-    sfs_by_unit: Dict[str, Any] = {}
     total_changes = 0
-    # M1 (G1): build mb_index 1 lan truoc Vong 1 tu SF cua TAT CA don vi
-    # (SharedTableData thuong nam o bundle khac StringTable — vd 9 Kings:
-    # shared o localization-assets-shared, ST o localization-string-tables
-    # — nen phai quet truoc, khong doi toi khi gap tung don vi). Liet ke
-    # that bai thi mb_index = {} (ST chi ghi entry da co, khong chen
-    # duoc key thieu; LS khong can mb_index). mb_index ngoai (tu trich
-    # xuat IPA day du) gop them: du lieu cua file dang chon thang khi
-    # trung (collection, key) — de phan loai key ST o don vi khac khi chi
-    # chon 1 file .assets le.
-    mb_index_self: Dict[str, Dict[str, int]] = {}
-    try:
-        for (vpath, _kind) in _enumerate_units(source_bytes, be, lim):
-            key = vpath or "<file>"
-            if key not in sfs_by_unit:
-                try:
-                    sfs_by_unit[key] = _unit_sfs(source_bytes, vpath, be, lim)
-                except PB3Error:
-                    pass
-    except PB3Error:
-        pass
-    try:
-        mb_index_self = _plan.build_mb_shared_index(
-            [sf for lst in sfs_by_unit.values() for sf in lst])
-    except Exception:
-        mb_index_self = {}
-    if mb_index:
-        merged_index: Dict[str, Dict[str, int]] = {}
-        for coll, keys in (mb_index or {}).items():
-            merged_index[coll] = dict(keys or {})
-        for coll, keys in (mb_index_self or {}).items():
-            merged_index.setdefault(coll, {}).update(keys or {})
-        mb_index = merged_index
-    else:
-        mb_index = mb_index_self
+    # M1 (G1) + gate-crash-fix: quet nhe 1 lan truoc Vong 1 (xem
+    # _scan_units_derived): chi giu du lieu dan xuat nho (mb_index,
+    # mb_terms/values, text_values), tha SF ngay — KHONG giu SF cua tat
+    # ca don vi (sfs_by_unit cu) vi SF giu toan bo bytes goc, la dinh RAM
+    # lon nhat cua cong/ep. SharedTableData thuong nam o bundle khac
+    # StringTable (vd 9 Kings: shared o localization-assets-shared, ST o
+    # localization-string-tables) nen phai quet truoc, khong doi toi khi
+    # gap tung don vi. Liet ke that bai thi mb_index = {} (ST chi ghi
+    # entry da co, khong chen duoc key thieu; LS khong can mb_index).
+    # mb_index ngoai (tu trich xuat IPA day du) gop them: du lieu cua
+    # file dang chon thang khi trung (collection, key) — de phan loai
+    # key ST o don vi khac khi chi chon 1 file .assets le.
+    scan = _scan_units_derived(source_bytes, be, lim,
+                               source_locale=source_locale,
+                               mb_index=mb_index)
+    mb_index = scan["mb_index"]
     # Vong 1: lap plan moi don vi.
     unit_plans = []  # (group_unit, vpath, kind, plan)
     for group_unit in sorted(groups, key=lambda g: "" if g is None else str(g)):
@@ -867,16 +997,13 @@ def apply_rebuild(source_bytes, *, source_name, translations,
                             "message": _err_text(exc)})
             continue
         for (vpath, _kind) in unit_list:
-            # Thu SF cho MOI don vi da mo rong (ke ca don vi khong lap
-            # duoc plan): phan loai key thua can term MB cua tat ca don
-            # vi — neu khong, key MB o don vi khong co TextAsset JSON
-            # se bi gan nham not_found thay vi monobehaviour (G1).
-            if (vpath or "<file>") not in sfs_by_unit:
-                try:
-                    sfs_by_unit[vpath or "<file>"] = _unit_sfs(
-                        source_bytes, vpath, be, lim)
-                except PB3Error:
-                    pass
+            # Bo sung du lieu dan xuat cho MOI don vi da mo rong (ke ca
+            # don vi khong lap duoc plan): phan loai key thua can term MB
+            # cua tat ca don vi — neu khong, key MB o don vi khong co
+            # TextAsset JSON se bi gan nham not_found thay vi
+            # monobehaviour (G1). Chi bo sung don vi chua co trong scan.
+            _scan_add_unit(scan, source_bytes, vpath, be, lim,
+                           source_locale=source_locale)
             try:
                 plan = _plan.build_plan(
                     source_bytes, grp["translations"],
@@ -928,43 +1055,19 @@ def apply_rebuild(source_bytes, *, source_name, translations,
         })
         patched.append(((kind, label,
                          "%s|%s" % (vpath, plan["id"])), cur))
-        try:
-            sfs_by_unit[vpath or "<file>"] = _unit_sfs(
-                source_bytes, vpath, be, lim)
-        except PB3Error:
-            pass
-    # Phan loai key chua vao plan (quet sf cua don vi da thay + term MB).
-    # Term StringTable can join SharedTable o bundle KHAC (vd 9 Kings:
-    # shared_table nam o localization-assets-shared bundle, string
-    # table o localization-string-tables bundle): voi file ZIP/IPA thi
-    # gom them SF cua TAT CA don vi da liet ke, khong chi don vi cua
-    # nhom provenance — neu khong term se thieu va key MB bi gan nham
-    # not_found.
-    if zipfile.is_zipfile(io.BytesIO(source_bytes)):
-        try:
-            for (vpath, _kind) in _enumerate_units(source_bytes, be, lim):
-                if (vpath or "<file>") in sfs_by_unit:
-                    continue
-                try:
-                    sfs_by_unit[vpath or "<file>"] = _unit_sfs(
-                        source_bytes, vpath, be, lim)
-                except PB3Error:
-                    pass
-        except PB3Error:
-            pass
-    try:
-        all_sfs = [sf for lst in sfs_by_unit.values() for sf in lst]
-        mb_terms, mb_values = _collect_mb_info(
-            all_sfs, source_locale=source_locale, mb_index=mb_index)
-    except Exception:
-        mb_terms = set()
-        mb_values = {}
+    # Phan loai key chua vao plan (du lieu dan xuat tu scan nhe — SF da
+    # tha; term StringTable can join SharedTable o bundle KHAC (vd 9
+    # Kings: shared_table nam o localization-assets-shared bundle,
+    # string table o localization-string-tables bundle) nen scan da gom
+    # TAT CA don vi da liet ke, khong chi don vi cua nhom provenance —
+    # neu khong term se thieu va key MB bi gan nham not_found.
     leftover = [k for k in translations if k not in planned_keys]
     unmatched, unchanged = _classify_unmatched(
-        leftover, translations, all_sfs, mb_terms, mb_values=mb_values,
-        mb_index=mb_index,
+        leftover, translations, scan["text_values"], scan["mb_terms"],
+        mb_values=scan["mb_values"], mb_index=mb_index,
         csv_values=_collect_csv_values(source_bytes, be, lim, source_locale),
-        source_locale=source_locale)
+        source_locale=source_locale,
+        nondict_scripts=scan["nondict_scripts"])
     for u in unmatched:
         u["unit"] = None
     # Gan unit cho unmatched theo nhom provenance (de UI hien dung cho).
@@ -1242,9 +1345,16 @@ def _streaming_result(source_name, grouped, units_out, refused, outputs,
         except Exception:
             mb_terms = set()
             mb_values = {}
+        try:
+            text_values, nondict_scripts = _derive_unit_text(
+                sfs, source_locale=source_locale)
+        except Exception:
+            text_values, nondict_scripts = {}, []
         unmatched, unchanged = _classify_unmatched(
-            leftover, all_translations, sfs, mb_terms, mb_values=mb_values,
-            mb_index=mb_index)
+            leftover, all_translations, text_values, mb_terms,
+            mb_values=mb_values, mb_index=mb_index,
+            source_locale=source_locale,
+            nondict_scripts=nondict_scripts)
         for u in unmatched:
             u["unit"] = source_name
     elif leftover:

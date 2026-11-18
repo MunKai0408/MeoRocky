@@ -130,6 +130,7 @@
   "pb3/tests/test_format_xml_strings.py",
   "pb3/tests/test_format_yaml_ini.py",
   "pb3/tests/test_gate.py",
+  "pb3/tests/test_gate_crash_fix.py",
   "pb3/tests/test_godot.py",
   "pb3/tests/test_godot_translation.py",
   "pb3/tests/test_hardening.py",

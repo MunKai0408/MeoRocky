@@ -41,6 +41,7 @@ const state = {
   // Reset cờ khi chọn file mới và khi một runOp lỗi (để thử lại gửi lại).
   fileSentFor: null,     // "tên|size|lastModified" của file đơn đã gửi
   batchSentFor: null,    // key tương tự cho lô batch
+  gateExtrasSentFor: null, // key tương tự cho file đã ép/font phụ của cổng (gate-crash-fix)
   lastCheckpoint: null,  // chuỗi checkpoint batch mới nhất (để tải về)
   loadedCheckpoint: null, // checkpoint nạp từ localStorage để resume
   lastExtractKv: null,   // JSON text trích xuất được (để dịch tiếp)
@@ -281,6 +282,7 @@ function callWorkerRaw(op, payload) {
       // lần thử sau gửi lại file; promise reject để runOp báo lỗi.
       state.fileSentFor = null;
       state.batchSentFor = null;
+      state.gateExtrasSentFor = null;
       state.pending.delete(id);
       reject(e);
     }
@@ -345,6 +347,7 @@ async function runOp(label, fn, args, files, fileOut) {
     // HOTFIX clone: thao tác lỗi thì lần sau phải gửi lại file cho worker.
     state.fileSentFor = null;
     state.batchSentFor = null;
+    state.gateExtrasSentFor = null;
     throw e;
   }
 }
@@ -4391,9 +4394,19 @@ async function gateRun() {
   const key = gateKey();
   // File gửi kèm: file gốc (nếu worker chưa có) + file đã ép/font phụ
   // (tên có tiền tố gate- để không đè file gốc trong /tmp/input).
+  // File phụ chỉ gửi 1 lần cho đúng file đó (khóa như fileSentFor) —
+  // tránh clone lại file đã ép (có thể cả IPA) mỗi lần bấm cổng
+  // (gate-crash-fix: clone lại 165 MB là 1 đỉnh RAM thoáng qua trong tab).
+  const extrasKey = [
+    state.gatePressed ? (state.gatePressed.name + "|" + state.gatePressed.size + "|" + (state.gatePressed.lastModified || 0)) : "",
+    state.gateFont ? (state.gateFont.name + "|" + state.gateFont.size + "|" + (state.gateFont.lastModified || 0)) : "",
+  ].join(";");
   const extras = [];
-  if (state.gatePressed) extras.push({ name: "gate-pressed__" + state.gatePressed.name, data: state.gatePressed.data });
-  if (state.gateFont) extras.push({ name: "gate-font__" + state.gateFont.name, data: state.gateFont.data });
+  if (state.gateExtrasSentFor !== extrasKey) {
+    if (state.gatePressed) extras.push({ name: "gate-pressed__" + state.gatePressed.name, data: state.gatePressed.data });
+    if (state.gateFont) extras.push({ name: "gate-font__" + state.gateFont.name, data: state.gateFont.data });
+    state.gateExtrasSentFor = extrasKey;
+  }
   const fileKey = rebuildFileKey();
   const files = (fileKey && state.fileSentFor === fileKey)
     ? extras : inputFileArgs().concat(extras);
