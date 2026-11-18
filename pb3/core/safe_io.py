@@ -208,6 +208,9 @@ class AtomicWriter:
         except PB3Error:
             raise
         except OSError as exc:
+            # Anti-Wave (Phase 2): EPERM o day (tao thu muc/temp) thanh
+            # E_WRITE_WAVE qua error_from_exception(op="write"); file dich
+            # cu khong bi dong den vi temp chua duoc replace.
             raise error_from_exception(exc, where=str(self.dest), op="write")
         return self
 
@@ -294,6 +297,40 @@ class AtomicWriter:
         except OSError:
             self._discard()
             return ""
+
+
+def _probe_dir_writable(d: Path) -> None:
+    """Thu ghi 1 file tam trong thu muc `d`; that bai -> PB3Error qua
+    error_from_exception(op="write") — EPERM (errno 1) thanh E_WRITE_WAVE
+    (Anti-Wave Phase 2). Dung truoc khi tao file dich that de khong bao gio
+    de lai file dich 0 byte khi thu muc dich dang bi chan ghi."""
+    probe = d / (".pb3probe-%d-%s" % (os.getpid(), secrets.token_hex(4)))
+    try:
+        fd = os.open(str(probe), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        try:
+            os.write(fd, b"probe")
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+    except OSError as exc:
+        raise error_from_exception(exc, where=str(d), op="write")
+    finally:
+        remove_quiet(probe)
+
+
+def write_bytes_guarded(path, data: bytes, **kw) -> Path:
+    """Ghi bytes an toan co bao ve: probe thu muc dich truoc — neu thu muc
+    dang bi chan ghi (song EPERM) thi raise E_WRITE_WAVE NGAY, khong tao
+    file dich (khong de lai file 0 byte). Sau do ghi qua AtomicWriter nhu
+    atomic_write_bytes. Chu y: file dich cu (neu co) chi bi thay khi ghi
+    moi thanh cong hoan toan."""
+    dest = Path(path)
+    try:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        raise error_from_exception(exc, where=str(dest), op="write")
+    _probe_dir_writable(dest.parent)
+    return atomic_write_bytes(dest, data, **kw)
 
 
 def atomic_write_bytes(dest, data: bytes, **kw) -> Path:
