@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Kiem tra tinh muc C8: sdk/format_probe.py chi stdlib + core/sdk,
 Python 3.9 (khong match, khong X|Y, khong eval/exec, khong goi mang);
-manifest (files.json 109, tests.json 192); sw.js precache co
-sdk/format_probe.py va CACHE_VERSION v54-20261118; bridge co op
+manifest (files.json 108, tests.json 190); sw.js precache co
+sdk/format_probe.py va CACHE_VERSION v55-20261118; bridge co op
 format_probe; UI co nut probe + input file rieng + nut tai JSON;
 bang ENGINE_SUPPORT trung thuc (moi engine deu co unsupported khong
 rong; unknown co supported rong); tieng Viet moi du dau.
@@ -74,13 +74,13 @@ except Exception as e:  # noqa: BLE001
 
 # 4. Manifest.
 files = json.loads((SITE / "pb3" / "files.json").read_text())["files"]
-if len(files) != 109:
-    fails.append("files.json co %d file, ky vong 109" % len(files))
+if len(files) != 108:
+    fails.append("files.json co %d file, ky vong 108" % len(files))
 if "pb3/sdk/format_probe.py" not in files:
     fails.append("files.json thieu pb3/sdk/format_probe.py")
 tests = json.loads((SITE / "pb3" / "tests.json").read_text())["files"]
-if len(tests) != 192:
-    fails.append("tests.json co %d file, ky vong 192" % len(tests))
+if len(tests) != 190:
+    fails.append("tests.json co %d file, ky vong 190" % len(tests))
 if "pb3/tests/test_format_probe.py" not in tests:
     fails.append("tests.json thieu pb3/tests/test_format_probe.py")
 
@@ -88,8 +88,8 @@ if "pb3/tests/test_format_probe.py" not in tests:
 sw = (SITE / "sw.js").read_text(encoding="utf-8")
 if '"pb3/sdk/format_probe.py"' not in sw:
     fails.append("sw.js precache thieu pb3/sdk/format_probe.py")
-if 'CACHE_VERSION = "v54-20261118"' not in sw:
-    fails.append("sw.js CACHE_VERSION khong phai v54-20261118")
+if 'CACHE_VERSION = "v55-20261118"' not in sw:
+    fails.append("sw.js CACHE_VERSION khong phai v55-20261118")
 
 # 6. bridge co op format_probe + khong tra ok:false cho file la (probe
 # thanh cong thi ok True, engine unknown — kiem tra chuoi bao dam).

@@ -13,9 +13,9 @@
   pointSize INT), STRIDE_NEW=52, read_glyph_records, is_unity_entry.
 - sdk/gate.py: co check_tmp_sdf + CHECK_TMP_SDF (khong nam trong
   CHECK_IDS/run_gate — check rieng cho luong tmp_sdf_regen).
-- Manifest: files.json 109 (co pb3/sdk/sdf.py, pb3/sdk/tmp_sdf.py),
-  tests.json 192 (co pb3/tests/test_sdf_regen.py).
-- sw.js precache co 2 file SDK moi + CACHE_VERSION v54-20261118.
+- Manifest: files.json 108 (co pb3/sdk/sdf.py, pb3/sdk/tmp_sdf.py),
+  tests.json 190 (co pb3/tests/test_sdf_regen.py).
+- sw.js precache co 2 file SDK moi + CACHE_VERSION v55-20261118.
 - bridge.py: co op tmp_sdf_regen (dry-run, tra dest .raw + MAE).
 - UI: index.html co btn-font-tmp-sdf + inp-tmp-sdf-name +
   inp-tmp-sdf-extra; app.js co handler tmp_sdf_regen hien MAE + ĐẠT.
@@ -132,14 +132,14 @@ for s in ("def check_tmp_sdf(", 'CHECK_TMP_SDF = "tmp_sdf"'):
 
 # 5. Manifest.
 files = json.loads((SITE / "pb3" / "files.json").read_text())["files"]
-if len(files) != 109:
-    fails.append("files.json co %d file, ky vong 109" % len(files))
+if len(files) != 108:
+    fails.append("files.json co %d file, ky vong 108" % len(files))
 for f in ("pb3/sdk/sdf.py", "pb3/sdk/tmp_sdf.py"):
     if f not in files:
         fails.append("files.json thieu %s" % f)
 tests = json.loads((SITE / "pb3" / "tests.json").read_text())["files"]
-if len(tests) != 192:
-    fails.append("tests.json co %d file, ky vong 192" % len(tests))
+if len(tests) != 190:
+    fails.append("tests.json co %d file, ky vong 190" % len(tests))
 if "pb3/tests/test_sdf_regen.py" not in tests:
     fails.append("tests.json thieu pb3/tests/test_sdf_regen.py")
 
@@ -148,8 +148,8 @@ sw = (SITE / "sw.js").read_text(encoding="utf-8")
 for f in ('"pb3/sdk/sdf.py"', '"pb3/sdk/tmp_sdf.py"'):
     if f not in sw:
         fails.append("sw.js precache thieu %s" % f)
-if 'CACHE_VERSION = "v54-20261118"' not in sw:
-    fails.append("sw.js CACHE_VERSION khong phai v54-20261118")
+if 'CACHE_VERSION = "v55-20261118"' not in sw:
+    fails.append("sw.js CACHE_VERSION khong phai v55-20261118")
 
 # 7. bridge co op tmp_sdf_regen (dry-run).
 bridge = (SITE / "pb3" / "bridge.py").read_text(encoding="utf-8")
