@@ -1,0 +1,6 @@
+Anti-Wave Hybrid V1.1 — Bear API probe (AUDIT ONLY)
+Branch: feat/awf-probe (test branch, created 2026-11-18 ~12:10 +07)
+Purpose: verify the existing Bear PAT can create a branch + write a file + read it back.
+DO NOT DELETE this branch (v1.1 audit rule: leave the probe branch in place and report it).
+DO NOT merge this branch anywhere. Main untouched (a5ec6400, v43).
+Created by: Phase 1 v1.1 supplemental audit (read-only + this single probe write).
