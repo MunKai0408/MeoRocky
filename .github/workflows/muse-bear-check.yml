@@ -1,0 +1,20 @@
+name: Muse Bear Check
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [muse-test-workflow-20261117]
+
+jobs:
+  bear-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check repo
+        run: |
+          echo "Muse Bear check OK"
+          echo "Repo: MunKai0408/MeoRocky"
+          ls -la
+      - name: Check env status (no values printed)
+        run: |
+          if [ -n "$GOOGLE_API_KEY" ]; then echo "CO GOOGLE_API_KEY"; else echo "THIEU GOOGLE_API_KEY"; fi
