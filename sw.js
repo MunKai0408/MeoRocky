@@ -50,6 +50,7 @@ const PRECACHE_URLS = [
   "opfs.js",
   "kb-store.js",
   "colab_handoff.js",
+  "tm.js",
   "gt.js",
   "fzstd/index.mjs",
   "manifest.webmanifest",

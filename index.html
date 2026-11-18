@@ -715,6 +715,24 @@
       <div id="glossary-list"></div>
       <p id="glossary-info" class="sub">Chưa có từ điển cho game này.</p>
     </details>
+    <details id="tm-box" open>
+      <summary>Bộ nhớ dịch (TM) — xuất / nhập / quản lý</summary>
+      <p class="note">Bộ nhớ dịch lưu bền trong trình duyệt (IndexedDB): mọi chuỗi đã dịch xong ở các lần dịch trước được dùng lại cho lần dịch sau cùng cặp ngôn ngữ, khỏi dịch lại. Xuất TM ra file .json để sao lưu hoặc chuyển sang máy khác; nhập lại file TM để dùng tiếp. Xoá mục TM chỉ bỏ cặp đó khỏi bộ nhớ dùng lại — bản dịch đã tải về trước đó không bị đổi. TM chưa phân theo game riêng, chỉ theo cặp ngôn ngữ.</p>
+      <div class="row">
+        <label style="flex:1;min-width:180px">Cặp ngôn ngữ:
+          <select id="tm-pair-select" style="width:auto"></select>
+        </label>
+        <button id="btn-tm-export" class="secondary">Xuất TM (.json)</button>
+        <button id="btn-tm-import" class="secondary">Nhập TM (.json)…</button>
+        <input type="file" id="tm-import-file" accept=".json,application/json" class="visually-hidden">
+      </div>
+      <div class="row">
+        <button id="btn-tm-clear-pair" class="secondary">Xoá toàn bộ TM của cặp này</button>
+        <span id="tm-pair-count" class="sub"></span>
+      </div>
+      <div id="tm-list"></div>
+      <p id="tm-info" class="sub">Chưa có bộ nhớ dịch — dịch xong 1 file thì TM sẽ hiện ở đây.</p>
+    </details>
     <p class="note">Chỉ dịch chuỗi thuộc ngôn ngữ nguồn đã chọn — chuỗi ngôn ngữ khác giữ nguyên từng byte, không dịch nhầm. Cuối mỗi lần dịch, tool báo rõ tổng dòng nguồn / đã dịch / bỏ qua kèm lý do / mất / ngôn ngữ khác bị đổi, và tự kiểm tra trước khi cho tải file về.</p>
     <p class="note">Giữ nguyên placeholder ({0}, %s), thẻ và xuống dòng — luôn bật, không cần tick.</p>
     <button id="btn-translate-run">Dịch</button>
@@ -1327,6 +1345,7 @@
 </nav>
 
 <script src="kb-store.js"></script>
+<script src="tm.js"></script>
 <script src="worker-pool.js"></script>
 <script src="stream.js"></script>
 <script src="opfs.js"></script>

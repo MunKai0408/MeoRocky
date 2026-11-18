@@ -127,7 +127,7 @@ chk("pb3/sdk/tmp_font.py" in listed, "sw.js precache thieu pb3/sdk/tmp_font.py")
 chk(set(listed) == set(files_json["files"]) | {
     "./", "index.html", "app.js", "worker.js", "worker-pool.js", "stream.js",
     "opfs.js",
-    "kb-store.js", "gt.js", "colab_handoff.js", "manifest.webmanifest", "diagnostics.html",
+    "kb-store.js", "tm.js", "gt.js", "colab_handoff.js", "manifest.webmanifest", "diagnostics.html",
     "icons/icon-192.png", "icons/icon-512.png", "icons/apple-touch-icon.png",
     "fonts/BeVietnamPro-Regular.ttf.b64",
     "fixtures/selftest.zip",
