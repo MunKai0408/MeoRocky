@@ -105,6 +105,13 @@ ERROR_SPECS: Dict[str, ErrorSpec] = dict([
        "Tăng --timeout-game hoặc dùng file nhỏ hơn / jobs=1; "
        "timeout là best-effort (thread nền không dừng được ngay).",
        EXIT_INTERNAL, True),
+    # --- Anti-Wave (Phase 2) ---
+    # EPERM (errno 1) khi GHI: dau hieu dot song chan ghi cua VM, khac voi
+    # EACCES (errno 13) la that su thieu quyen (van -> E_IO nhu truoc).
+    _s("E_WRITE_WAVE", "Hệ thống đang chặn ghi file (đợt sóng EPERM).",
+       "Dừng ghi ngay, lưu checkpoint (anti_wave) rồi thử lại sau; "
+       "kiểm tra bằng probe_wave() trước khi ghi tiếp.",
+       EXIT_SAFETY, True),
 ])
 
 _CTRL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
@@ -172,6 +179,16 @@ def error_from_exception(exc: BaseException, *, where: Optional[str] = None,
         if op == "read" and isinstance(exc, (FileNotFoundError, PermissionError,
                                              NotADirectoryError, IsADirectoryError)):
             return PB3Error("E_INPUT_NOT_FOUND", type(exc).__name__, where=where)
+        if op == "write" and no == errno.EPERM:
+            # Anti-Wave (Phase 2): EPERM khi ghi = dot song chan ghi cua VM,
+            # KHONG phai thieu quyen that (EACCES van -> E_IO o nhanh duoi).
+            # Luu y: OSError(errno.EPERM) cung la PermissionError nen phai
+            # kiem tra errno TRUOC nhanh isinstance(PermissionError) ben duoi.
+            return PB3Error("E_WRITE_WAVE", "ghi bị chặn (EPERM): %s"
+                            % (exc.filename or where or ""),
+                            where=where,
+                            hint="Đợt sóng chặn ghi đang bật: dừng ghi, lưu checkpoint "
+                                 "rồi thử lại sau.")
         if op == "write" and isinstance(exc, PermissionError):
             # Ghi bị từ chối quyền: KHÔNG nói 'đầu vào không tồn tại' (như nhánh read).
             return PB3Error("E_IO", "không có quyền ghi: %s" % (exc.filename or where or ""),
