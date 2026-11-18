@@ -1873,7 +1873,7 @@ def _expand_merge_targets(requested, present_locales, mb_locales=None) -> set:
         variants = {p for p in present
                     if p != r and disc.locale_base(p) == r}
         if variants:
-            targets |= variants
+            targets.update(variants)
         elif r in present:
             targets.add(r)
     for m in sorted({str(x).lower() for x in (mb_locales or set())}):
@@ -1881,9 +1881,9 @@ def _expand_merge_targets(requested, present_locales, mb_locales=None) -> set:
             variants = {p for p in present
                         if p != "zh" and disc.locale_base(p) == "zh"}
             if variants:
-                targets |= variants
+                targets.update(variants)
             else:
-                targets |= {"zh-cn", "zh-tw"}
+                targets.update({"zh-cn", "zh-tw"})
             targets.discard("zh")
         elif m in present:
             targets.add(m)
