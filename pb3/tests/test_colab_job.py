@@ -6,6 +6,8 @@
   Drive theo id > không có); file job hỏng thì BÁO LỖI, không lặng
   lẽ rơi về biến tay.
 - Manifest: build/write/read round-trip, entry đếm key + md5.
+- Boot resilient (P0 v50): colab_handoff.js ngoài files.json, boot sống
+  sót khi nó 404; guard ở index.html; vòng lặp worker vẫn fail-fast.
 - Notebook: cell job exec được local với JOB_JSON dán (không cần
   Colab, không mạng); cell Bước 1 không ghi đè biến từ cell job;
   cell trích/dịch ghi + cập nhật manifest.
@@ -438,6 +440,84 @@ class TestNotebookJobCell(unittest.TestCase):
         js = JS.read_text(encoding="utf-8")
         for pat in (r"\/file\/d\/", "[?&]id=", r"\/folders\/"):
             self.assertIn(pat, js, "colab_handoff.js thiếu pattern %r" % pat)
+
+
+class TestColabBootResilient(unittest.TestCase):
+    """P0 2026-11-18: colab_handoff.js 404 (cache deploy) giết toàn bộ
+    boot vì nó nằm trong pb3/files.json — worker.js fetch mọi entry
+    trong manifest và fail-fast. Từ v50: file này KHÔNG nằm trong
+    files.json (chỉ nạp bằng <script> ở main thread, có guard cảnh
+    báo); vòng lặp worker vẫn fail-fast cho mã PB3 thật."""
+
+    def _manifest(self):
+        return json.loads(
+            (ROOT / "files.json").read_text(encoding="utf-8"))["files"]
+
+    def _simulate_worker_boot(self, files, fetch_ok):
+        """Mô hình vòng lặp worker.js boot(): batch 8, fetch từng rel,
+        !ok -> raise 'Không tải được <rel> (HTTP <status>)'."""
+        for i in range(0, len(files), 8):
+            for rel in files[i:i + 8]:
+                ok, status = fetch_ok(rel)
+                if not ok:
+                    raise RuntimeError(
+                        "Không tải được %s (HTTP %d)" % (rel, status))
+
+    def test_worker_manifest_has_only_pb3_paths(self):
+        for rel in self._manifest():
+            self.assertTrue(rel.startswith("pb3/"),
+                            "files.json chua entry khong phai pb3/: %r" % rel)
+
+    def test_colab_handoff_not_in_worker_manifest(self):
+        self.assertNotIn("colab_handoff.js", self._manifest(),
+                         "colab_handoff.js phai o NGOAI files.json (P0 boot 404)")
+
+    def test_boot_survives_colab_404(self):
+        # Stub fetch: colab 404, mọi entry trong manifest thật đều 200.
+        def fetch_tracked(rel):
+            requested.append(rel)
+            return ((False, 404) if rel == "colab_handoff.js"
+                    else (True, 200))
+        requested = []
+        self._simulate_worker_boot(self._manifest(), fetch_tracked)
+        self.assertNotIn("colab_handoff.js", requested,
+                         "boot khong duoc yeu cau colab_handoff.js")
+
+    def test_boot_dies_on_old_manifest_colab_404(self):
+        # Đối chứng âm: manifest CŨ (có colab_handoff.js) + cùng stub
+        # 404 thì PHẢI chết đúng thông điệp P0 — chứng minh test trên
+        # bắt đúng cơ chế gây lỗi, không phải test rỗng.
+        def fetch_ok(rel):
+            return ((False, 404) if rel == "colab_handoff.js"
+                    else (True, 200))
+        old = ["colab_handoff.js"] + self._manifest()
+        with self.assertRaises(RuntimeError) as ctx:
+            self._simulate_worker_boot(old, fetch_ok)
+        self.assertEqual(str(ctx.exception),
+                         "Không tải được colab_handoff.js (HTTP 404)")
+
+    def test_worker_loop_is_still_fail_fast(self):
+        worker = (ROOT.parent / "worker.js").read_text(encoding="utf-8")
+        self.assertIn(
+            'if (!res.ok) throw new Error("Không tải được "',
+            worker, "vong lap boot worker.js phai fail-fast cho ma PB3")
+
+    def test_index_html_colab_script_has_fallback(self):
+        html = (ROOT.parent / "index.html").read_text(encoding="utf-8")
+        tag = html.index('<script src="colab_handoff.js"></script>')
+        guard = html.index('typeof window.ColabHandoff === "undefined"')
+        self.assertGreater(guard, tag,
+                           "guard phai dung SAU tag colab_handoff.js")
+        window = html[guard:guard + 1200]
+        self.assertIn("colab-handoff-status", window,
+                      "guard phai canh bao vao #colab-handoff-status")
+        self.assertIn("console.warn", window,
+                      "guard phai ghi log console.warn")
+
+    def test_sw_precache_still_has_colab_handoff(self):
+        sw = (ROOT.parent / "sw.js").read_text(encoding="utf-8")
+        self.assertIn('"colab_handoff.js"', sw,
+                      "sw.js precache phai giu colab_handoff.js (offline shell)")
 
 
 if __name__ == "__main__":
