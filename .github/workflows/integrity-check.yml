@@ -1,0 +1,64 @@
+# Kiem tra tinh toan ven — phat hien file 0 byte / truncate / JSON hong /
+# YAML hong / checkpoint sai checksum, truoc khi gop.
+#
+# Muc dich (Anti-Wave Phase 3): song EPERM de lai file 0 byte hoac bi cat
+# nua chung; workflow nay bat cac file do tren runner (doc lap khoi VM),
+# de khong file hong nao lot vao main. No KHONG chay test suite (do la
+# viec cua test.yml / anti-wave-ci.yml), chi kiem tra tinh toan ven file.
+#
+# Trigger: (1) workflow_dispatch — agent/user goi tay tren 1 nhanh;
+# (2) pull_request chi khi PR cham vao file anti-wave / scripts / workflow
+# anti-wave / docs verify — tranh chay vo ich tren PR khac.
+# Luu y luat GitHub: workflow_dispatch chi goi duoc sau khi file nay DA CO
+# TREN main (xem docs/ACTIONS_VERIFY.md); truoc do dung trigger PR.
+#
+# Chi phi: $0 (repo public, runner chuan mien phi). Thoi gian: ~1-2 phut.
+name: Integrity check (anti-wave)
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Nhanh/commit can kiem tra (de trong = nhanh duoc dispatch)"
+        required: false
+        default: ""
+        type: string
+  pull_request:
+    branches: [main]
+    paths:
+      - "anti_wave/**"
+      - "scripts/**"
+      - ".github/workflows/anti-wave-*.yml"
+      - ".github/workflows/integrity-check.yml"
+      - ".github/workflows/regression.yml"
+      - "docs/ACTIONS_VERIFY.md"
+
+jobs:
+  integrity:
+    name: checksum + 0-byte + checkpoint
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Kiem tra tinh toan ven file (0-byte / JSON / YAML / checkpoint)
+        run: python3 scripts/anti_wave_check.py --root . --strict --json integrity-report.json
+
+      - name: Verify tat ca checkpoint (neu co)
+        run: python3 scripts/verify_checkpoint.py --dir anti_wave/checkpoints
+        continue-on-error: false
+
+      - name: Upload integrity report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: integrity-report
+          path: integrity-report.json
+          if-no-files-found: warn

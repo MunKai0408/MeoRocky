@@ -1,0 +1,123 @@
+# Regression hang ngay — chay lai dung lenh unit cua test.yml tren main.
+#
+# KHONG PHAI SUITE THU HAI: file nay KHONG dinh nghia test nao moi, KHONG
+# chon test theo cach rieng, KHONG doi co pytest. No chi chay dung 1 lenh
+# cua test.yml (job unit): pytest tests -q -rs -m "not needs_fixture"
+# tren main, moi dem 01:00 +07 (cron 18:00 UTC), de bat regression som.
+# Neu test.yml doi lenh unit (co pytest, fixture, Python) thi phai doi
+# o day theo — nguon that luon la test.yml.
+#
+# Khac test.yml: chi chay unit (khong chay assets full — full suite da co
+# test.yml chay tren moi push/PR), them failset.json de agent doc ket qua
+# bang may. Khong gate deploy, khong gate merge.
+#
+# Chi phi: $0 (repo public, runner chuan mien phi). Thoi gian: ~10 phut.
+name: Regression hang ngay (unit tren main)
+
+on:
+  schedule:
+    - cron: "0 18 * * *"  # 01:00 +07 hang ngay
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Nhanh/commit can chay (de trong = main)"
+        required: false
+        default: ""
+        type: string
+
+env:
+  STRICT_FIXTURES: "1"
+
+jobs:
+  nightly-unit:
+    name: unit tren main (lenh cua test.yml)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || 'main' }}
+
+      - name: Set up Python 3.12 (CI — setup-python bo 3.9 tren Ubuntu 26.04)
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install lz4 + pytest (suite can, ngoai stdlib)
+        run: pip install lz4 pytest
+
+      - name: Kiem tra fixture da co tren main (8 file, test dung that)
+        run: |
+          python3 - <<'EOF'
+          import pathlib
+          have = [
+            "pb3/kb/pb3_kb.sqlite",
+            "pb3/tests/fixtures/apple_plist/b.plist",
+            "pb3/tests/fixtures/apple_strings/b.strings",
+            "pb3/tests/fixtures/extract/ambig.zip",
+            "pb3/tests/fixtures/extract/game1.zip",
+            "pb3/tests/fixtures/generic_strings/sample.bin",
+            "pb3/tests/fixtures/json_text/unicode.json",
+            "pb3/tests/fixtures/po_mo/sample.mo",
+          ]
+          gone = [f for f in have if not pathlib.Path(f).is_file()]
+          for f in have:
+              print(("THIEU " if f in gone else "CO    ") + f)
+          if gone:
+              raise SystemExit("Thieu %d/%d file fixture tren main." % (len(gone), len(have)))
+          print("Du 8/8 file fixture tren main.")
+          EOF
+
+      - name: Khoi phuc font (giai ma .b64 co san trong repo)
+        run: |
+          python3 - <<'EOF'
+          import base64, pathlib
+          raw = base64.b64decode(pathlib.Path("fonts/BeVietnamPro-Regular.ttf.b64").read_text().replace("\n", "").replace(" ", ""))
+          pathlib.Path("pb3/fonts/BeVietnamPro-Regular.ttf").write_bytes(raw)
+          print("font bytes:", len(raw))
+          EOF
+
+      - name: Run unit tests (lenh cua test.yml, khong doi)
+        working-directory: pb3
+        run: |
+          set -o pipefail
+          python3 -m pytest tests -q -rs -m "not needs_fixture" --junitxml=../test-report.xml 2>&1 | tee ../test-unit.log
+
+      - name: Tao fail-set JSON (de agent doc ket qua bang may)
+        if: always()
+        run: |
+          python3 - <<'EOF'
+          import json, pathlib, xml.etree.ElementTree as ET
+          report = pathlib.Path("test-report.xml")
+          out = {"scope": "nightly-unit", "tests": 0, "failures": 0, "errors": 0,
+                 "skipped": 0, "failed": [], "error_ids": []}
+          if report.is_file():
+              root = ET.parse(report).getroot()
+              for suite in root.iter("testsuite"):
+                  out["tests"] += int(suite.get("tests", 0) or 0)
+                  out["failures"] += int(suite.get("failures", 0) or 0)
+                  out["errors"] += int(suite.get("errors", 0) or 0)
+                  out["skipped"] += int(suite.get("skipped", 0) or 0)
+                  for case in suite.iter("testcase"):
+                      cid = "%s::%s" % (case.get("classname", "?"), case.get("name", "?"))
+                      if case.find("failure") is not None:
+                          out["failed"].append(cid)
+                      if case.find("error") is not None:
+                          out["error_ids"].append(cid)
+          else:
+              out["note"] = "khong co test-report.xml (pytest chet truoc khi chay?)"
+          pathlib.Path("failset.json").write_text(
+              json.dumps(out, ensure_ascii=False, indent=2), encoding="utf-8")
+          print("failset: %d tests, %d failures, %d errors, %d skipped"
+                % (out["tests"], out["failures"], out["errors"], out["skipped"]))
+          EOF
+
+      - name: Upload test log + fail-set
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: regression-nightly-unit
+          path: |
+            test-unit.log
+            failset.json
+          if-no-files-found: warn
