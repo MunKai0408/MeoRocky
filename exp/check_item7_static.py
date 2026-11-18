@@ -119,15 +119,15 @@ chk("pb3/tests/test_tmp_font.py" in tests_json["files"],
     "tests.json thieu pb3/tests/test_tmp_font.py")
 sw = open(os.path.join(SITE, "sw.js"), encoding="utf-8").read()
 m = re.search(r'const CACHE_VERSION = "([^"]+)"', sw)
-chk(m is not None and m.group(1) == "v51-20261118",
-    "sw.js CACHE_VERSION %r != v51-20261118" % (m.group(1) if m else None))
+chk(m is not None and m.group(1) == "v52-20261118",
+    "sw.js CACHE_VERSION %r != v52-20261118" % (m.group(1) if m else None))
 listed = re.findall(r'"([^"]+)"', re.search(
     r"const PRECACHE_URLS = \[(.*?)\];", sw, re.S).group(1))
 chk("pb3/sdk/tmp_font.py" in listed, "sw.js precache thieu pb3/sdk/tmp_font.py")
 chk(set(listed) == set(files_json["files"]) | {
     "./", "index.html", "app.js", "worker.js", "worker-pool.js", "stream.js",
     "opfs.js",
-    "kb-store.js", "gt.js", "colab_handoff.js", "manifest.webmanifest", "diagnostics.html",
+    "kb-store.js", "tm.js", "gt.js", "colab_handoff.js", "manifest.webmanifest", "diagnostics.html",
     "icons/icon-192.png", "icons/icon-512.png", "icons/apple-touch-icon.png",
     "fonts/BeVietnamPro-Regular.ttf.b64",
     "fixtures/selftest.zip",

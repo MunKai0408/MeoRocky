@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Kiem tra tinh cong kiem tra truoc khi giao (P0-2, buoc 6):
 sdk/gate.py chi stdlib + Python 3.9, khong UnityPy/lz4, khong ghi file;
-manifest (files.json 108, tests.json 189); sw.js precache 134 muc co
-sdk/gate.py, khong muc chet, CACHE_VERSION v51-20261118; bridge co op
+manifest (files.json 108, tests.json 190); sw.js precache 135 muc co
+sdk/gate.py, khong muc chet, CACHE_VERSION v52-20261118; bridge co op
 delivery_gate + rebuild_apply bat verdict cong khi duoc truyen; UI du
 id cong + nut Ghi bi khoa boi verdict + render cong esc du lieu game.
 In JSON {"fails": [...]}.
@@ -77,24 +77,24 @@ if len(files) != 108:
 if "pb3/sdk/gate.py" not in files:
     fails.append("files.json thieu pb3/sdk/gate.py")
 tests = json.loads((SITE / "pb3" / "tests.json").read_text())["files"]
-if len(tests) != 189:
-    fails.append("tests.json co %d file, ky vong 189" % len(tests))
+if len(tests) != 190:
+    fails.append("tests.json co %d file, ky vong 190" % len(tests))
 if "pb3/tests/test_gate.py" not in tests:
     fails.append("tests.json thieu pb3/tests/test_gate.py")
 
-# 4. sw.js: precache 134 muc, co sdk/gate.py, khong muc chet, v22.
+# 4. sw.js: precache 135 muc, co sdk/gate.py, khong muc chet, v22.
 sw = (SITE / "sw.js").read_text(encoding="utf-8")
 if '"pb3/sdk/gate.py"' not in sw:
     fails.append("sw.js precache thieu pb3/sdk/gate.py")
-if 'CACHE_VERSION = "v51-20261118"' not in sw:
-    fails.append("sw.js CACHE_VERSION khong phai v51-20261118")
+if 'CACHE_VERSION = "v52-20261118"' not in sw:
+    fails.append("sw.js CACHE_VERSION khong phai v52-20261118")
 m = re.search(r"const PRECACHE_URLS = \[(.*?)\];", sw, re.S)
 if not m:
     fails.append("sw.js khong tim thay PRECACHE_URLS")
 else:
     listed = re.findall(r'"([^"]+)"', m.group(1))
-    if len(listed) != 134:
-        fails.append("sw.js precache co %d muc, ky vong 134" % len(listed))
+    if len(listed) != 135:
+        fails.append("sw.js precache co %d muc, ky vong 135" % len(listed))
     dead = [u for u in listed if u != "./"
             and not (SITE / u).exists()]
     if dead:

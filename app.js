@@ -2561,51 +2561,9 @@ function syncTranslateEmptyBanner() {
 }
 $("translate-input").addEventListener("input", syncTranslateEmptyBanner);
 // ---- Dịch Google theo chunk + hàng đợi bền + bộ nhớ dịch (mục A) ----
-// TM (bộ nhớ dịch): value giống hệt trong các job ĐÃ XONG cùng ngôn ngữ
-// đích -> dùng luôn, khỏi gửi Google. KB game-profile KHÔNG chứa bản dịch
-// nên không dùng làm TM (đã kiểm tra sdk/kb.py — KB chỉ lưu hồ sơ game).
-// TM tra theo VALUE GỐC chính xác (không chuẩn hoá khoảng trắng — khớp
-// chính xác mới dùng, tránh dịch sai ngữ cảnh).
-// Mục A (an toàn ngôn ngữ nguồn): TM chỉ dùng job có cùng `from`
-// (ngôn ngữ nguồn). Job cũ KHÔNG có trường `from` bị cách ly hoàn toàn
-// (không dùng làm TM) — vì TM đó có thể chứa cặp Đức/Nga đã bị dịch sai
-// khi bridge còn hard-code nguồn "en" (Joseph 21:24).
-async function buildTranslateTM(to, from) {
-  const tm = new Map();
-  if (!translateJobStore) return tm;
-  try {
-    const jobs = await translateJobStore.getAll();
-    const done = jobs.filter((j) => j && j.status === "done" && j.to === to &&
-      j.from === from && Array.isArray(j.tm));
-    done.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
-    let pairs = 0;
-    for (const j of done.slice(0, 5)) {
-      for (const pair of j.tm) {
-        if (pairs >= 20000) break;
-        const src = pair && pair[0], dst = pair && pair[1];
-        if (typeof src === "string" && typeof dst === "string" && src && dst) {
-          if (!tm.has(src)) tm.set(src, dst);
-          pairs++;
-        }
-      }
-      if (pairs >= 20000) break;
-    }
-  } catch (e) { /* IndexedDB lỗi: bỏ qua TM, dịch như thường */ }
-  return tm;
-}
-// Dùng TM cho các key còn lại trong job (value khớp -> ghi results luôn).
-function applyJobTM(job, tm) {
-  if (!job.items.length || tm.size === 0) return;
-  const rest = [];
-  for (const pair of job.items) {
-    const hit = tm.get(pair[1]);
-    if (hit != null) {
-      job.results[pair[0]] = hit;
-      job.tmCount++;
-    } else rest.push(pair);
-  }
-  job.items = rest;
-}
+// buildTranslateTM / applyJobTM đã chuyển sang tm.js (T3) — giữ đúng
+// ngữ nghĩa cũ (TM theo value gốc chính xác, chỉ job done cùng cặp
+// from/to, tối đa 5 job / 20.000 cặp). app.js gọi qua tên toàn cục.
 // ---- Tên ngôn ngữ hiển thị (T2) ----
 const LANG_NAMES = {
   en: "tiếng Anh", zh: "tiếng Trung", "zh-CN": "tiếng Trung (giản thể)",
@@ -2943,6 +2901,7 @@ async function runTranslateGoogleJob(job, to, credit) {
     await saveTranslateJob(job);
     syncGateTargetLang();
     refreshGlossaryBox();
+    refreshTmBox();
     // Cổng tải: chỉ cho tải khi job xong HẾT và tự kiểm tra sạch.
     const missingCount = selfCheckMissing.length;
     const wrongCount = selfCheckWrong.length;
@@ -3097,6 +3056,7 @@ $("btn-translate-run").addEventListener("click", async () => {
       } catch (e) { state.lastTranslatedTm = []; }
       syncGateTargetLang();
       refreshGlossaryBox();
+      refreshTmBox();
     } catch (e) { /* đã báo lỗi */ }
     finally { btn.disabled = false; }
     return;
@@ -3200,6 +3160,143 @@ $("btn-glossary-learn").addEventListener("click", () => {
   $("glossary-info").textContent = "Đã học " + added + " mục mới, cập nhật " + updated + " mục vào từ điển “" + g.game + "” (" + langName(from) + " → " + langName(to) + ", " + Object.keys(g.entries).length + " mục). Sửa/xóa từng mục ở trên nếu cần.";
 });
 refreshGlossaryBox();
+// ---- Bộ nhớ dịch (TM): xuất / nhập / quản lý (T3, tm.js) ----
+// TM sống trong IndexedDB (job done của TranslateJobStore); hộp này
+// chỉ đọc/ghi qua tm.js, không tự parse job. Xoá mục TM chỉ bỏ cặp
+// khỏi bộ nhớ dùng lại — bản dịch đã tải về trước đó không bị đổi.
+function tmSelectedPair() {
+  const sel = $("tm-pair-select");
+  const v = (sel && sel.value) || "";
+  const i = v.indexOf(">");
+  if (i < 0) return null;
+  return { from: v.slice(0, i), to: v.slice(i + 1) };
+}
+async function refreshTmBox() {
+  const list = $("tm-list"), info = $("tm-info"),
+    countEl = $("tm-pair-count"), sel = $("tm-pair-select");
+  if (!list || !info) return;
+  if (!translateJobStore || typeof tmPairsByLang !== "function") {
+    info.textContent = "Bộ nhớ dịch chưa sẵn sàng (IndexedDB chưa mở được).";
+    return;
+  }
+  let jobs = [];
+  try { jobs = await translateJobStore.getAll(); } catch (e) { jobs = []; }
+  const pairs = tmPairsByLang(jobs);
+  const curFrom = ($("translate-from") && $("translate-from").value) || "en";
+  const curTo = ($("translate-to") && $("translate-to").value) || "vi";
+  const prev = sel ? sel.value : "";
+  if (sel) {
+    sel.innerHTML = pairs.map((p) =>
+      "<option value=\"" + esc(p.from) + ">" + esc(p.to) + "\">" +
+      langName(p.from) + " → " + langName(p.to) + " (" + p.count + " mục)</option>").join("");
+    if (pairs.some((p) => (p.from + ">" + p.to) === prev)) sel.value = prev;
+    else if (pairs.some((p) => p.from === curFrom && p.to === curTo)) sel.value = curFrom + ">" + curTo;
+    else if (pairs.length) sel.value = pairs[0].from + ">" + pairs[0].to;
+    else sel.innerHTML = "<option value=\"\">— chưa có bộ nhớ dịch —</option>";
+  }
+  const pair = tmSelectedPair();
+  const exportBtn = $("btn-tm-export"), clearBtn = $("btn-tm-clear-pair");
+  if (!pair) {
+    list.innerHTML = "";
+    if (countEl) countEl.textContent = "";
+    if (exportBtn) exportBtn.disabled = true;
+    if (clearBtn) clearBtn.disabled = true;
+    info.textContent = "Chưa có bộ nhớ dịch — dịch xong 1 file thì TM sẽ hiện ở đây.";
+    return;
+  }
+  if (exportBtn) exportBtn.disabled = false;
+  if (clearBtn) clearBtn.disabled = false;
+  const tm = tmCollectPairs(jobs, pair.from, pair.to);
+  const entries = [...tm.entries()].sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
+  if (countEl) countEl.textContent = "Cặp " + langName(pair.from) + " → " + langName(pair.to) +
+    ": " + tm.size + " mục" + (tm.size > TM_LIST_LIMIT ? " (hiện " + TM_LIST_LIMIT + " mục đầu)" : "") + ".";
+  list.innerHTML = entries.slice(0, TM_LIST_LIMIT).map(([src, dst]) =>
+    "<div class=\"row\"><code>" + esc(src) + "</code><span>→</span><code>" + esc(dst) + "</code>" +
+    "<button class=\"secondary\" data-tm-del=\"" + esc(src) + "\">Xóa</button></div>").join("");
+  info.textContent = "Bộ nhớ dịch “" + langName(pair.from) + " → " + langName(pair.to) +
+    "”: " + tm.size + " mục. Xoá 1 mục chỉ bỏ cặp đó khỏi lần dịch sau.";
+}
+$("translate-from").addEventListener("change", refreshTmBox);
+$("translate-to").addEventListener("change", refreshTmBox);
+$("tm-pair-select").addEventListener("change", refreshTmBox);
+$("btn-tm-export").addEventListener("click", async () => {
+  const pair = tmSelectedPair();
+  if (!pair) { showError("Chưa có bộ nhớ dịch để xuất."); return; }
+  if (!translateJobStore) { showError("Bộ nhớ dịch chưa sẵn sàng (IndexedDB chưa mở được)."); return; }
+  let jobs = [];
+  try { jobs = await translateJobStore.getAll(); } catch (e) { jobs = []; }
+  const obj = tmBuildExport(jobs, pair.from, pair.to);
+  if (!obj.entries.length) { showError("Cặp " + pair.from + " → " + pair.to + " chưa có mục TM nào để xuất."); return; }
+  download("tm-" + pair.from + "-" + pair.to + ".json", JSON.stringify(obj, null, 2));
+  $("tm-info").textContent = "Đã xuất TM " + langName(pair.from) + " → " + langName(pair.to) +
+    " (" + obj.entries.length + " mục) ra file tm-" + pair.from + "-" + pair.to + ".json.";
+});
+$("btn-tm-import").addEventListener("click", () => { $("tm-import-file").click(); });
+$("tm-import-file").addEventListener("change", async (ev) => {
+  const file = ev.target.files && ev.target.files[0];
+  ev.target.value = "";
+  if (!file) return;
+  if (!translateJobStore) { showError("Bộ nhớ dịch chưa sẵn sàng (IndexedDB chưa mở được)."); return; }
+  let parsed;
+  try { parsed = tmParseImportText(await file.text()); }
+  catch (e) { showError("Không đọc được file TM: " + e.message); return; }
+  if (!parsed.ok) { showError("File TM không đúng định dạng: " + parsed.error); return; }
+  let jobs = [];
+  try { jobs = await translateJobStore.getAll(); } catch (e) { jobs = []; }
+  const existing = tmCollectPairs(jobs, parsed.from, parsed.to);
+  const merged = tmMergeImport(existing, parsed.entries);
+  let added = 0;
+  if (merged.added.length) {
+    // Gộp vào job nhập đã có của cặp này (nếu có) để khỏi phình thêm
+    // job; không có thì tạo job nhập mới — cả hai đều là job done nên
+    // buildTranslateTM đọc được ngay cho lần dịch sau.
+    let importJob = jobs.find((j) => j && j.status === "done" &&
+      j.from === parsed.from && j.to === parsed.to &&
+      typeof j.id === "string" && j.id.indexOf("tm-import-") === 0 &&
+      Array.isArray(j.tm));
+    if (importJob) {
+      for (const p of merged.added) importJob.tm.push([p.source, p.target]);
+      importJob.updatedAt = Date.now();
+    } else {
+      importJob = tmMakeImportJob(parsed.from, parsed.to, merged.added);
+      jobs.push(importJob);
+    }
+    try { await translateJobStore.save(importJob); added = merged.added.length; }
+    catch (e) { showError("Đã nhập nhưng không lưu được vào IndexedDB: " + e.message); return; }
+  }
+  const dup = merged.duplicate + parsed.duplicate;
+  await refreshTmBox();
+  $("tm-info").textContent = "Đã nhập TM " + langName(parsed.from) + " → " + langName(parsed.to) +
+    ": " + added + " mục mới, " + dup + " mục trùng (đã có, giữ bản cũ), " +
+    parsed.skipped + " mục bỏ qua (trống/giống gốc/quá 20.000). Lần dịch sau cùng cặp này sẽ dùng TM đã nhập.";
+});
+$("tm-list").addEventListener("click", async (ev) => {
+  const src = ev.target && ev.target.getAttribute && ev.target.getAttribute("data-tm-del");
+  if (src == null) return;
+  const pair = tmSelectedPair();
+  if (!pair || !translateJobStore) return;
+  if (!confirm("Xoá mục TM “" + src + "” khỏi bộ nhớ dịch " + pair.from + " → " + pair.to + "? Lần dịch sau sẽ dịch lại chuỗi này.")) return;
+  let jobs = [];
+  try { jobs = await translateJobStore.getAll(); } catch (e) { jobs = []; }
+  const r = tmRemovePair(jobs, pair.from, pair.to, src);
+  for (const j of r.jobs) { try { await translateJobStore.save(j); } catch (e) { /* giữ tiếp */ } }
+  await refreshTmBox();
+  $("tm-info").textContent = "Đã xóa “" + src + "” khỏi bộ nhớ dịch.";
+});
+$("btn-tm-clear-pair").addEventListener("click", async () => {
+  const pair = tmSelectedPair();
+  if (!pair || !translateJobStore) return;
+  if (!confirm("Xoá TOÀN BỘ bộ nhớ dịch " + langName(pair.from) + " → " + langName(pair.to) + "? Các bản dịch đã tải về trước đó không bị đổi, nhưng lần dịch sau sẽ phải dịch lại từ đầu.")) return;
+  let jobs = [];
+  try { jobs = await translateJobStore.getAll(); } catch (e) { jobs = []; }
+  const before = tmCollectPairs(jobs, pair.from, pair.to).size;
+  const r = tmClearPair(jobs, pair.from, pair.to);
+  for (const j of r.jobs) { try { await translateJobStore.save(j); } catch (e) { /* giữ tiếp */ } }
+  await refreshTmBox();
+  $("tm-info").textContent = "Đã xóa toàn bộ TM " + langName(pair.from) + " → " + langName(pair.to) +
+    " (" + before + " mục, " + r.jobs.length + " job).";
+});
+refreshTmBox();
 // Cổng tải (mục A, Joseph 21:28): tự kiểm tra lần dịch gần nhất mà
 // thấy thiếu key hoặc ngôn ngữ khác bị đổi thì CHẶN tải file thiếu,
 // hiện rõ số dòng + ví dụ + hướng "Tiếp tục dịch" — thay vì im lặng
