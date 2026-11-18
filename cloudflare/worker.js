@@ -107,7 +107,11 @@ const DEFAULT_AI_DAILY_NEURON_GUARD = 9000; // worker tự dừng trước 10%
 // Vì là ước tính nên ngưỡng dừng đặt thấp hơn hạn thật 10% để có biên an toàn.
 const AI_NEURONS_PER_TOKEN = 0.0309;
 const AI_CHARS_PER_TOKEN = 4;
-const AI_BATCH_CONCURRENCY = 5; // batch Workers AI: tối đa 5 lần gọi song song
+const AI_BATCH_CONCURRENCY = 10; // batch Workers AI: tối đa 10 lần gọi
+// song song. Đo live 2026-11-18 [ĐÃ ĐO THẬT]: 3 request x 10 chuỗi song
+// song = 15 lần gọi AI đồng thời, 0 lỗi, xong 30 chuỗi trong 14,8s —
+// binding AI chịu được ≥15 đồng thời nên 10/batch là an toàn; batch 25
+// chuỗi chỉ còn 3 đợt thay vì 5, bớt ~40% thời gian chờ AI.
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -467,7 +471,7 @@ export default {
       return json({
         ok: true,
         service: "beartea-translate-proxy",
-        version: 3,
+        version: 4, // v4: KV batch song song + AI concurrency 5 -> 10
         config,
         configured: config === "ok",
         provider: prov.provider,
@@ -622,8 +626,11 @@ export default {
         keys.push("t:" + (await sha256Hex(
           [provider, modelFor(provider), t, source, target, glossaryVersion].join("\n"))));
       }
-      const cachedVals = [];
-      for (const k of keys) cachedVals.push(await cache.get(k));
+      const cachedVals = await Promise.all(keys.map((k) => cache.get(k)));
+      // Đọc cache song song: trước đây đọc tuần tự từng key (await trong
+      // vòng for) — batch 30 chuỗi đã cache mất riêng ~1s chỉ để đọc KV
+      // (đo live 2026-11-18: batch 30 chuỗi toàn cache hết 1250ms).
+      // Promise.all giữ đúng thứ tự keys nên out map lại đúng chuỗi.
       const needIdx = [];
       let uncachedChars = 0;
       for (let i = 0; i < texts.length; i++) {
@@ -689,9 +696,12 @@ export default {
         await usageKv.put(breakerKey, JSON.stringify({ failures: 0, open_until: 0 }));
         for (let j = 0; j < needIdx.length; j++) {
           out[needIdx[j]] = got[j];
-          await cache.put(keys[needIdx[j]], got[j],
-            { expirationTtl: 30 * 24 * 3600 });
         }
+        // Ghi cache song song (như đọc ở trên): trước đây ghi tuần tự
+        // từng key. Lỗi ghi 1 key vẫn làm lỗi cả request như trước
+        // (Promise.all ném lên như await trong vòng for cũ).
+        await Promise.all(needIdx.map((idx, j) =>
+          cache.put(keys[idx], got[j], { expirationTtl: 30 * 24 * 3600 })));
       }
       return json({
         ok: true, translated: out, provider, chars,
