@@ -48,10 +48,52 @@ WEB_ROOT = "/pb3web"
 # file đầu vào >2 GiB thì từ chối rõ thay vì để trình duyệt crash.
 # Lưu ý: file gần 2GB vẫn có thể làm tab Safari trên iPhone văng vì RAM.
 MAX_WEB_INPUT = 2 * 1024 * 1024 * 1024
+# Ngân sách RAM tab web cho cổng kiểm tra / ép file (gate-crash-fix,
+# [ĐÃ ĐO THẬT] trên VM — xem _check_web_memory): tab Safari ~1 GB.
+# File gốc tốn: Python ~GATE_PY_PEAK_SLOPE × cỡ file + GATE_PY_PEAK_FIXED
+# (mô phỏng ép + quét đơn vị) + MEMFS 1× + ArrayBuffer JS 1× + nền
+# ~250 MB (Pyodide + trình duyệt). File đã ép kèm theo (cổng chế độ
+# pressed): thêm ~3× cỡ file đó (MEMFS + Python + JS). Vượt ngân sách
+# thì từ chối lịch sự kèm hướng xử lý, thay vì để Safari sập tab.
+WEB_TAB_BUDGET_BYTES = 950 * 1024 * 1024
+WEB_TAB_BASELINE_BYTES = 250 * 1024 * 1024
+GATE_PY_PEAK_SLOPE = 4.0  # [ĐÃ ĐO THẬT] sau sửa: (19 MB -> 148 MB,
+# 165 MB -> 714 MB) cho ra slope ~3.9, intercept ~74 MB — làm tròn lên
+# 4.0 / 75 MB để có biên an toàn. Trước sửa slope là ~5.3.
+GATE_PY_PEAK_FIXED = 75 * 1024 * 1024
 MAX_TEXT_HEAD = 200          # số ký tự TextAsset hiển thị mỗi object
 MAX_LIST_TEXT_ASSETS = 50    # như _COMPACT_MAX_TEXT_ASSETS của PB3
 MAX_STRINGS = 200
 STRINGS_SCAN_BYTES = 1024 * 1024
+
+
+def _check_web_memory(path, what, extra_bytes=0):
+    """Ước tính đỉnh RAM tab rồi từ chối lịch sự nếu vượt ngân sách.
+
+    Gọi TRƯỚC khi đọc/mô phỏng file trong delivery_gate / rebuild_apply.
+    what: "kiểm tra trước khi giao" / "ép file" (hiện trong thông báo).
+    extra_bytes: cỡ file đã ép kèm theo (chế độ pressed) — tính thêm 3×.
+    Không raise khi file nhỏ/vừa; raise ValueError kèm số ước tính +
+    hướng xử lý khi ước tính vượt WEB_TAB_BUDGET_BYTES.
+    """
+    try:
+        n = os.path.getsize(path)
+    except OSError:
+        return
+    py_peak = GATE_PY_PEAK_SLOPE * n + GATE_PY_PEAK_FIXED
+    tab_peak = py_peak + 2 * n + 3 * extra_bytes + WEB_TAB_BASELINE_BYTES
+    if tab_peak <= WEB_TAB_BUDGET_BYTES:
+        return
+    def _mb(b):
+        return "%.0f MB" % (b / 1024.0 / 1024.0)
+    raise ValueError(
+        "File %s (%s) cần khoảng %s RAM để %s trên bản web "
+        "(Python ~%s + file trong tab ~%s + nền ~250 MB), vượt giới hạn "
+        "tab Safari (~950 MB) — trình duyệt sẽ sập tab thay vì báo lỗi. "
+        "Hãy chọn file .assets lẻ ở bước 1 thay vì cả IPA (chỉ ép đơn vị "
+        "cần dịch), hoặc dùng bản iSH cho file này."
+        % (os.path.basename(path), _mb(n), _mb(tab_peak), what,
+           _mb(py_peak), _mb(2 * n + 3 * extra_bytes)))
 
 
 def _apply_shims():
@@ -2628,6 +2670,9 @@ def rebuild_apply(path, translations_json, provenance_json=None,
         dry = bool(dry_run) if dry_run is not None else True
         # dry_run=False + confirm=False: rebuild.apply_rebuild sẽ từ chối
         # với E_CONFIG_INVALID, không ghi gì.
+        # Gate-crash-fix: ước tính RAM tab trước khi ép — từ chối lịch sự
+        # thay vì để Safari sập tab.
+        _check_web_memory(path, "ép file")
         data = open(path, "rb").read()
         orig_sha = hashlib.sha256(data).hexdigest()
         # P0-2: verdict cổng (nếu UI truyền) phải PASS + đúng file + đúng
@@ -2809,6 +2854,17 @@ def delivery_gate(path, translations_json, source_json=None,
                 allowlist = json.loads(allowlist_json)
             except ValueError:
                 raise ValueError("allowlist_json không phải JSON hợp lệ.")
+        # Gate-crash-fix: ước tính RAM tab trước khi mô phỏng nặng —
+        # từ chối lịch sự thay vì để Safari sập tab (tính cả file đã ép
+        # kèm theo nếu có).
+        _pressed_n = 0
+        if pressed_path:
+            try:
+                _pressed_n = os.path.getsize(str(pressed_path))
+            except OSError:
+                _pressed_n = 0
+        _check_web_memory(path, "kiểm tra trước khi giao",
+                          extra_bytes=_pressed_n)
         data = open(path, "rb").read()
         orig_sha = hashlib.sha256(data).hexdigest()
         # JsNull (Pyodide) là falsy — dùng truthiness như plan_apply.
