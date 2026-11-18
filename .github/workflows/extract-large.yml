@@ -1,0 +1,173 @@
+# Trích xuất text game từ file IPA lớn trên máy chủ GitHub (chạy ngầm).
+#
+# Mục đích: file IPA >140 MB hay làm sập tab Safari trên iPhone (tab chỉ
+# ~1–1,5 GB RAM) nên không trích được trên web; Colab thì phải mở notebook
+# tay. Workflow này chạy trích xuất NGAY TRONG giao diện web MeoRocky: user
+# nhập tên game + Drive file ID vào tab Trích xuất, web gọi API dispatch,
+# máy chủ GitHub tải IPA từ Drive về, trích bằng đúng code SDK của repo
+# (bridge.extract), trả các file locale JSON qua artifact.
+#
+# CHỈ chạy bằng workflow_dispatch (không chạy khi push/PR — tránh chạy
+# lung tung tốn phút Actions). Workflow KHÔNG commit gì vào repo, KHÔNG in
+# token hay nội dung file ra log.
+#
+# Điều kiện để chạy được:
+#   - File IPA trên Drive phải ở chế độ "Bất kỳ ai có đường liên kết cũng
+#     xem được" (ai có link cũng xem được) — runner tải bằng link công khai
+#     qua gdown, không có tài khoản Google nào trên runner. Chưa chia sẻ
+#     thì bước tải fail với thông báo rõ ràng (file tải về không phải ZIP).
+#   - Token GitHub dùng để dispatch cần quyền Actions (Read and write)
+#     trên repo này (xem docs/ACTIONS_EXTRACT.md).
+#   - Link công khai của Drive có giới hạn lượt tải: file bị tải quá
+#     nhiều gần đây thì Google chặn ("Too many users...") tối đa 24 giờ —
+#     bước tải fail với thông báo riêng, chỉ cần chờ rồi bấm chạy lại
+#     (không phải lỗi workflow, xem docs/ACTIONS_EXTRACT.md mục Giới hạn).
+#
+# Giới hạn đã biết:
+#   - Runner ubuntu-latest: 16 GB RAM, 14 GB disk — đủ cho IPA ~2 GB.
+#     Trích xuất streaming theo entry, RAM đỉnh phụ thuộc entry lớn nhất.
+#   - Giới hạn artifact 500 MB của gói miễn phí KHÔNG cản: runner tải IPA
+#     thẳng từ Drive (không qua artifact); chỉ file JSON kết quả (vài trăm
+#     KB) mới đi qua artifact.
+#   - File không phải game Unity (vd Don't Starve Together) trích ra 0 file
+#     locale — đó là kết quả ĐÚNG (như notebook Colab), workflow vẫn xanh
+#     và trả summary.json ghi rõ 0 file + số mục bỏ qua.
+#   - Timeout 90 phút: tải 2 GB từ Drive + trích; đo thật xem báo cáo cuối
+#     nhánh feat/actions-extract.
+name: Trich xuat IPA lon tren may chu
+
+on:
+  workflow_dispatch:
+    inputs:
+      file_id:
+        description: "Drive file ID của file IPA (đoạn giữa file/d/ và /view trong link Drive)"
+        required: true
+        type: string
+      game_name:
+        description: "Tên game (dùng đặt tên artifact, vd: Dead Cells-3.5.15 VH)"
+        required: true
+        type: string
+      locales:
+        description: "Ngôn ngữ trích, cách nhau bằng dấu phẩy (vd: en,zh)"
+        required: false
+        default: "en,zh"
+        type: string
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  extract:
+    name: trich xuat IPA lon
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12 (CI — setup-python bỏ 3.9 trên Ubuntu 26.04)
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install lz4 + gdown (SDK cần lz4; tải Drive cần gdown)
+        run: pip install lz4 gdown
+
+      - name: Chuẩn bị tên artifact (slug từ tên game)
+        run: |
+          set -euo pipefail
+          SLUG=$(printf '%s' "${{ inputs.game_name }}" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$//')
+          [ -n "$SLUG" ] || SLUG=game
+          echo "SLUG=$SLUG" >> "$GITHUB_ENV"
+          echo "slug: $SLUG"
+
+      - name: Tải IPA từ Drive theo file ID (link công khai)
+        run: |
+          set -euo pipefail
+          T0=$(date +%s)
+          # gdown 5+/6+ khong con co --id (chi nhan URL hoac ID o vi tri
+          # tham so) — dung dang URL uc?id= de chay duoc moi ban gdown.
+          # gdown ghi log ra download.log: neu that bai thi doc log de
+          # phan biet 2 nguyen nhan (sai ID/chua chia se vs het quota tai
+          # cong khai cua Drive — "Too many users" — file van dung, chi
+          # can cho toi da 24 gio roi bam chay lai).
+          if ! gdown "https://drive.google.com/uc?id=${{ inputs.file_id }}" -O game.ipa 2>&1 | tee download.log; then
+            if grep -qi "too many users" download.log; then
+              echo "::error::Drive gioi han luot tai cong khai cua file nay (\"Too many users have viewed or downloaded this file recently\") — file van dung, chi can cho toi da 24 gio roi bam chay lai (xem docs/ACTIONS_EXTRACT.md muc Gioi han)."
+            else
+              echo "::error::Tai file that bai — kiem tra file ID va che do chia se \"ai co link cung xem duoc\" (xem log gdown o tren)."
+            fi
+            exit 1
+          fi
+          T1=$(date +%s)
+          echo "DOWNLOAD_SECONDS=$((T1 - T0))" >> "$GITHUB_ENV"
+          python3 - <<'EOF'
+          import hashlib, os
+          p = "game.ipa"
+          if not os.path.isfile(p) or os.path.getsize(p) == 0:
+              raise SystemExit("TAI FILE THAT BAI: game.ipa rong hoac khong co — kiem tra lai file ID.")
+          with open(p, "rb") as f:
+              head = f.read(4)
+          if head != b"PK\x03\x04":
+              raise SystemExit("FILE TAI VE KHONG PHAI IPA/ZIP (4 byte dau: %r) — file chua o che do 'ai co link cung xem duoc' hoac sai file ID." % head)
+          h = hashlib.md5()
+          with open(p, "rb") as f:
+              for chunk in iter(lambda: f.read(1 << 20), b""):
+                  h.update(chunk)
+          print("IPA: %d byte, md5=%s" % (os.path.getsize(p), h.hexdigest()))
+          EOF
+
+      - name: Trích xuất bằng code SDK của repo (bridge.extract)
+        env:
+          DOWNLOAD_SECONDS: ${{ env.DOWNLOAD_SECONDS }}
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/extract_large.py --ipa game.ipa \
+            --game "${{ inputs.game_name }}" --file-id "${{ inputs.file_id }}" \
+            --locales "${{ inputs.locales }}" --out out \
+            --download-seconds "${DOWNLOAD_SECONDS:-0}"
+
+      - name: Upload artifact en.json
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: meorocky-extract-${{ env.SLUG }}-en
+          path: out/en.json
+          if-no-files-found: ignore
+          retention-days: 30
+
+      - name: Upload artifact zh-CN.json
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: meorocky-extract-${{ env.SLUG }}-zh-cn
+          path: out/zh-CN.json
+          if-no-files-found: ignore
+          retention-days: 30
+
+      - name: Upload artifact zh-TW.json
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: meorocky-extract-${{ env.SLUG }}-zh-tw
+          path: out/zh-TW.json
+          if-no-files-found: ignore
+          retention-days: 30
+
+      - name: Upload artifact tom tat (summary.json)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: meorocky-extract-${{ env.SLUG }}-summary
+          path: out/summary.json
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload artifact tat ca file JSON (1 zip)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: meorocky-extract-${{ env.SLUG }}-all
+          path: out/*.json
+          if-no-files-found: error
+          retention-days: 30
