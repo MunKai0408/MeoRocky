@@ -25,7 +25,7 @@
 
 // ĐỔI SỐ NÀY MỖI KHI DEPLOY BẢN MỚI (bất kỳ file nào trong PRECACHE_URLS
 // đổi nội dung). Bản cũ sẽ bị xóa ở activate.
-const CACHE_VERSION = "v52-20261118";
+const CACHE_VERSION = "v53-20261118";
 const CACHE_NAME = "beartea-" + CACHE_VERSION;
 // Cache riêng cho prefetch Pyodide sau first paint (Mục C3): app.js ghi
 // file đã tải trước vào đây; SW dùng làm dự phòng khi cache chính trượt
@@ -37,7 +37,7 @@ const PREFETCH_CACHE = "beartea-prefetch-v1";
 // <script> như colab_handoff.js — ngoài files.json từ v50 vì P0 boot
 // 404) + font đi kèm + fixture tự kiểm tra (C2/C3:
 // fixtures/selftest.zip để lần thăm 2 offline vẫn chạy được
-// "Tự kiểm tra"). Sinh từ đĩa lúc viết file này (134 mục);
+// "Tự kiểm tra"). Sinh từ đĩa lúc viết file này (136 mục);
 // thêm/bớt file vendored thì cập nhật cả danh sách này, không thì
 // lần thăm 2 offline sẽ thiếu file đó.
 const PRECACHE_URLS = [
@@ -130,6 +130,7 @@ const PRECACHE_URLS = [
   "pb3/sdk/compress.py",
   "pb3/sdk/containers.py",
   "pb3/sdk/csvutil.py",
+  "pb3/sdk/cff.py",
   "pb3/sdk/discovery.py",
   "pb3/sdk/exporters.py",
   "pb3/sdk/extraction.py",

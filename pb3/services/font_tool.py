@@ -25,8 +25,10 @@ GIỚI HẠN TRUNG THỰC (in ra khi chạy + ghi trong handoff/final_font.md):
 - Font nhúng trong SerializedFile (Font object, class 128): đợt này chỉ
   liệt kê, KHÔNG sửa được bytes object; thay thế chỉ làm được với file
   .ttf rời hoặc entry .ttf trong container ZIP/IPA.
-- Chỉ gộp được font TrueType có outline glyf; font CFF (.otf) đọc được
-  cmap nhưng không gộp được; font collection (.ttc) chưa hỗ trợ.
+- Gộp được font TrueType (glyf) và font CFF (.otf) không CID
+  (quadratic→cubic Type 2, sdk/cff); font CFF CID-keyed không gộp
+  được (báo rõ, bỏ qua font đó); font collection (.ttc) gộp được
+  từng face.
 
 Tiến độ theo luật #152–153: % thật + ETA thật, tăng dần từng 1%
 (SteadyProgress, cùng mẫu một dòng với thanh Overall; màu qua
@@ -84,8 +86,9 @@ class FontFound:
                 base += " — tên %s" % self.family
             return base + " — " + self.note
         if self.font_kind == "otf":
-            return ("%s: font CFF (.otf, %s) — đọc được cmap, KHÔNG gộp được "
-                    "(chỉ thay thế bằng chế độ 3/4)" % (self.display, self.family))
+            return ("%s: font CFF (.otf, %s) — gộp được khi không CID "
+                    "(CID thì chỉ thay thế bằng chế độ 3/4)"
+                    % (self.display, self.family))
         rep = font_sdk.CoverageReport(family=self.family or self.display,
                                       kind=self.font_kind, num_glyphs=self.num_glyphs,
                                       total=self.total, covered=self.covered,
@@ -466,7 +469,8 @@ def _plan_targets(scan: ScanResult, font_name: Optional[str],
     if font_name:
         return [_match_font(loose, font_name)]
     if for_merge:
-        return [f for f in loose if f.font_kind == "ttf" and not f.is_full]
+        return [f for f in loose
+                if f.font_kind in ("ttf", "otf") and not f.is_full]
     return [f for f in loose if f.font_kind in ("ttf", "otf")]
 
 
@@ -477,7 +481,7 @@ def rebuild_fonts(source: str, *, font_name: Optional[str] = None,
                   progress_fn: Optional[Callable[[int, int], None]] = None) -> FontOpResult:
     """Chế độ (1)/(2): gộp glyph tiếng Việt còn thiếu vào font.
 
-    (1) font_name=None: gộp vào mọi font TTF thiếu chữ.
+    (1) font_name=None: gộp vào mọi font TTF/OTF (không CID) thiếu chữ.
     (2) font_name=<tên>: dựng đúng 1 font chính, rồi dùng đúng 1 font này
     cho toàn bộ game (thay mọi font khác bằng font chính đã dựng).
     """
@@ -500,17 +504,18 @@ def rebuild_fonts(source: str, *, font_name: Optional[str] = None,
     targets = _plan_targets(scan, font_name, for_merge=True)
     if font_name and targets:
         picked = targets[0]
-        if picked.font_kind != "ttf":
+        if picked.font_kind not in ("ttf", "otf"):
             raise PB3Error("E_UNSUPPORTED_FORMAT",
-                           "font %s là %s — chỉ gộp được font TrueType (.ttf); "
-                           "dùng chế độ (3)/(4) để thay thế"
+                           "font %s là %s — chỉ gộp được font TrueType (.ttf) "
+                           "và font CFF (.otf) không CID; dùng chế độ (3)/(4) "
+                           "để thay thế"
                            % (picked.display, picked.font_kind), where=picked.display)
         if picked.is_full:
             result.warnings.append("font %s đã đủ ký tự tiếng Việt — không cần gộp"
                                    % (picked.family or picked.display))
             return result
     if not targets:
-        result.warnings.append("không có font TTF nào thiếu ký tự tiếng Việt — không cần gộp")
+        result.warnings.append("không có font TTF/OTF nào thiếu ký tự tiếng Việt — không cần gộp")
         for f in scan.fonts:
             if f.kind == "unity-embedded":
                 result.skipped.append((f.display, "font nhúng Unity — không sửa được"))

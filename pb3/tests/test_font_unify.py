@@ -53,15 +53,56 @@ class TestStandaloneFonts(TmpCase):
         self.assertEqual(fnt["covered"], 142)
         self.assertEqual(fnt["missing_total"], 0)
 
-    def test_otf_is_partial_but_not_mergeable(self):
+    def test_otf_real_cff_is_mergeable(self):
+        # Font OTF/CFF that (co bang CFF): ke hoach merge_glyphs, gop that.
+        data = fx.build_otf([0x41], name="Game")
+        scan = fl.scan_source(str(self._dir_with({"Game.otf": data})))
+        fnt = scan["fonts"][0]
+        self.assertEqual(fnt["kind"], "otf")
+        self.assertEqual(fnt["status"], "partial")
+        plan = fl.build_unify_plan(scan)
+        self.assertEqual(plan["fonts"][0]["action"], "merge_glyphs")
+        self.assertEqual(plan["fonts"][0]["output"], "Game.vi.otf")
+        merged = fl.merge_standalone_ttfs(
+            scan, fx.build_font_full_vietnamese())
+        self.assertEqual(len(merged), 1)
+        self.assertEqual(merged[0]["output"], "Game.vi.otf")
+        self.assertTrue(font_sdk.coverage(
+            merged[0]["data"], where="merged").is_full)
+
+    def test_otf_stub_merge_fails_closed(self):
+        # OTF "gia" (chi doi magic, khong co bang CFF): ke hoach van
+        # merge_glyphs (ke hoach khong biet font hong), nhung luc gop
+        # that thi bao loi ro (E_CORRUPT) thay vi pha ca loat.
         data = fx.build_otf_stub()
         scan = fl.scan_source(str(self._dir_with({"Game.otf": data})))
         fnt = scan["fonts"][0]
         self.assertEqual(fnt["kind"], "otf")
         self.assertEqual(fnt["status"], "partial")
         plan = fl.build_unify_plan(scan)
-        self.assertEqual(plan["fonts"][0]["action"], "replace_with_donor")
-        self.assertNotIn("output", plan["fonts"][0])
+        self.assertEqual(plan["fonts"][0]["action"], "merge_glyphs")
+        merged = fl.merge_standalone_ttfs(
+            scan, fx.build_font_full_vietnamese())
+        self.assertEqual(len(merged), 1)
+        self.assertEqual(merged[0]["error"], "E_CORRUPT")
+        self.assertNotIn("data", merged[0])
+
+    def test_otf_cid_merge_fails_closed(self):
+        # OTF CID-keyed: gop that bao loi E_UNSUPPORTED_FORMAT, khong
+        # pha ca loat (font TTF khac trong cung thu muc van gop duoc).
+        d = self._dir_with({
+            "Game.otf": fx.build_otf([0x41], name="GameCID", cid=True),
+            "Game.ttf": fx.build_font_missing_vietnamese(),
+        })
+        scan = fl.scan_source(str(d))
+        merged = fl.merge_standalone_ttfs(
+            scan, fx.build_font_full_vietnamese())
+        by_name = {m["name"]: m for m in merged}
+        self.assertEqual(by_name["Game.otf"]["error"],
+                         "E_UNSUPPORTED_FORMAT")
+        self.assertNotIn("data", by_name["Game.otf"])
+        self.assertTrue(font_sdk.coverage(
+            by_name["Game.ttf"]["data"], where="merged").is_full)
 
     def test_ttc_is_unsupported(self):
         data = fx.build_ttc_stub()

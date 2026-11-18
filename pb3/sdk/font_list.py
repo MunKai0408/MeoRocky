@@ -12,7 +12,7 @@ bridge (font_list / font_unify), không dùng services/font_tool.py (lớp
 dịch vụ CLI của iSH: tiến độ terminal + ghi ngược vào ZIP/IPA đã dựng
 lại — không hợp luồng file/lưu/chia sẻ của web). Quét ở đây CHỈ ĐỌC;
 thao tác "dùng chung 1 font" trả về file font_unified.zip để tải về
-(TTF đã gộp + kế hoạch JSON + font Be Vietnam Pro), không ghi đè file
+(font TTF/OTF đã gộp + kế hoạch JSON + font Be Vietnam Pro), không ghi đè file
 gốc trong tab trình duyệt.
 
 Điều tra trung thực trước khi code (xem exp/analysis_font_unify_results.md):
@@ -22,8 +22,11 @@ gốc trong tab trình duyệt.
   Web cũng lập được kế hoạch fallback (C6) + glyph plan (mục 7).
 - Font TTF rời (file .ttf hoặc entry trong IPA/ZIP): web gộp ĐƯỢC
   thật bằng sdk/font.merge_vietnamese (copy outline glyf + cmap).
-- Font OTF/CFF: chỉ đọc được cmap, KHÔNG gộp được (giới hạn sdk/font).
-- Font TTC: chưa hỗ trợ đọc/gộp.
+- Font OTF/CFF không CID: gộp ĐƯỢC thật bằng sdk/font.merge_vietnamese
+  (quadratic→cubic Type 2, sdk/cff); font CFF CID-keyed (Noto CJK)
+  KHÔNG gộp được (fail-closed).
+- Font TTC: đọc/gộp ĐƯỢC từng face bằng sdk/font.merge_vietnamese
+  (chọn face_index); kế hoạch dùng chung 1 font chưa gộp TTC tự động.
 - Font nhúng trong SerializedFile (Font object, class 128): chỉ liệt
   kê được tên/path_id, KHÔNG đọc được bytes font, KHÔNG sửa được
   object — đường làm là thay bằng font đủ dấu trong Unity Editor.
@@ -68,9 +71,12 @@ LIMITS = [
     "trên web: copy glyph tiếng Việt còn thiếu từ Be Vietnam Pro vào "
     "font gốc (sdk/font.merge_vietnamese) — file đã gộp nằm trong "
     "font_unified.zip.",
-    "Font OTF/CFF chỉ đọc được cmap, KHÔNG gộp được glyph; font TTC "
-    "chưa hỗ trợ — hai loại này chỉ thay bằng Be Vietnam Pro rồi trỏ "
-    "lại tham chiếu trong Unity Editor.",
+    "Font OTF/CFF không CID gộp ĐƯỢC thật trên web (sdk/font."
+    "merge_vietnamese, quadratic→cubic Type 2); font CFF CID-keyed "
+    "(Noto CJK) KHÔNG gộp được; font TTC gộp ĐƯỢC từng face qua "
+    "font_merge (chọn face), chưa gộp tự động trong kế hoạch dùng "
+    "chung 1 font — các loại không gộp được chỉ thay bằng Be Vietnam "
+    "Pro rồi trỏ lại tham chiếu trong Unity Editor.",
     "Font nhúng trong SerializedFile (Font object, class 128) chỉ liệt "
     "kê được tên/path_id — không đọc được bytes font, không sửa được "
     "object; thay bằng font đủ dấu trong Unity Editor.",
@@ -309,8 +315,9 @@ def scan_source(path: str) -> dict:
     Nguồn: thư mục, file .ttf/.otf/.ttc rời, .assets/.unity3d/bundle,
     ZIP/IPA. Trả {schema, source, fonts, summary, warnings,
     files_scanned, bundle_nodes, tmp_items, tmp_candidates, glyph_plan,
-    font_bytes}: `font_bytes` là {id_font: bytes} CHỈ cho font TTF rời
-    (để bridge gộp thật) — phải lược bỏ trước khi dump JSON.
+    font_bytes}: `font_bytes` là {id_font: bytes} CHỈ cho font TTF/OTF
+    rời còn thiếu (để bridge gộp thật; OTF CID gộp sẽ báo lỗi rõ, không
+    lặng lẽ hỏng) — phải lược bỏ trước khi dump JSON.
     """
     from sdk import containers as cont
 
@@ -382,7 +389,7 @@ def scan_source(path: str) -> dict:
                 if entry is not None:
                     entry["id"] = len(out["fonts"])
                     out["fonts"].append(entry)
-                    if entry["kind"] == "ttf" and entry["status"] == "partial":
+                    if entry["kind"] in ("ttf", "otf") and entry["status"] == "partial":
                         out["font_bytes"][entry["id"]] = data
         except PB3Error as exc:
             out["warnings"].append("%s: %s"
@@ -396,18 +403,21 @@ def scan_source(path: str) -> dict:
 
 # ------------------------------------------------------------------ gom 1 font
 def _merged_filename(name: str) -> str:
-    base = os.path.splitext(os.path.basename(name or "font.ttf"))[0]
+    base, ext = os.path.splitext(os.path.basename(name or "font.ttf"))
+    if (ext or "").lower() == ".otf":
+        return "%s.vi.otf" % (base or "font")
     return "%s.vi.ttf" % (base or "font")
 
 
 def build_unify_plan(scan: dict, donor_covered: int = 142) -> dict:
     """Kế hoạch "dùng chung 1 font" từ kết quả scan_source.
 
-    Mỗi font có đúng 1 hành động: merge_glyphs (TTF rời, làm được thật
-    trên web) | tmp_fallback (TMP, kế hoạch C6 + script Editor) |
-    replace_with_donor (OTF/TTC/nhúng — thay trong Editor) |
-    none_full (đã đủ 142/142) | unreadable (không đọc được nên không
-    biết thiếu gì). Không bịa hành động cho font không đọc được.
+    Mỗi font có đúng 1 hành động: merge_glyphs (TTF/OTF không CID rời,
+    làm được thật trên web) | tmp_fallback (TMP, kế hoạch C6 + script
+    Editor) | replace_with_donor (OTF CID/TTC/nhúng — thay trong
+    Editor) | none_full (đã đủ 142/142) | unreadable (không đọc được
+    nên không biết thiếu gì). Không bịa hành động cho font không đọc
+    được.
     """
     fonts = scan.get("fonts") or []
     tmp_items = scan.get("tmp_items") or []
@@ -466,11 +476,22 @@ def build_unify_plan(scan: dict, donor_covered: int = 142) -> dict:
                 "fallback_name": (fb or {}).get("fallback_name"),
                 "fallback_asset_path": (fb or {}).get("fallback_asset_path"),
             })
-        elif kind in ("otf", "ttc", "unity_font") and status in ("partial", "unreadable"):
+        elif kind == "otf" and status == "partial":
+            entry.update({
+                "action": "merge_glyphs",
+                "detail": "Gộp %d ký tự còn thiếu từ %s vào font này ngay "
+                          "trên web → file %s trong font_unified.zip "
+                          "(font CFF không CID; font CID-keyed như Noto "
+                          "CJK thì gộp báo lỗi, thay bằng donor)."
+                          % (fnt.get("missing_total", 0), DONOR_NAME,
+                             _merged_filename(fnt.get("name"))),
+                "output": _merged_filename(fnt.get("name")),
+            })
+        elif kind in ("ttc", "unity_font") and status in ("partial", "unreadable"):
             why = {
-                "otf": "OTF/CFF chỉ đọc được cmap, không gộp được glyph "
-                       "trên web.",
-                "ttc": "Font collection (.ttc) chưa hỗ trợ gộp.",
+                "ttc": "Font collection (.ttc) gộp được từng face qua "
+                       "font_merge (chọn face), chưa gộp tự động trong kế "
+                       "hoạch dùng chung 1 font.",
                 "unity_font": "Font nhúng trong SerializedFile không đọc "
                              "được bytes, không sửa được object.",
             }[kind]
@@ -515,11 +536,14 @@ def build_unify_plan(scan: dict, donor_covered: int = 142) -> dict:
 
 
 def merge_standalone_ttfs(scan: dict, donor_bytes: bytes) -> List[dict]:
-    """Gộp thật các font TTF rời còn thiếu với font donor.
+    """Gộp thật các font TTF/OTF rời còn thiếu với font donor.
 
-    Trả [{font_id, name, output, data, added, already, glyphs_copied}].
-    Chỉ TTF có outline glyf; OTF/TTC/TMP/nhúng không vào đây (xem plan).
+    Trả [{font_id, name, output, data, added, already, glyphs_copied}]
+    cho font gộp được; font gộp lỗi (vd OTF CID-keyed) trả bản ghi
+    {error, detail} thay vì phá cả loạt (fail-closed từng font).
+    TTC/TMP/nhúng không vào đây (xem plan).
     """
+    from core.errors import PB3Error
     from sdk import font as f
 
     out = []
@@ -529,8 +553,18 @@ def merge_standalone_ttfs(scan: dict, donor_bytes: bytes) -> List[dict]:
         fnt = by_id.get(fid)
         if fnt is None:
             continue
-        res = f.merge_vietnamese(data, donor_bytes,
-                                 where=fnt.get("name") or "font")
+        try:
+            res = f.merge_vietnamese(data, donor_bytes,
+                                     where=fnt.get("name") or "font")
+        except PB3Error as exc:
+            out.append({
+                "font_id": fid,
+                "name": fnt.get("name"),
+                "source": fnt.get("source"),
+                "error": getattr(exc, "code", "?"),
+                "detail": str(exc),
+            })
+            continue
         out.append({
             "font_id": fid,
             "name": fnt.get("name"),
