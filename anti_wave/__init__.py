@@ -29,7 +29,14 @@ Thanh phan Phase 3:
                    dispatch/poll workflow, doc artifact, fail-set tu junit XML.
                    Doc lap: khong phu thuoc module Phase 2.
 
-Chua co (la Phase 4): patch_manager.py, recovery.py.
+Thanh phan Phase 4:
+  patch_manager.py — tao / kiem tra / ap patch (unified diff) de chuyen
+                     code giua VM va GitHub khong mat mat; tai dung
+                     github_sync.validate_patch_text + safe_io.
+  recovery.py      — quy trinh RECOVERY 12 buoc khi song tat (5 probe
+                     lang cach nhau 30s, kiem tra toan ven, doi chieu
+                     SHA/checkpoint, chi dong bo phan thieu, xung dot
+                     thi dung); tai dung healthcheck/integrity/checkpoint.
 """
 from __future__ import annotations
 
@@ -105,9 +112,32 @@ try:
         log_event,
         redact,
     )
+    from anti_wave.patch_manager import (  # noqa: E402,F401
+        PATCH_SCHEMA_VERSION,
+        apply_patch,
+        apply_summary,
+        build_patch,
+        dumps_patch,
+        files_for_checkpoint,
+        load_patch_text_from_github,
+        loads_patch,
+        save_patch_to_github,
+        validate_patch,
+    )
+    from anti_wave.recovery import (  # noqa: E402,F401
+        STEP_NAMES,
+        Recovery,
+        RecoveryConflict,
+        check_conflicts,
+        ready_for_normal,
+        recovery_summary,
+        verify_calm,
+    )
     _PHASE2_PRESENT = True
+    _PHASE4_PRESENT = True
 except ImportError:
     _PHASE2_PRESENT = False
+    _PHASE4_PRESENT = False
 
 # Luu y: CHECKPOINT_VERSION (checkpoint.py) va REDACTED (logger.py) cua
 # Phase 2 cung gia tri voi ban github_sync (1 va "[REDACTED]") — import
@@ -167,4 +197,24 @@ if _PHASE2_PRESENT:
         "snapshot",
         "verify_file",
         "verify_snapshot",
+    ]
+if _PHASE4_PRESENT:
+    __all__ += [
+        "PATCH_SCHEMA_VERSION",
+        "STEP_NAMES",
+        "Recovery",
+        "RecoveryConflict",
+        "apply_patch",
+        "apply_summary",
+        "build_patch",
+        "check_conflicts",
+        "dumps_patch",
+        "files_for_checkpoint",
+        "load_patch_text_from_github",
+        "loads_patch",
+        "ready_for_normal",
+        "recovery_summary",
+        "save_patch_to_github",
+        "validate_patch",
+        "verify_calm",
     ]
