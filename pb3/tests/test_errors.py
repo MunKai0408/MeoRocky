@@ -22,7 +22,8 @@ class TestErrorCodes(unittest.TestCase):
     def test_extension_codes_flagged(self):
         ext = {c for c, s in errors.ERROR_SPECS.items() if s.extension}
         self.assertEqual(ext, {"E_UNSUPPORTED_ON_ISH", "E_CONFIG_INVALID", "E_TOO_LARGE", "E_IO",
-                               "E_CORRUPT", "E_NOT_IMPLEMENTED", "E_NETWORK", "E_TIMEOUT"})
+                               "E_CORRUPT", "E_NOT_IMPLEMENTED", "E_NETWORK", "E_TIMEOUT",
+                               "E_WRITE_WAVE"})
 
     def test_every_code_has_vi_message_and_valid_exit(self):
         for c, s in errors.ERROR_SPECS.items():
@@ -85,6 +86,20 @@ class TestFromException(unittest.TestCase):
         self.assertEqual(e.code, "E_IO")
         self.assertIn("đường đích là thư mục", e.detail)
         e = errors.error_from_exception(PermissionError("x"), where="w", op="read")
+        self.assertEqual(e.code, "E_INPUT_NOT_FOUND")
+
+    def test_write_eperm_is_wave_not_io(self):
+        """Anti-Wave (Phase 2): EPERM (errno 1) khi GHI -> E_WRITE_WAVE (song),
+        khac EACCES (errno 13) khi ghi van -> E_IO nhu truoc. OSError(EPERM)
+        cung la PermissionError nen thu tu kiem tra errno moi quyet dinh."""
+        e = errors.error_from_exception(OSError(errno.EPERM, "x"), where="w", op="write")
+        self.assertEqual(e.code, "E_WRITE_WAVE")
+        self.assertEqual(e.exit_code, errors.EXIT_SAFETY)
+        self.assertIn("sóng", e.hint)
+        e = errors.error_from_exception(OSError(errno.EACCES, "x"), where="w", op="write")
+        self.assertEqual(e.code, "E_IO")
+        # EPERM khi DOC khong doi anh xa cu (van E_INPUT_NOT_FOUND).
+        e = errors.error_from_exception(OSError(errno.EPERM, "x"), where="w", op="read")
         self.assertEqual(e.code, "E_INPUT_NOT_FOUND")
 
     def test_passthrough(self):
