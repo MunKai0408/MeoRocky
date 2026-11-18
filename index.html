@@ -387,6 +387,19 @@
       <button id="btn-unity-rawscan" class="secondary">Trích sâu entry</button>
     </div>
     <p class="note">“Xem sâu” liệt kê từng bundle/.assets trong file (tên, kích thước, version, nén, số object, nguồn ngôn ngữ, lý do pipeline bỏ qua). “Trích sâu” là chế độ last-resort, chỉ chạy khi bấm nút: kết quả ghi nhãn unverified (il2cpp-literals / unverified-raw-scan), tách riêng khỏi file locale chính — không trộn vào en.json/zh.json. Với IPA, nhập đường dẫn 1 entry: global-metadata.dat để đọc literal IL2CPP chính xác, hoặc data.unity3d để quét payload bundle đã giải nén.</p>
+    <div id="il2cpp-block">
+      <h3>Bảng dịch literals IL2CPP</h3>
+      <p class="note">Text chính của một số game Unity (vd My Talking Tom) nằm trong bảng literal của <code>global-metadata.dat</code>, không nằm trong bundle ngôn ngữ. Nhập đường dẫn entry <code>.../global-metadata.dat</code> vào ô trên rồi: (1) <b>Xuất bảng dịch literals</b> — tạo bảng key→giá trị (LIT_000001…) để dịch ở tab Dịch như file locale thường; (2) dịch xong thì bấm <b>Ép bản dịch literals</b> — vá từng literal ngay trong metadata (đối chiếu đúng chuỗi gốc trước khi vá, sai thì bỏ qua); (3) <b>Đóng gói lại IPA</b> để nhận file đã mod. Chỉ literal nào bản dịch ngắn hơn hoặc bằng gốc (theo byte UTF-8, metadata v31) — hoặc dài đúng bằng gốc (v39) — mới vá được; bản dịch tiếng Việt thường dài hơn nên một phần key sẽ ở lại “chưa ghi được” kèm lý do từng key. Không có đường ghi dài hơn: tool không giả vờ ghi được.</p>
+      <div class="row">
+        <label><input type="checkbox" id="il2cpp-include-single"> Gồm cả từ đơn (mặc định chỉ chuỗi nhiều từ)</label>
+      </div>
+      <div class="row">
+        <button id="btn-il2cpp-table" class="secondary">Xuất bảng dịch literals</button>
+        <button id="btn-il2cpp-patch" class="secondary" disabled>Ép bản dịch literals</button>
+        <button id="btn-il2cpp-repack" class="secondary" disabled>Đóng gói lại IPA (literals)</button>
+      </div>
+      <div id="il2cpp-result"></div>
+    </div>
     <div id="unity-deep-result"></div>
     <details>
       <summary>Tùy chọn nâng cao</summary>

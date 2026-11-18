@@ -63,6 +63,7 @@ const state = {
                           // Lưu/Chia sẻ đợi ghi OPFS xong mới đọc file ra)
   opfsFallbackReason: null,  // lý do lần ghi OPFS gần nhất rơi về RAM (C4)
   unityBundles: [],      // bundle/.assets trong ZIP/IPA đang inspect
+  il2cpp: null,          // bảng literals IL2CPP (2026-11-17): {entry, tableKeys, fileKey, patched} — đổi file thì hết hạn
   currentToolTab: "list", // tab công cụ đang mở trong view "Chức năng" (redesign)
   pending: new Map(),    // id -> {resolve, reject, op, t0, lastPct}
   nextId: 1,
@@ -1319,6 +1320,9 @@ function setCurrentGameFile(obj) {
   state.extractSelected = null;
   state.extractEntries = [];
   state.lastMod = null;       // file mới -> kết quả Mod cũ hết hạn (mục C7)
+  state.il2cpp = null;        // file mới -> bảng literals cũ hết hạn
+  { const il = $("il2cpp-result"); if (il) il.innerHTML = ""; }
+  if (typeof refreshIl2cppEnabled === "function") refreshIl2cppEnabled();
   { const ppb = $("btn-mod-patch-pack"); if (ppb) ppb.disabled = true; }
   if (typeof rebuildResetState === "function") rebuildResetState();
 
@@ -1390,6 +1394,9 @@ function clearFile() {
   state.extractSelected = null;
   state.extractEntries = [];
   state.lastMod = null;        // bỏ file -> kết quả Mod cũ hết hạn (mục C7)
+  state.il2cpp = null;         // bỏ file -> bảng literals cũ hết hạn
+  { const il = $("il2cpp-result"); if (il) il.innerHTML = ""; }
+  if (typeof refreshIl2cppEnabled === "function") refreshIl2cppEnabled();
   { const ppb = $("btn-mod-patch-pack"); if (ppb) ppb.disabled = true; }
   if (typeof rebuildResetState === "function") rebuildResetState();
   const inp = $("file-input");
@@ -1737,6 +1744,123 @@ $("btn-unity-rawscan").addEventListener("click", async () => {
     $("unity-deep-result").innerHTML = renderRawScan(parsed);
   } catch (e) { /* runOp đã báo lỗi */ }
 });
+
+// ---- Bảng dịch literals IL2CPP (2026-11-17) ----
+// Text chính kiểu Tom nằm trong global-metadata.dat: xuất thành bảng
+// dict LIT_%06d -> chuỗi để tab Dịch ăn được (không stringify list),
+// rồi vá tại chỗ từng literal (fail-closed: đối chiếu chuỗi gốc qua
+// manifest trước khi vá; dài hơn gốc thì bỏ qua kèm lý do) + đóng gói
+// lại IPA bằng đường M2. state.il2cpp = {entry, tableKeys, fileKey,
+// patched} — đổi file thì hết hạn (kiểm bằng fileKey như rebuild).
+// Manifest + bảng đã vá nằm trong /tmp/pb3out (worker) — patch đọc
+// manifest qua read_extracted, repack đọc file đã vá + sidecar ở đó.
+function il2cppFileKey() {
+  return state.file ? state.file.name + "|" + state.file.size + "|" + (state.file.lastModified || 0) : "";
+}
+function refreshIl2cppEnabled() {
+  const p = $("btn-il2cpp-patch"), r = $("btn-il2cpp-repack");
+  const st = state.il2cpp;
+  const sameFile = st && st.fileKey === il2cppFileKey();
+  if (p) p.disabled = !(sameFile && (st.tableKeys || 0) > 0);
+  if (r) r.disabled = !(sameFile && st.patched);
+}
+function il2cppEntry() {
+  return ($("deep-raw-entry").value || "").trim();
+}
+$("btn-il2cpp-table").addEventListener("click", async () => {
+  try {
+    const entry = il2cppEntry();
+    if (!entry) { showError("Nhập đường dẫn entry global-metadata.dat vào ô trên trước (vd .../Metadata/global-metadata.dat)."); return; }
+    const includeSingle = $("il2cpp-include-single") && $("il2cpp-include-single").checked;
+    const { parsed } = await runOp("Xuất bảng dịch literals", "il2cpp_table",
+      [inputPath(), entry, !!includeSingle], inputFileArgs());
+    state.il2cpp = { entry, tableKeys: parsed.table_keys || 0, fileKey: il2cppFileKey(), patched: false };
+    // Đăng ký bảng vào dropdown tab Dịch + nạp thẳng vào ô dịch.
+    const files = state.lastExtractFiles || (state.lastExtractFiles = []);
+    if (!files.some((f) => f.exported === "il2cpp-literals.json")) {
+      files.push({ exported: "il2cpp-literals.json", source: entry, locale: null });
+    }
+    refreshTranslateSourceSelect();
+    await loadExtractedToTranslate("il2cpp-literals.json");
+    const box = $("il2cpp-result");
+    if (box) box.innerHTML = "<p>✅ Đã xuất <b>" + (parsed.table_keys || 0) + "</b> chuỗi literals thành bảng dịch " +
+      "<b>il2cpp-literals.json</b> (metadata v" + (parsed.metadata_version || "?") + " · " +
+      (parsed.literals_total || 0) + " literal, đọc được " + (parsed.literals_read || 0) + ")" +
+      " — đã nạp vào tab Dịch, bấm Dịch để dịch sang tiếng Việt.</p>";
+    refreshIl2cppEnabled();
+  } catch (e) { /* runOp đã báo lỗi */ }
+});
+$("btn-il2cpp-patch").addEventListener("click", async () => {
+  try {
+    const st = state.il2cpp;
+    if (!st || st.fileKey !== il2cppFileKey()) { showError("Chưa xuất bảng dịch literals cho file này — bấm “Xuất bảng dịch literals” trước."); return; }
+    // Bản dịch: ưu tiên ô kết quả tab Dịch (JSON đã dịch xong); fallback
+    // state.lastTranslated khi user dịch bằng job mà ô kết quả trống.
+    let tableText = ($("translate-output") && $("translate-output").value || "").trim();
+    let tableObj = null;
+    if (tableText) {
+      try { tableObj = JSON.parse(tableText); } catch (e) { showError("Bản dịch ở ô kết quả tab Dịch không phải JSON hợp lệ: " + e.message); return; }
+    }
+    if (!tableObj || Array.isArray(tableObj) || typeof tableObj !== "object") {
+      const lt = state.lastTranslated;
+      if (lt && lt.translated && typeof lt.translated === "object" && !Array.isArray(lt.translated)) {
+        tableObj = lt.translated; tableText = JSON.stringify(tableObj);
+      } else { showError("Chưa có bản dịch bảng literals — sang tab Dịch, dịch il2cpp-literals.json rồi quay lại đây."); return; }
+    }
+    if (!Object.keys(tableObj).length) { showError("Bản dịch rỗng — không có key nào để ép."); return; }
+    // Manifest nằm trong /tmp/pb3out (worker) — đọc qua read_extracted.
+    const msg = await callWorker("run", { fn: "read_extracted", args: ["il2cpp-literals.manifest.json"], files: [] });
+    const man = JSON.parse(msg.result);
+    if (!man || man.ok !== true) { showError("Không đọc được manifest literals — xuất lại bảng dịch trước khi ép."); return; }
+    const { parsed } = await runOp("Ép bản dịch literals", "patch_il2cpp_literals",
+      [inputPath(), st.entry, tableText, man.text], inputFileArgs());
+    st.patched = (parsed.patched_count || 0) > 0;
+    const skipped = parsed.skipped || [];
+    const box = $("il2cpp-result");
+    if (box) {
+      let html = "<p>✅ Đã ép <b>" + (parsed.patched_count || 0) + "</b> literal" +
+        (skipped.length ? " · <b>" + skipped.length + " key chưa ghi được</b> (bản dịch dài hơn gốc theo byte UTF-8 — không có đường ghi dài hơn, tool không giả vờ ghi được)" : " · không còn key nào chưa ghi được") + ".</p>";
+      if (skipped.length) {
+        html += "<table><tr><th>Key</th><th>Lý do</th></tr>";
+        skipped.slice(0, 20).forEach((s) => {
+          html += "<tr><td>" + esc(s.key || "") + "</td><td>" + esc(s.reason || "") + "</td></tr>";
+        });
+        html += "</table>";
+        if (skipped.length > 20) html += "<p class=\"note\">… còn " + (skipped.length - 20) + " key nữa.</p>";
+      }
+      html += "<p class=\"note\">File metadata đã vá lưu trong phiên làm việc — bấm “Đóng gói lại IPA (literals)” để nhận file IPA đã mod.</p>";
+      box.innerHTML = html;
+    }
+    refreshIl2cppEnabled();
+  } catch (e) { /* runOp đã báo lỗi */ }
+});
+$("btn-il2cpp-repack").addEventListener("click", async () => {
+  try {
+    const st = state.il2cpp;
+    if (!st || !st.patched || st.fileKey !== il2cppFileKey()) { showError("Chưa ép bản dịch literals — bấm “Ép bản dịch literals” trước, rồi mới đóng gói lại."); return; }
+    const box = $("il2cpp-result");
+    if (box) box.innerHTML = "";
+    const { parsed } = await runOp("Đóng gói lại IPA (literals)", "il2cpp_repack",
+      [inputPath(), st.entry], inputFileArgs(), true);
+    const checks = parsed.checks || [];
+    const ok = checks.length > 0 && checks.every((c) => c.passed);
+    const rows = checks.map((c) => "<li>" + (c.passed ? "✅" : "❌") +
+      " <b>" + esc(c.name) + "</b>: " + esc(c.detail || "") + "</li>").join("");
+    if (box) box.innerHTML = "<p>" + (ok
+      ? "✅ Đóng gói lại IPA xong — kiểm tra đạt tất cả mục, file đã sẵn sàng để lưu."
+      : "❌ Đóng gói lại IPA KHÔNG ĐẠT kiểm tra — file lỗi đã bị xóa, không cho tải về.") + "</p>" +
+      "<p>File: <b>" + esc(parsed.filename || "") + "</b> (" +
+      fmtBytes(parsed.size_after || 0) + ", gốc " +
+      fmtBytes(parsed.size_before || 0) + ") · thay " +
+      (parsed.replaced ? parsed.replaced.length : 0) + " file · " +
+      (parsed.entries || 0) + " entry.</p>" +
+      "<ul>" + rows + "</ul>" +
+      "<p class=\"note\">Chữ ký cũ giữ nguyên nên cần ký lại bằng chứng chỉ của bạn trước khi cài (như bước 5 của tab Mod).</p>";
+  } catch (e) {
+    showError("Đóng gói lại IPA (literals) lỗi: " + (e && e.message ? e.message : e));
+  }
+});
+refreshIl2cppEnabled();
 
 // ---- Danh sách file để chọn tay (tab Trích xuất) ----
 // Chỉ liệt kê entry trích xuất được: container Unity (.assets/.unity3d/

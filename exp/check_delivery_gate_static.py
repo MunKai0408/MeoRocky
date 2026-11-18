@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Kiem tra tinh cong kiem tra truoc khi giao (P0-2, buoc 6):
 sdk/gate.py chi stdlib + Python 3.9, khong UnityPy/lz4, khong ghi file;
-manifest (files.json 105, tests.json 185); sw.js precache 130 muc co
-sdk/gate.py, khong muc chet, CACHE_VERSION v46-20261118; bridge co op
+manifest (files.json 105, tests.json 186); sw.js precache 130 muc co
+sdk/gate.py, khong muc chet, CACHE_VERSION v47-20261118; bridge co op
 delivery_gate + rebuild_apply bat verdict cong khi duoc truyen; UI du
 id cong + nut Ghi bi khoa boi verdict + render cong esc du lieu game.
 In JSON {"fails": [...]}.
@@ -77,8 +77,8 @@ if len(files) != 105:
 if "pb3/sdk/gate.py" not in files:
     fails.append("files.json thieu pb3/sdk/gate.py")
 tests = json.loads((SITE / "pb3" / "tests.json").read_text())["files"]
-if len(tests) != 185:
-    fails.append("tests.json co %d file, ky vong 185" % len(tests))
+if len(tests) != 186:
+    fails.append("tests.json co %d file, ky vong 186" % len(tests))
 if "pb3/tests/test_gate.py" not in tests:
     fails.append("tests.json thieu pb3/tests/test_gate.py")
 
@@ -86,8 +86,8 @@ if "pb3/tests/test_gate.py" not in tests:
 sw = (SITE / "sw.js").read_text(encoding="utf-8")
 if '"pb3/sdk/gate.py"' not in sw:
     fails.append("sw.js precache thieu pb3/sdk/gate.py")
-if 'CACHE_VERSION = "v46-20261118"' not in sw:
-    fails.append("sw.js CACHE_VERSION khong phai v46-20261118")
+if 'CACHE_VERSION = "v47-20261118"' not in sw:
+    fails.append("sw.js CACHE_VERSION khong phai v47-20261118")
 m = re.search(r"const PRECACHE_URLS = \[(.*?)\];", sw, re.S)
 if not m:
     fails.append("sw.js khong tim thay PRECACHE_URLS")

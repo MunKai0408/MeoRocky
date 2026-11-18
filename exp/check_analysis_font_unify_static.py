@@ -7,8 +7,8 @@
 - bridge.py: co op font_list + font_unify + cache _LAST_FONT_SCAN.
 - index.html + app.js: nut btn-font-list + btn-font-unify, handler goi
   dung op, hien tmp_candidates + font_unified.zip.
-- Manifest: files.json 105 (co pb3/sdk/font_list.py), tests.json 185
-  (co pb3/tests/test_font_unify.py); sw.js CACHE_VERSION v46-20261118
+- Manifest: files.json 105 (co pb3/sdk/font_list.py), tests.json 186
+  (co pb3/tests/test_font_unify.py); sw.js CACHE_VERSION v47-20261118
   + precache co pb3/sdk/font_list.py.
 - Tieng Viet moi du dau.
 In JSON {"fails": [...]}.
@@ -80,12 +80,12 @@ if len(files) != 105:
 if "pb3/sdk/font_list.py" not in files:
     fails.append("files.json thieu pb3/sdk/font_list.py")
 tests = json.loads((SITE / "pb3" / "tests.json").read_text())["files"]
-if len(tests) != 185:
-    fails.append("tests.json co %d file, ky vong 185" % len(tests))
+if len(tests) != 186:
+    fails.append("tests.json co %d file, ky vong 186" % len(tests))
 if "pb3/tests/test_font_unify.py" not in tests:
     fails.append("tests.json thieu pb3/tests/test_font_unify.py")
-if 'CACHE_VERSION = "v46-20261118"' not in sw:
-    fails.append("sw.js CACHE_VERSION khong phai v46-20261118")
+if 'CACHE_VERSION = "v47-20261118"' not in sw:
+    fails.append("sw.js CACHE_VERSION khong phai v47-20261118")
 if '"pb3/sdk/font_list.py"' not in sw:
     fails.append("sw.js precache thieu pb3/sdk/font_list.py")
 

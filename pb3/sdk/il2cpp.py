@@ -37,6 +37,9 @@ game đã biết; từ chối member > 256 MB).
 
 from __future__ import annotations
 
+import io
+import os
+import re
 import struct
 
 from core.errors import PB3Error
@@ -358,3 +361,406 @@ def extract_literals(stream_or_path, source, min_len=4,
                 fh.close()
             except Exception:  # noqa: BLE001
                 pass
+
+
+# ---------------------------------------------------------------------------
+# Bảng dịch literals (IL2CPP literals -> tab Dịch) + vá literal tại chỗ
+# ---------------------------------------------------------------------------
+# Vấn đề (audit §A1, [ĐÃ ĐO THẬT]): text chính của game kiểu Tom nằm
+# trong bảng literal IL2CPP nhưng đường đi bị đứt ở cả 3 khâu — trích chỉ
+# ra file xem (không thành file locale), output {"label","strings":[...]}
+# không phải dict key->value nên tab Dịch stringify cả list thành 1 chuỗi
+# khổng lồ, và không có provenance nên không có đường ghi lại.
+#
+# Thiết kế:
+# - Bảng dịch là dict thuần {LIT_NNNNNN: text} — key mã hoá literal_index
+#   nên tab Dịch (translate_json / translate_json_google) ăn được như mọi
+#   file locale, không cần sửa đường dịch. Manifest kèm theo ghi rõ từng
+#   key ứng với literal nào (index, offset, độ dài byte, text gốc) để
+#   bước vá verify đúng file metadata trước khi ghi.
+# - Vá TẠI CHỖ (in-place), fail-closed từng literal, KHÔNG đổi kích thước
+#   file hay offset nào khác ngoài length của literal được vá (v31):
+#   * v31 (pairs length,dataIndex): bản dịch ngắn hơn hoặc bằng gốc
+#     (tính theo BYTE UTF-8) thì ghi đè + đệm NUL + sửa length trong
+#     bảng; dài hơn thì không ghi được (lý do too_long).
+#   * v39 (delta): độ dài suy ra từ index kế tiếp nên chỉ ghi được khi
+#     đúng bằng byte; ngắn/dài hơn đều không ghi được (length_must_match).
+#   Re-layout toàn bộ blob literal (để dịch dài hơn vẫn ghi được) cần
+#   dời mọi section sau blob + sửa mọi offset header — KHÔNG có runtime
+#   Unity để kiểm chứng game còn chạy nên KHÔNG làm (ghi rõ follow-up).
+# - Verify sau khi vá: đọc lại TOÀN BỘ literal từ bytes đã vá — literal
+#   đã vá phải đúng text mới, literal còn lại phải giống hệt gốc; header
+#   (version, table/data offsets) không đổi; kích thước file không đổi.
+
+TABLE_FILE = "il2cpp-literals.json"
+MANIFEST_FILE = "il2cpp-literals.manifest.json"
+PATCHED_FILE = "global-metadata.patched.dat"
+PATCHED_SIDECAR = "global-metadata.patched.json"
+
+_TABLE_KEY_RE = re.compile(r"^LIT_(\d+)$")
+
+
+def table_key(index):
+    """Key bảng dịch cho 1 literal: mã hoá literal_index, vd LIT_000123."""
+    return "LIT_%06d" % int(index)
+
+
+def literals_to_table(result, include_single_words=False):
+    """Kết quả extract_literals -> (bảng dịch dict, manifest dict).
+
+    Bảng chỉ lấy bucket "strings" (chuỗi nhiều từ = text hiển thị chính)
+    mặc định; "single_words" phần lớn là tên class/method/field nên chỉ
+    thêm khi include_single_words=True (ghi rõ trong manifest). Key theo
+    literal_index nên 2 literal trùng text vẫn là 2 key khác nhau.
+    Manifest ghi cho mỗi key: literal_index, offset tuyệt đối trong file,
+    độ dài BYTE UTF-8 của text gốc, text gốc, encoding.
+    """
+    table = {}
+    manifest = {}
+    for item in result.get("strings", []) or []:
+        idx = int(item["literal_index"])
+        key = table_key(idx)
+        text = item["text"]
+        table[key] = text
+        manifest[key] = {
+            "literal_index": idx,
+            "offset": int(item["offset"]),
+            "byte_length": len(text.encode("utf-8")),
+            "source": text,
+            "encoding": item.get("encoding", "utf-8"),
+        }
+    if include_single_words:
+        for item in result.get("single_words", []) or []:
+            idx = int(item["literal_index"])
+            key = table_key(idx)
+            text = item["text"]
+            table[key] = text
+            manifest[key] = {
+                "literal_index": idx,
+                "offset": int(item["offset"]),
+                "byte_length": len(text.encode("utf-8")),
+                "source": text,
+                "encoding": item.get("encoding", "utf-8"),
+                "single_word": True,
+            }
+    return table, manifest
+
+
+def read_metadata_bytes(path, entry=None):
+    """Đọc bytes global-metadata.dat: file thường (entry=None) hoặc
+    member trong ZIP/IPA (entry=đường dẫn member).
+
+    Trả (data, source_label). Member/file > MAX_MEMBER_BYTES thì từ chối
+    trước khi đọc (không nạp cả trăm MB). Entry không có trong ZIP thì
+    E_INPUT_NOT_FOUND (không để KeyError lọt ra ngoài).
+    """
+    if entry:
+        import zipfile
+        try:
+            with zipfile.ZipFile(path, "r") as zf:
+                try:
+                    info = zf.getinfo(entry)
+                except KeyError:
+                    raise PB3Error(
+                        "E_INPUT_NOT_FOUND",
+                        "không tìm thấy entry %r trong file ZIP/IPA"
+                        % entry, where=str(entry))
+                if info.file_size > MAX_MEMBER_BYTES:
+                    raise PB3Error(
+                        "E_TOO_LARGE",
+                        "global-metadata.dat %d byte > giới hạn %d byte "
+                        "cho đọc literal IL2CPP"
+                        % (info.file_size, MAX_MEMBER_BYTES), where=entry)
+                return zf.read(entry), "%s::%s" % (path, entry)
+        except PB3Error:
+            raise
+        except (zipfile.BadZipFile, OSError) as exc:
+            raise PB3Error("E_UNSUPPORTED_FORMAT",
+                           "không mở được file ZIP/IPA (%s)"
+                           % type(exc).__name__, where=str(path))
+    try:
+        size = os.path.getsize(path)
+    except OSError as exc:
+        raise PB3Error("E_INPUT_NOT_FOUND",
+                       "không đọc được file %r (%s)" % (path, exc),
+                       where=str(path))
+    if size > MAX_MEMBER_BYTES:
+        raise PB3Error("E_TOO_LARGE",
+                       "file %d byte > giới hạn %d byte cho đọc literal "
+                       "IL2CPP" % (size, MAX_MEMBER_BYTES), where=str(path))
+    with open(path, "rb") as fh:
+        return fh.read(), str(path)
+
+
+def _read_literal_entries(fh, header):
+    """Đọc bảng literal thành list (byte_length, data_index) theo index.
+
+    v31: đọc trực tiếp từ bảng (length, dataIndex). v39: suy độ dài từ
+    bảng delta (index kế tiếp trừ index hiện tại, cuối = dataSize).
+    """
+    if header.layout == "pairs":
+        fh.seek(header.table_off)
+        raw = fh.read(header.entry_count * 8)
+        if len(raw) < header.entry_count * 8:
+            raise PB3Error("E_CORRUPT",
+                           "metadata v31: đọc bảng literal thiếu byte",
+                           where="il2cpp")
+        return [struct.unpack_from("<II", raw, i * 8)
+                for i in range(header.entry_count)]
+    fh.seek(header.table_off)
+    raw = fh.read(header.entry_count * 4)
+    if len(raw) < header.entry_count * 4:
+        raise PB3Error("E_CORRUPT",
+                       "metadata v39: đọc bảng literal thiếu byte",
+                       where="il2cpp")
+    idxs = struct.unpack("<%dI" % header.entry_count, raw)
+    out = []
+    for i in range(header.entry_count):
+        off = idxs[i]
+        ln = (idxs[i + 1] - off) if i + 1 < header.entry_count \
+            else header.data_size - off
+        out.append((ln, off))
+    return out
+
+
+def patch_literals(data, patches):
+    """Vá literal IL2CPP TẠI CHỖ trong bytes metadata.
+
+    patches: {literal_index (int): text_mới (str)}. Trả
+    (patched_bytes, report) với report = {metadata_version,
+    literals_total, requested, patched: [{index, old_len, new_len}],
+    skipped: [{index, reason}], verified: True}.
+
+    Quy tắc (xem ghi chú đầu mục): v31 ghi được khi bản dịch ngắn hơn
+    hoặc bằng gốc (byte); v39 chỉ khi đúng bằng byte. Literal nào không
+    vá được thì bỏ qua kèm lý do, KHÔNG raise cả đợt. Verify sau khi vá
+    bằng cách đọc lại toàn bộ literal: đã vá đúng text mới, còn lại
+    giống hệt gốc, header + kích thước file không đổi — sai thì raise
+    E_VERIFY_FAILED (không trả bytes đã vá).
+    """
+    if not isinstance(data, (bytes, bytearray)):
+        raise ValueError("data phải là bytes của global-metadata.dat.")
+    data = bytes(data)
+    fh = io.BytesIO(data)
+    header = read_header(fh)
+    before = {}
+    for idx, text, _off, _ln in iter_literals(fh, header):
+        before[idx] = text
+    entries = _read_literal_entries(fh, header)
+    # Giữ whitespace 2 đầu của literal gốc (layout): bảng dịch giữ text
+    # ĐÃ STRIP (extract_literals strip để dịch sạch) nên bản dịch chỉ
+    # thay phần text hiển thị; khi vá, gắn lại whitespace gốc của
+    # literal đó để độ dài so theo text đã strip (cái user thấy trong
+    # bảng) và file giữ nguyên layout. Không làm vậy thì literal có
+    # thừa whitespace 2 đầu sẽ không bao giờ vá được ở v39 (bản dịch
+    # 19 byte != gốc 20 byte — vd 9K LIT_000042), dù bản dịch đúng
+    # bằng text đã strip. Literal không có whitespace thừa thì đây
+    # là no-op (prefix/suffix rỗng).
+    eff_patches = {}
+    for _idx, _new in patches.items():
+        if isinstance(_idx, int) and not isinstance(_idx, bool) \
+                and _idx in before and isinstance(_new, str):
+            _raw = before[_idx]
+            _pre = _raw[:len(_raw) - len(_raw.lstrip())]
+            _suf = _raw[len(_raw.rstrip()):]
+            eff_patches[_idx] = _pre + _new.strip() + _suf
+        else:
+            eff_patches[_idx] = _new
+    patches = eff_patches
+    out = bytearray(data)
+    patched = []
+    skipped = []
+    for idx in sorted(patches, key=lambda x: str(x)):
+        new_text = patches[idx]
+        if not isinstance(idx, int) or isinstance(idx, bool) \
+                or idx < 0 or idx >= header.entry_count:
+            skipped.append({"index": idx,
+                            "reason": "index ngoài bảng literal"})
+            continue
+        if not isinstance(new_text, str):
+            skipped.append({"index": idx,
+                            "reason": "bản dịch không phải chuỗi"})
+            continue
+        old_len, data_idx = entries[idx]
+        old_text = before.get(idx)
+        if old_text is None:
+            skipped.append({"index": idx,
+                            "reason": "literal gốc không đọc được "
+                                      "(không phải text sạch)"})
+            continue
+        new_raw = new_text.encode("utf-8")
+        if new_raw == old_text.encode("utf-8"):
+            skipped.append({"index": idx,
+                            "reason": "unchanged (bản dịch giống gốc)"})
+            continue
+        if header.layout == "pairs":
+            if len(new_raw) > old_len:
+                skipped.append({"index": idx,
+                                "reason": "too_long: bản dịch %d byte > "
+                                          "gốc %d byte (v31 chỉ ghi được "
+                                          "khi ngắn hơn hoặc bằng)"
+                                          % (len(new_raw), old_len)})
+                continue
+            pos = header.data_off + data_idx
+            out[pos:pos + len(new_raw)] = new_raw
+            for p in range(pos + len(new_raw), pos + old_len):
+                out[p] = 0
+            struct.pack_into("<I", out, header.table_off + idx * 8,
+                             len(new_raw))
+            patched.append({"index": idx, "old_len": int(old_len),
+                            "new_len": len(new_raw)})
+        else:  # delta
+            if len(new_raw) != old_len:
+                skipped.append({"index": idx,
+                                "reason": "length_must_match: bản dịch "
+                                          "%d byte != gốc %d byte (v39 "
+                                          "delta chỉ ghi được khi đúng "
+                                          "bằng byte)"
+                                          % (len(new_raw), old_len)})
+                continue
+            pos = header.data_off + data_idx
+            out[pos:pos + len(new_raw)] = new_raw
+            patched.append({"index": idx, "old_len": int(old_len),
+                            "new_len": len(new_raw)})
+    # Verify: đọc lại toàn bộ literal từ bytes đã vá.
+    patched_bytes = bytes(out)
+    if len(patched_bytes) != len(data):
+        raise PB3Error("E_VERIFY_FAILED",
+                       "kích thước file đổi sau khi vá (%d -> %d) — "
+                       "không trả bytes đã vá" % (len(data),
+                                                  len(patched_bytes)),
+                       where="il2cpp")
+    fh2 = io.BytesIO(patched_bytes)
+    header2 = read_header(fh2)
+    if (header2.version, header2.table_off, header2.table_size,
+            header2.data_off, header2.data_size,
+            header2.entry_count) != (
+            header.version, header.table_off, header.table_size,
+            header.data_off, header.data_size, header.entry_count):
+        raise PB3Error("E_VERIFY_FAILED",
+                       "header metadata đổi sau khi vá — không trả bytes "
+                       "đã vá", where="il2cpp")
+    after = {}
+    for idx, text, _off, _ln in iter_literals(fh2, header2):
+        after[idx] = text
+    patched_idx = {p["index"] for p in patched}
+    for idx, text in before.items():
+        want = patches[idx] if idx in patched_idx else text
+        if after.get(idx) != want:
+            raise PB3Error(
+                "E_VERIFY_FAILED",
+                "literal %d đọc lại sai sau khi vá (muốn %r, được %r) — "
+                "không trả bytes đã vá"
+                % (idx, want, after.get(idx)), where="il2cpp")
+    if set(after) != set(before):
+        raise PB3Error("E_VERIFY_FAILED",
+                       "tập literal đọc được đổi sau khi vá — không trả "
+                       "bytes đã vá", where="il2cpp")
+    return patched_bytes, {
+        "metadata_version": int(header.version),
+        "literals_total": int(header.entry_count),
+        "requested": len(patches),
+        "patched": patched,
+        "skipped": skipped,
+        "verified": True,
+    }
+
+
+def apply_literal_patches(data, table, manifest=None):
+    """Vá theo BẢNG DỊCH {key: text_mới} (+ manifest tuỳ chọn).
+
+    Key suy ra literal_index từ manifest (ưu tiên — kèm verify text
+    gốc) hoặc từ dạng LIT_NNNNNN. Key không suy được index, key trùng
+    index, hoặc text gốc khác manifest (sai file metadata) thì bỏ qua
+    kèm lý do, không vá. Trả (patched_bytes, report) — report có thêm
+    "key_results" [{key, index, outcome, reason}] để UI hiện từng key.
+    """
+    if not isinstance(table, dict):
+        raise ValueError("bảng dịch phải là dict {key: text}.")
+    manifest = manifest if isinstance(manifest, dict) else {}
+    fh = io.BytesIO(bytes(data))
+    header = read_header(fh)
+    before = {}
+    for idx, text, _off, _ln in iter_literals(fh, header):
+        before[idx] = text
+    patches = {}
+    key_of_index = {}
+    key_results = []
+    for key in sorted(table):
+        new_text = table[key]
+        m = manifest.get(key) if isinstance(manifest, dict) else None
+        idx = None
+        if isinstance(m, dict) and "literal_index" in m:
+            try:
+                idx = int(m["literal_index"])
+            except (TypeError, ValueError):
+                idx = None
+        if idx is None:
+            mm = _TABLE_KEY_RE.match(str(key))
+            if mm:
+                idx = int(mm.group(1))
+        if idx is None:
+            key_results.append({"key": str(key), "index": None,
+                                "outcome": "skipped",
+                                "reason": "key không rõ dạng LIT_NNNNNN "
+                                          "và không có manifest"})
+            continue
+        if idx in patches:
+            key_results.append({"key": str(key), "index": idx,
+                                "outcome": "skipped",
+                                "reason": "trùng literal_index với key %s"
+                                          % key_of_index[idx]})
+            continue
+        if idx not in before:
+            key_results.append({"key": str(key), "index": idx,
+                                "outcome": "skipped",
+                                "reason": "literal gốc không đọc được "
+                                          "(không phải text sạch)"})
+            continue
+        if isinstance(m, dict) and "source" in m:
+            # Bang dich giu text DA STRIP (extract_literals strip de
+            # dich sach), con literal goc trong file co the thua khoang
+            # trang/xuong dong o 2 dau — so ca raw lan strip, khong thi
+            # literal co thua whitespace se bi loai oan (vd 9K
+            # '-\t Event Count: {0}\n' — bang la '...{0}' da strip).
+            _raw = before[idx]
+            if m["source"] != _raw and m["source"] != _raw.strip():
+                key_results.append({"key": str(key), "index": idx,
+                                    "outcome": "skipped",
+                                    "reason": "source_mismatch: text gốc ở "
+                                              "index này khác manifest — sai "
+                                              "file metadata, không vá"})
+                continue
+        patches[idx] = new_text
+        key_of_index[idx] = str(key)
+    patched_bytes, report = patch_literals(data, patches)
+    patched_idx = {p["index"] for p in report["patched"]}
+    skipped_by_idx = {s["index"]: s["reason"]
+                      for s in report["skipped"]}
+    for key in sorted(table):
+        idx = None
+        m = manifest.get(key) if isinstance(manifest, dict) else None
+        if isinstance(m, dict) and "literal_index" in m:
+            try:
+                idx = int(m["literal_index"])
+            except (TypeError, ValueError):
+                idx = None
+        if idx is None:
+            mm = _TABLE_KEY_RE.match(str(key))
+            if mm:
+                idx = int(mm.group(1))
+        if idx is None or key_of_index.get(idx) != str(key):
+            continue  # đã ghi key_results ở vòng trên
+        if idx in patched_idx:
+            key_results.append({"key": str(key), "index": idx,
+                                "outcome": "patched", "reason": ""})
+        else:
+            key_results.append({"key": str(key), "index": idx,
+                                "outcome": "skipped",
+                                "reason": skipped_by_idx.get(
+                                    idx, "không vá được")})
+    report["key_results"] = sorted(key_results, key=lambda r: str(r["key"]))
+    report["patched_count"] = len(report["patched"])
+    report["skipped_count"] = len(report["skipped"])
+    return patched_bytes, report
+
