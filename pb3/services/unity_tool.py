@@ -353,7 +353,9 @@ def _resolve_vpath(file_bytes, entry, backend, limits):
     # current là container: đọc entry cuối
     try:
         data = _read_segment(current, last, backend, limits)
-    except PB3Error:
+    except PB3Error as exc:
+        if exc.code == "E_TOO_LARGE":
+            raise  # giu nguyen ma loi that, dung doi thanh "khong tim thay"
         raise _usage("không tìm thấy %r trong container/bundle" % last,
                      "unity patch <file> --entry <vpath> --object <id> ...")
     det_last = unity_sdk.detect_bundle(data)

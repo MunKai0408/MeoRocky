@@ -1398,14 +1398,43 @@ def _build_layers(root_vfs, inv: List[disc.InventoryEntry], limits, backend, log
                         % (entry.path, entry.size, limits.max_entry_bytes))
                     continue
             elif entry.size > limits.stream_entry_bytes:
+                # (2026-11-18, fix-two-reds; goc tu merge-mb-generic
+                # 9ca285d) Chi entry UnityFS bundle moi di duong streaming:
+                # _expand_unity_stream chi biet doc bundle — file .assets
+                # tho (SerializedFile, vd PvZ resources.assets 34 MB >
+                # tran 32 MiB) se E_UNSUPPORTED_FORMAT va ca file bi skip
+                # mat sach. Sniff magic bang slice 64 byte dau (re, chi
+                # giai nen 64 byte): khong phai bundle thi ve duong cu
+                # (doc tron + _expand_unity, <= 256 MiB). Sniff loi thi
+                # mac dinh ve duong cu cho an toan. LUU Y: 16 byte KHONG
+                # du — detect_bundle can ca chuoi player/revision
+                # (sample v9 can 32 byte; Tom v8 can 32 byte); sniff 16
+                # byte tra None ca voi bundle that, lam mat streaming.
+                _is_bundle = False
                 try:
-                    got, notes, mb = _expand_unity_stream_entry(
-                        nested, entry.path, backend, limits)
+                    _head = bytes(nested.slice(entry.path, 0, 64))
+                    _is_bundle = unity_sdk.detect_bundle(_head) is not None
                 except PB3Error as exc:
-                    _add_skipped(entry.path, "không mở được file Unity (streaming) [%s]: %s"
-                                 % (exc.code, exc.message_vi or exc.detail))
-                    log("Unity: %s: không mở được (streaming) [%s]" % (entry.path, exc.code))
-                    continue
+                    log("Unity: %s: khong sniff duoc magic [%s], doc tron"
+                        % (entry.path, exc.code))
+                if _is_bundle:
+                    try:
+                        got, notes, mb = _expand_unity_stream_entry(
+                            nested, entry.path, backend, limits)
+                    except PB3Error as exc:
+                        _add_skipped(entry.path, "không mở được file Unity (streaming) [%s]: %s"
+                                     % (exc.code, exc.message_vi or exc.detail))
+                        log("Unity: %s: không mở được (streaming) [%s]" % (entry.path, exc.code))
+                        continue
+                else:
+                    try:
+                        data = bytes(nested.read(entry.path, None))
+                    except PB3Error as exc:
+                        _add_skipped(entry.path, "không đọc được file Unity [%s]: %s"
+                                     % (exc.code, exc.message_vi or exc.detail))
+                        log("Unity: %s: không đọc được [%s]" % (entry.path, exc.code))
+                        continue
+                    got, notes, mb = _expand_unity(data, entry.path, backend, limits)
             else:
                 try:
                     data = bytes(nested.read(entry.path, None))

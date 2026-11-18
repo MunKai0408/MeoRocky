@@ -14,6 +14,9 @@
 
 Fixture TU DUNG (zip/.po tong hop bang zipfile); khong dung mang.
 Test IPA that (@slow) skip neu thieu file trong ~/workspace/test-ipas/.
+- fix-two-reds (2026-11-18): _enumerate_units bo qua entry > tran doc
+  tron RAM (khong refused gia); _resolve_vpath giu E_TOO_LARGE; raw
+  .assets > tran stream khong di streaming (fallback doc tron).
 """
 from __future__ import annotations
 
@@ -37,11 +40,15 @@ json.loads(bridge.boot())
 from core.errors import PB3Error  # noqa: E402
 from core.limits import Limits  # noqa: E402
 from plugins.po_mo.plugin import PoMoPlugin  # noqa: E402
+from sdk import batch as _batch  # noqa: E402
 from sdk import discovery as disc  # noqa: E402
 from sdk import extraction as ext  # noqa: E402
 from sdk import po_write as _pw  # noqa: E402
+from sdk import rebuild as _rb  # noqa: E402
 from sdk import unity as u  # noqa: E402
 from sdk.containers import NestedVFS  # noqa: E402
+from services import unity_tool as _ut  # noqa: E402
+from tests.helpers import pytest  # noqa: E402 - marker needs_fixture
 from tests.tiering import slow  # noqa: E402
 
 LIM = Limits()
@@ -110,6 +117,68 @@ class CapsPoTest(unittest.TestCase):
         self.assertEqual(PoMoPlugin.MANIFEST["limits"]["max_entry_bytes"],
                          32 * 1024 * 1024)
         self.assertEqual(PoMoPlugin.MANIFEST["version"], "1.1.0")
+
+    @pytest.mark.needs_fixture("unity/resources.assets")
+    def test_enumerate_units_skips_entry_over_memory_read_cap(self):
+        # [HỒI QUY] sharedassets0.assets 9K (147 MB) bi refused=1 sau caps-po:
+        # liet ke nhan entry toi 256 MiB nhung duong ep chi doc tron toi
+        # 128 MiB RAM. Entry vuot tran RAM phai duoc bo qua o muc liet ke.
+        data = (ROOT / "tests/fixtures/unity/resources.assets").read_bytes()
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+            zf.writestr("Payload/Game.app/Data/big.assets", data)
+        raw = buf.getvalue()
+        small = Limits(max_memory_read_bytes=len(data) - 1)
+        with self.assertRaises(PB3Error) as ctx:
+            _rb._enumerate_units(raw, BE, small)
+        self.assertEqual(ctx.exception.code, "E_INPUT_NOT_FOUND")
+        got = _rb._enumerate_units(raw, BE, LIM)
+        self.assertEqual(got, [("Payload/Game.app/Data/big.assets", "assets")])
+
+    @pytest.mark.needs_fixture("unity/resources.assets")
+    def test_resolve_vpath_oversize_keeps_e_too_large(self):
+        # (a) hoi quy fix-two-reds (2026-11-18): entry vuot tran doc tron
+        # vao RAM phai giu nguyen ma E_TOO_LARGE, khong duoc doi thanh
+        # E_CONFIG_INVALID ("khong tim thay ... trong container/bundle")
+        # o ca hai _resolve_vpath (batch + services/unity_tool).
+        data = (ROOT / "tests/fixtures/unity/resources.assets").read_bytes()
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as zf:
+            zf.writestr("Payload/Game.app/Data/big.assets", data)
+        raw = buf.getvalue()
+        small = Limits(max_memory_read_bytes=len(data) - 1)
+        for fn in (_batch._sdk_resolve_vpath, _ut._resolve_vpath):
+            with self.assertRaises(PB3Error) as ctx:
+                fn(raw, "Payload/Game.app/Data/big.assets", BE, small)
+            self.assertEqual(ctx.exception.code, "E_TOO_LARGE")
+
+    @pytest.mark.needs_fixture("unity/resources.assets")
+    def test_build_layers_raw_assets_over_stream_cap_not_skipped(self):
+        # (b) hoi quy fix-two-reds (2026-11-18): raw .assets (SerializedFile)
+        # > stream_entry_bytes KHONG duoc di duong streaming (chi biet doc
+        # bundle UnityFS) — phai fallback ve duong cu (doc tron +
+        # _expand_unity) va van cho ra 2 TextAsset (greeting, longtext).
+        # Truoc fix: _expand_unity_stream_entry -> E_UNSUPPORTED_FORMAT ->
+        # ca file bi skip, mat sach du lieu (PvZ: 521 -> 11 key).
+        small = Limits(stream_entry_bytes=64)
+        with tempfile.TemporaryDirectory() as tmp:
+            zpath = os.path.join(tmp, "game.zip")
+            with zipfile.ZipFile(zpath, "w") as zf:
+                zf.write(str(ROOT / "tests/fixtures/unity/resources.assets"),
+                         "Payload/Game.app/Data/resources.assets")
+            root = disc.open_source_vfs(zpath, small)
+            inv = disc.inventory(root, small)
+            layers, _shared = ext._build_layers(root, inv, small, BE,
+                                                lambda m: None)
+        virtual = {}
+        for layer in layers:
+            if layer.kind == "virtual":
+                virtual.update(layer.origin_map)
+        self.assertEqual(sorted(virtual), [
+            "Payload/Game.app/Data/resources.assets::greeting",
+            "Payload/Game.app/Data/resources.assets::longtext",
+        ])
+        self.assertEqual(set(virtual.values()), {"text_asset"})
 
     def test_expand_unity_stream_entry_matches_expand_unity(self):
         # Spool-to-temp + stream cho ket qua giong het duong cu (ca notes).
