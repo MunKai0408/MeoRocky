@@ -170,8 +170,8 @@ def validate_job(data):
     worker_url = str(data.get("worker_url") or "").strip()
     if worker_url and not _HTTP_URL_RE.match(worker_url):
         raise _err("E_CONFIG_INVALID",
-                   "WORKER_URL phải bắt đầu bằng https://.",
-                   "Dán lại URL worker (vd https://xxx.workers.dev).")
+                   "WORKER_URL phải bắt đầu bằng https.",
+                   "Dán lại URL worker đầy đủ (gồm https, vd xxx.workers.dev).")
     job_id = str(data.get("job_id") or "").strip()
     if job_id and not _JOB_ID_RE.match(job_id):
         raise _err("E_CONFIG_INVALID",
