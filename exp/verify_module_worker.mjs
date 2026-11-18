@@ -8,6 +8,7 @@
 // Kết quả: module_worker_results.md + module_worker_results.json
 import { loadPyodide } from "../pyodide/pyodide.mjs";
 import fs from "node:fs";
+import { createHash } from "node:crypto";
 
 const ROOT = decodeURIComponent(new URL("..", import.meta.url).pathname).replace(/\/$/, "");
 const SITE = ROOT;
@@ -46,7 +47,13 @@ rec("no_http_fetch_during_load", httpFetchCount === 0, `http fetch trong lúc lo
   const hasMjsImport = /import\s*\{\s*loadPyodide\s*\}\s*from\s*["']\.\/pyodide\/pyodide\.mjs["']/.test(w);
   const noImportScripts = !/importScripts/.test(w);
   const moduleWorker = /new Worker\("worker\.js",\s*\{\s*type:\s*"module"\s*\}\)/.test(a);
-  const noCrossOrigin = !/cdn\.jsdelivr\.net|https:\/\//.test(w + a + idx);
+  // "Không cross-origin" = không TẢI code từ CDN/nguồn ngoài lúc chạy
+  // (fetch/import/src https://). Link mở tab mới bằng hành động của
+  // người dùng (vd nút Colab ở index.html:1087 mở
+  // https://colab.research.google.com/...) KHÔNG tính — nó không tải
+  // code vào trang. Trước PR #14 check này là !/https:\/\// nên nút
+  // Colab làm FAIL oan (đo thật 2026-11-17).
+  const noCrossOrigin = !/cdn\.jsdelivr\.net|(?:from|import\(|fetch\(|src=)\s*["']https?:\/\//.test(w + a + idx);
   const mjsVendored = fs.existsSync(SITE + "/pyodide/pyodide.mjs") &&
     fs.statSync(SITE + "/pyodide/pyodide.mjs").size === 17758;
   rec("module_worker_static", hasMjsImport && noImportScripts && moduleWorker && noCrossOrigin && mjsVendored,
@@ -80,7 +87,7 @@ rec("no_http_fetch_during_load", httpFetchCount === 0, `http fetch trong lúc lo
   const bin = Buffer.from(b64, "base64");
   pyodide.FS.mkdirTree("/pb3web/fonts");
   pyodide.FS.writeFile("/pb3web/fonts/BeVietnamPro-Regular.ttf", new Uint8Array(bin));
-  rec("write_site_files", man.files.length === 95, `${man.files.length} file pb3/ + font b64 (${bin.length} byte) ghi vào /pb3web`, performance.now() - t0); // 95 = 94 + 1 (P0-2 thêm sdk/gate.py, 2026-11-17)
+  rec("write_site_files", man.files.length === 99, `${man.files.length} file pb3/ + font b64 (${bin.length} byte) ghi vào /pb3web`, performance.now() - t0); // 99 (đếm lại 2026-11-17 từ pb3/files.json trên main v34 — repo lớn dần từ 95 lúc P0-2)
 }
 
 // progress callback: ghi lại event để chứng minh tiến độ chảy thật
@@ -223,6 +230,11 @@ let extractZipBytes = 0;
   const t0 = performance.now();
   const p = putInput(PB3 + "/tests/fixtures/zip/sample.ipa", "sample.ipa");
   const r = call("diagnose", p);
+  // entries = 3: fixture đã commit có đúng 3 entry zip (Info.plist,
+  // level.unity3d, config.txt), diagnose liệt kê cả 3. Con số này từng
+  // bị sửa thành 6 khi fixture bị thay nhầm bằng file do compress builder
+  // sinh (7 entry) — đã sửa lại fixture đúng đặc tả gốc (Claude 04:
+  // 672 byte, 3 entry) nên trả về 3 (đo lại 2026-11-17).
   rec("diagnose", r.ok === true && r.entries.length === 3 && r.hex.length > 0 && r.strings.length > 0,
     `kind=${r.kind} entries=${r.entries.length} hex_lines=${r.hex.length} strings=${r.strings.length} first_str=${JSON.stringify((r.strings[0] || {}).text)}`,
     performance.now() - t0);
@@ -232,7 +244,13 @@ let extractZipBytes = 0;
 {
   const t0 = performance.now();
   const r = call("file_sha256", "/tmp/input/sample.ipa");
-  rec("file_sha256", r.ok === true && r.sha256.startsWith("ef27b9cf"),
+  // Tự đối chiếu: sha bridge trả về phải bằng sha Node tính từ đúng file
+  // đó. Tiền tố cũ "ef27b9cf" là của file trên máy tác giả gốc (chưa từng
+  // commit, blob ngẫu nhiên nên không tái tạo được) — pin cứng như vậy thì
+  // mọi lần sinh lại fixture đều FAIL oan.
+  const expected = createHash("sha256")
+    .update(fs.readFileSync(PB3 + "/tests/fixtures/zip/sample.ipa")).digest("hex");
+  rec("file_sha256", r.ok === true && r.sha256 === expected,
     JSON.stringify(r), performance.now() - t0);
 }
 
