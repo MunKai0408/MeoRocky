@@ -10,7 +10,7 @@
 //
 //  A. Tĩnh: node --check (app.js, sw.js, worker-pool.js) +
 //     check_analysis_c9_static.py (N cấu hình được, chuỗi cũ đã hết,
-//     files.json=95 / tests.json=168, CACHE_VERSION v23).
+//     files.json=105 / tests.json=186, CACHE_VERSION v23).
 //  B. Unit WorkerPool thật (site/worker-pool.js) với Worker GIẢ trong Node:
 //     B1 size 1 -> đúng 1 Worker, 3 job chậm chạy TUẦN TỰ trên slot 0;
 //     B2 size 2 -> đúng 2 Worker, 2 job chậm chạy CHỒNG NHAU (song song);
@@ -41,13 +41,24 @@ import http from "node:http";
 import path from "node:path";
 import vm from "node:vm";
 import zlib from "node:zlib";
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync, execSync, spawnSync } from "node:child_process";
 
 const ROOT = decodeURIComponent(new URL("..", import.meta.url).pathname).replace(/\/$/, "");
 const SITE = ROOT;
 const EXP = ROOT + "/exp";
 const GAME1 = SITE + "/pb3/tests/fixtures/extract/game1.zip";
 const BIG = EXP + "/fixtures/bigtest.zip";
+
+// Fixture bigtest.zip (4000 file text, extract ~2s rồi E_NO_CANDIDATE):
+// dùng cho D5 (đổi N giữa chừng khi batch đang chạy) — tạo lại nếu chưa có,
+// y hệt verify_item4_pool.mjs (file này KHÔNG commit lên repo — xem
+// exp/item4_report.md: "Chỉ local, không đẩy"). Trước đây c9 crash ENOENT
+// ở setInputFiles khi chạy trên clone mới (chưa từng chạy item4).
+if (!fs.existsSync(BIG)) {
+  fs.mkdirSync(path.dirname(BIG), { recursive: true });
+  execSync("python3 -c \"import zipfile\nwith zipfile.ZipFile('" + BIG + "','w',zipfile.ZIP_DEFLATED) as z:\n    [z.writestr('assets/text%04d.txt' % i, ('hello world %d\\n' % i) * 40) for i in range(4000)]\n\"");
+  console.log("created fixture " + BIG + " (" + fs.statSync(BIG).size + " bytes)");
+}
 const sec = (ms) => Math.round(ms / 100) / 10;
 const results = {};
 let failures = 0;
@@ -80,8 +91,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     if (j.fails && j.fails.length) { ok = false; detail = j.fails.join(" | "); }
     else detail = "check_analysis_c9_static.py xanh: N cấu hình được 1–2 " +
       "(mặc định 2, tự động 1 khi deviceMemory ≤ 4, localStorage " +
-      "pb3_pool_size, pool tôn trọng N, chuỗi cũ đã hết) + files.json=95 / " +
-      "tests.json=168 + CACHE_VERSION v28-20261117 + tiếng Việt đủ dấu";
+      "pb3_pool_size, pool tôn trọng N, chuỗi cũ đã hết) + files.json=105 / " +
+      "tests.json=186 + CACHE_VERSION v48-20261118 + tiếng Việt đủ dấu";
   } catch (e) { ok = false; detail = "không đọc được JSON: " + (r.stdout || "") + (r.stderr || ""); }
   rec("static_c9_checks", ok, detail, performance.now() - t0);
 }
