@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import asyncio
 import base64
-import importlib.util as _importlib_util
 import json
 import re
 import unittest
@@ -32,13 +31,9 @@ from sdk import gate
 from sdk import langdetect as _ld
 from sdk import translate as tr
 from sdk.glossary import GameGlossary
+from tests.fixtures.font import build_fixtures as font_fx
 
 ROOT = Path(__file__).resolve().parent.parent.parent  # gốc repo
-_spec = _importlib_util.spec_from_file_location(
-    "font_build_fixtures",
-    str(ROOT / "pb3" / "tests" / "fixtures" / "font" / "build_fixtures.py"))
-font_fx = _importlib_util.module_from_spec(_spec)  # noqa: E402
-_spec.loader.exec_module(font_fx)  # noqa: E402
 
 NEW_TARGETS = ["de", "fr", "es", "pt", "it", "nl", "id", "ms", "tr",
                "pl", "cs", "sk", "hu", "sv", "da", "no", "fi"]
