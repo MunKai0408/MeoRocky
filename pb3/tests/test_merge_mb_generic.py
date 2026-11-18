@@ -258,5 +258,83 @@ class MbOriginTaggingCase(unittest.TestCase):
         self.assertEqual(res.language_columns[0]["status"], "exported")
 
 
+# --- Hoi quy: file .assets tho > tran streaming khong duoc skip ---
+# (2026-11-18, merge-mb-generic) caps-po dua moi entry Unity >
+# stream_entry_bytes (32 MiB) sang duong streaming, nhung
+# _expand_unity_stream chi biet doc UnityFS bundle: file .assets tho
+# (SerializedFile, vd PvZ resources.assets 34 MB) bi E_UNSUPPORTED_FORMAT
+# va ca file bien mat khoi ket qua (0 key). Fix: sniff magic 16 byte
+# dau — khong phai bundle thi ve duong cu (doc tron + _expand_unity).
+# Test nay ha tran streaming xuong 64 byte de fixture .assets nho
+# (6.763 byte) cung di qua nhanh do, roi assert 2 TextAsset cua no
+# van xuat hien va file khong bi skip. Fixture chi co local (giai ma
+# tu .b64) nen skip khi thieu — giong pattern needs_fixture cua repo.
+import os as _os
+import shutil as _shutil
+import tempfile as _tempfile
+import zipfile as _zipfile
+from pathlib import Path as _Path
+
+from core.app import bootstrap as _bootstrap
+from core.limits import Limits as _Limits
+from services import language_tool as _language_tool
+from tests.helpers import TmpCase as _TmpCase
+from tests.helpers import copy_project as _copy_project
+from tests.helpers import register_tmp_dir as _register_tmp_dir
+from tests.helpers import unregister_tmp_dir as _unregister_tmp_dir
+
+_FIXTURE_ASSETS = _Path(__file__).resolve().parent / "fixtures" / "unity" / "resources.assets"
+
+
+class StreamingAssetsFallbackCase(_TmpCase):
+    _shared_proj = None
+    _shared_td = None
+
+    @classmethod
+    def setUpClass(cls):
+        cls._shared_td = _tempfile.mkdtemp(prefix="pb3-merge-mb-")
+        _register_tmp_dir(cls._shared_td)
+        cls._shared_proj = _copy_project(_Path(cls._shared_td))
+
+    @classmethod
+    def tearDownClass(cls):
+        _shutil.rmtree(cls._shared_td, ignore_errors=True)
+        _unregister_tmp_dir(cls._shared_td)
+
+    def setUp(self):
+        super().setUp()
+        self.app = _bootstrap(self._shared_proj)
+        self.addCleanup(self.app.close)
+        self.reg = _language_tool._registry(self.app)
+        self.out = self.tmp / "out"
+
+    @unittest.skipIf(not _FIXTURE_ASSETS.exists(),
+                     "fixture resources.assets chua giai ma (needs_fixture)")
+    def test_raw_assets_over_stream_threshold_not_skipped(self):
+        src = self.tmp / "game.zip"
+        with _zipfile.ZipFile(src, "w", _zipfile.ZIP_DEFLATED) as zf:
+            zf.write(_FIXTURE_ASSETS, "resources.assets")
+        lim = _Limits(stream_entry_bytes=64)  # ep .assets 6.763 byte vao nhanh streaming
+        res = ext.run_extraction(ext.ExtractionRequest(
+            source=str(src), registry=self.reg, limits=lim,
+            tempdir=str(self.app.paths.temp), root=str(self._shared_proj),
+            out_dir=str(self.out)))
+        # Entry .assets phai vuot qua tang layers (khong bi skip voi loi
+        # streaming). Bang chung no da duoc parse: 2 TextAsset cua no
+        # xuat hien trong skipped o vong candidate (diem thap 0.16/0.28
+        # < 0.55 — loai dung quy trinh, khong phai loi mo file). Truoc
+        # fix, ca entry bi skip voi "khong mo duoc file Unity (streaming)
+        # [E_UNSUPPORTED_FORMAT]" va khong co muc ::greeting nao.
+        self.assertFalse(
+            [s for s in res.skipped if s.get("path") == "resources.assets"],
+            res.skipped)
+        self.assertFalse(
+            [s for s in res.skipped if "streaming" in s.get("reason", "")],
+            res.skipped)
+        skipped_paths = [s.get("path", "") for s in res.skipped]
+        self.assertIn("resources.assets::greeting", skipped_paths)
+        self.assertIn("resources.assets::longtext", skipped_paths)
+
+
 if __name__ == "__main__":
     unittest.main()
