@@ -59,10 +59,13 @@ function sh(cmd, cwd) {
 // File JSON trích xuất thật dùng cho bảng 5 game + số kết quả kỳ vọng
 // (đếm bằng Python từ đúng file này — xem analysis_mod_search_results.md).
 const GAMES = [
-  { id: "9kings", file: EXTRACT_OUT + "/9kings/resources.monobehaviour.en.json", entries: 11356, kw: "setting", kwCount: 74, sampleKey: "Default Localization Settings.s1" },
+  // Entry/kwCount đếm lại 2026-11-17 từ file trích xuất thật bằng code hiện tại
+  // (trích xuất đã đổi từ 16/11: tách langtable ra file riêng nên monobehaviour
+  // chỉ còn 3273/6823/478 key thay vì 11356/14939/6261; xem NOTES harness-fix §3).
+  { id: "9kings", file: EXTRACT_OUT + "/9kings/resources.monobehaviour.en.json", entries: 3273, kw: "setting", kwCount: 6, sampleKey: "Default Localization Settings.s1" },
   { id: "data", file: EXTRACT_OUT + "/data/resources.monobehaviour.en.json", entries: 3834, kw: "setting", kwCount: 79, sampleKey: "NPSettings.s2" },
-  { id: "ek2", file: EXTRACT_OUT + "/ek2/resources.monobehaviour.en.json", entries: 14939, kw: "setting", kwCount: 113, sampleKey: "PhotonServerSettings.s2" },
-  { id: "pb3", file: EXTRACT_OUT + "/pb3/resources.monobehaviour.en.json", entries: 6261, kw: "setting", kwCount: 204, sampleKey: "MAINMENU_SETTINGS" },
+  { id: "ek2", file: EXTRACT_OUT + "/ek2/resources.monobehaviour.en.json", entries: 6823, kw: "setting", kwCount: 9, sampleKey: "PhotonServerSettings.s2" },
+  { id: "pb3", file: EXTRACT_OUT + "/pb3/resources.monobehaviour.en.json", entries: 478, kw: "setting", kwCount: 3, sampleKey: "TMP Settings.s1" },
   { id: "passpartout", file: EXTRACT_OUT + "/passpartout/resources.monobehaviour.en.json", entries: 2707, kw: "setting", kwCount: 0, kw2: "play", kw2Count: 68, sampleKey: null },
 ];
 
@@ -103,8 +106,15 @@ async function openPage() {
   await page.goto(BASE + "/index.html", { waitUntil: "domcontentloaded", timeout: 60000 });
   await page.waitForFunction(() => typeof state !== "undefined", null, { timeout: 30000 });
   await page.click("#btn-card-mod");
+  await openModAdvanced();
   await page.waitForSelector("#mod-search", { timeout: 10000 });
   return page;
+}
+async function openModAdvanced() {
+  // PR #11 (Mod UI tidy): các nút tìm/sửa/plan nằm trong <details id="mod-advanced">
+  // (mặc định đóng) — mở trước khi bấm/fill, nếu không Playwright fail vì phần tử
+  // không hiển thị (waitForSelector/click/fill đều yêu cầu visible).
+  await page.evaluate(() => { const d = document.getElementById("mod-advanced"); if (d) d.open = true; });
 }
 const elText = (id) => page.$eval("#" + id, (el) => el.textContent || "");
 async function importJson(files, expectedEntries) {
@@ -287,7 +297,7 @@ if (want(2)) {
     try { planJson = JSON.parse(planTxt); } catch (_) {}
     rec("ui_edit_reaches_plan_textarea",
       !!planJson && edited && planJson[edited.key] === "CÀI ĐẶT KIỂM CHỨNG B" &&
-      Object.keys(planJson).length === 11356,
+      Object.keys(planJson).length === g.entries,
       "plan-translations co " + (planJson ? Object.keys(planJson).length : "?") + " key · gia tri moi co trong plan: " +
       (!!planJson && edited && planJson[edited.key] === "CÀI ĐẶT KIỂM CHỨNG B"), performance.now() - t);
     t = performance.now();
@@ -301,7 +311,7 @@ if (want(2)) {
         const txt = fs.readFileSync(p, "utf8");
         const obj = JSON.parse(txt);
         dlOk = download.suggestedFilename().endsWith(".mod.json") &&
-          obj[edited.key] === "CÀI ĐẶT KIỂM CHỨNG B" && Object.keys(obj).length === 11356 &&
+          obj[edited.key] === "CÀI ĐẶT KIỂM CHỨNG B" && Object.keys(obj).length === g.entries &&
           Object.keys(obj)[0] === Object.keys(JSON.parse(fs.readFileSync(g.file, "utf8")))[0];
         dlDetail = "file: " + download.suggestedFilename() + " · " + Object.keys(obj).length +
           " key · gia tri moi: " + (obj[edited.key] === "CÀI ĐẶT KIỂM CHỨNG B") +
@@ -357,17 +367,18 @@ if (want(3)) {
       // Đang ở view Chức năng sau extract: dùng tab #btn-mod (nút
       // #btn-card-mod chỉ có ở trang chủ, đang ẩn nên không click được).
       await page.click("#btn-mod");
+      await openModAdvanced();
       await page.waitForSelector("#mod-search", { timeout: 10000 });
       const selVal = await page.$eval("#mod-json-source", (el) => el.value);
       await page.click("#btn-mod-load-extract");
       await page.waitForFunction(() => {
         const el = document.querySelector("#mod-json-info");
-        return el && /Đã mở game\.json/.test(el.textContent || "");
+        return el && /Đã mở en\.json/.test(el.textContent || "");
       }, null, { timeout: 120000 });
       const info = await elText("mod-json-info");
       const countTxt = await searchKw("setting");
       rec("e2e_extract_then_mod_load",
-        extractTxt.includes("3 entry") && selVal === "game.json" &&
+        extractTxt.includes("3 entry") && selVal === "en.json" &&
         info.includes("3 entry") && info.includes("trích xuất từ game.json") &&
         countFromText(countTxt) === 1,
         "extract: " + extractTxt.slice(0, 120) + " · dropdown Mod: " + selVal +
