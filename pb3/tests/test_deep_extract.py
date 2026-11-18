@@ -314,7 +314,9 @@ class TestRealTom(unittest.TestCase):
         uf = out["unity_files"][0]
         self.assertTrue(uf["path"].endswith("data.unity3d"))
         self.assertEqual(uf["size"], 78469953)
-        self.assertIn("67108864", uf["pipeline"])  # giới hạn 64 MB
+        # caps-po: trần entry 64 MiB -> 256 MiB nên pipeline MỞ file 78 MB
+        # này bằng streaming (không còn bỏ qua vì > 67108864).
+        self.assertEqual(uf["pipeline"], "pipeline trích xuất sẽ mở")
         deep = uf["deep"]
         self.assertEqual(deep["bundle"]["version"], 8)
         self.assertEqual(deep["bundle"]["blocks"], 1307)

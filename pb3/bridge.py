@@ -440,16 +440,39 @@ def extract(path, source_paths=None, locales=None, merge_one_file=None):
 
 
 MAX_READ_EXTRACTED = 4 * 1024 * 1024   # read_extracted: tối đa 4MB nạp vào ô dịch
+MAX_READ_EXTRACTED_CHUNKED = 64 * 1024 * 1024  # chế độ chunk: tối đa 64MB
 
 
-def read_extracted(name):
+def _coerce_chunk_int(v):
+    """Số nguyên chunk từ JS (Pyodide có thể đưa float nguyên) -> int/None."""
+    if isinstance(v, bool):
+        return None
+    if isinstance(v, int):
+        return v
+    if isinstance(v, float) and v.is_integer():
+        return int(v)
+    return None
+
+
+def read_extracted(name, offset=None, length=None):
     """Đọc 1 file JSON đã trích xuất trong /tmp/pb3out (để nạp vào tab Dịch).
 
     Chỉ nhận tên file trần (không đường dẫn — chống directory traversal
     trong FS worker); file phải là JSON hợp lệ và <= 4MB (ô dịch + bộ nhớ
     tab iPhone). Lớn hơn thì báo rõ, user tải extract.zip về rồi dán
     từng phần. Không cần gửi lại file game (worker đã có /tmp/pb3out từ
-    đợt extract vừa rồi)."""
+    đợt extract vừa rồi).
+
+    Chế độ chunk (caps-po): truyền offset/length (số KÝ TỰ, tính theo
+    code point Python) để nạp file dịch lớn (vd vi.json của DST ~9 MB,
+    ~87,8k key) theo từng đoạn thay vì chặn cứng 4 MB. File <= 64 MB;
+    chỉ chunk đầu (offset==0) kiểm JSON hợp lệ (chunk sau là đoạn cắt,
+    không parse được); JS ghép toàn văn rồi JSON.parse 1 lần. Trả thêm
+    end (offset tiếp theo — JS dùng `end` server trả về, không tự cộng,
+    tránh lệch với ký tự ngoài BMP mà JS đếm 2 đơn vị UTF-16),
+    total_chars, done, chunked=True. Không truyền offset/length thì
+    hành vi cũ (<= 4 MB, lỗi rõ nếu lớn hơn).
+    """
     try:
         if not isinstance(name, str) or not name or "/" in name or "\\" in name \
                 or name in (".", ".."):
@@ -460,6 +483,31 @@ def read_extracted(name):
                 "Không tìm thấy %s trong kết quả trích xuất vừa rồi. "
                 "Hãy chạy Trích xuất trước." % name)
         n = os.path.getsize(fp)
+        if offset is not None or length is not None:
+            offset = _coerce_chunk_int(offset)
+            length = _coerce_chunk_int(length)
+            if offset is None or offset < 0:
+                raise ValueError("offset phải là số nguyên >= 0.")
+            if length is None or length <= 0:
+                raise ValueError("length phải là số nguyên > 0.")
+            if n > MAX_READ_EXTRACTED_CHUNKED:
+                raise ValueError(
+                    "File %s quá lớn (%s) để nạp theo chunk (giới hạn %s). "
+                    "Hãy tải extract.zip về rồi dán từng phần vào ô dịch."
+                    % (name, _fmt_bytes(n), _fmt_bytes(MAX_READ_EXTRACTED_CHUNKED)))
+            with open(fp, "r", encoding="utf-8") as fh:
+                text = fh.read()
+            if offset == 0:
+                json.loads(text)   # chỉ chunk đầu kiểm JSON hợp lệ
+            total = len(text)
+            part = text[offset:offset + length]
+            end = offset + len(part)
+            return json.dumps({"ok": True, "name": name, "text": part,
+                               "bytes": int(n), "chars": len(part),
+                               "offset": int(offset), "end": int(end),
+                               "total_chars": int(total),
+                               "done": end >= total, "chunked": True},
+                              ensure_ascii=False)
         if n > MAX_READ_EXTRACTED:
             raise ValueError(
                 "File %s quá lớn (%s) để nạp vào ô dịch (giới hạn %s). "
@@ -2254,6 +2302,36 @@ def repack_ipa(path, units_json):
             raise ValueError("file goc da doi trong luc dong goi — "
                              "tu choi ket qua.")
         res["source_sha256"] = orig_sha
+        return json.dumps(res, ensure_ascii=False)
+    except Exception as e:  # noqa: BLE001
+        return _err(e)
+
+
+def po_apply(path, po_vpath, translations_json, dry_run=True, confirm=False):
+    """(caps-po) Ghi lại file .po trong IPA/ZIP — sửa msgstr rồi đóng gói lại.
+
+    path: file nguồn (IPA/ZIP chứa .po, hoặc chính file .po).
+    po_vpath: đường dẫn ảo tới .po, vd "Payload/.../scripts.zip::"
+      "scripts/languages/vietnamese.po" (tối đa 4 đoạn, xem sdk/po_write).
+    translations_json: JSON object {msgid: msgstr mới}.
+    dry_run=True (mặc định): chỉ preview, không ghi file. dry_run=False
+    + confirm=True mới ghi thật ra "<stem>-po-mod.<ext>" cạnh file gốc
+    (KHÔNG ghi đè gốc). File gốc được xác minh sha trong sdk/po_write
+    (đọc theo chunk, không nạp cả IPA lớn vào RAM). Không qua (E)/gate:
+    .po là game không-Unity; verify 2 lớp của riêng nó (plugin.build +
+    re-parse sau ghi) là đủ. Lỗi toàn cục trả _err.
+    """
+    try:
+        from sdk import po_write as _po
+
+        _check_size(path)
+        try:
+            translations = json.loads(translations_json)
+        except ValueError:
+            raise ValueError("translations_json không phải JSON object "
+                             "(key -> giá trị mới).")
+        res = _po.po_write(path, po_vpath, translations,
+                           dry_run=bool(dry_run), confirm=bool(confirm))
         return json.dumps(res, ensure_ascii=False)
     except Exception as e:  # noqa: BLE001
         return _err(e)

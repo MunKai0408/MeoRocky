@@ -21,7 +21,7 @@ from sdk.types import LocTable
 MANIFEST = {
     "id": "po_mo",
     "name": "PO/MO gettext",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "api_version": 3,
     "kind": "format",
     "capabilities": ["read", "write"],
@@ -31,7 +31,9 @@ MANIFEST = {
     "engines": ["generic"],
     "match": {"extensions": [".po", ".mo"]},
     "write_modes": ["REBUILD_SECTION"],
-    "limits": {"max_entry_bytes": 8 * 1024 * 1024, "hook_timeout_s": 10},
+    # caps-po: nới lên 32 MiB để file .po lớn (vd DST 17-19 MB, ~87,8k entry)
+    # parse được; trần host (256 MiB) vẫn là trần cứng phía trên.
+    "limits": {"max_entry_bytes": 32 * 1024 * 1024, "hook_timeout_s": 10},
     "entry": "plugin:PoMoPlugin",
     "selftest": True,
     "docs": "File gettext PO (đọc + ghi) và MO nhị phân (chỉ đọc). PO hỗ trợ msgid/msgstr, "
@@ -167,15 +169,30 @@ class _PoEntry:
                 and not self.msgstr and not self.notes and not self.fuzzy and not self.obsolete)
 
 
+def _iter_po_lines(text: str):
+    """Yield (dòng không gồm "\\n", offset bắt đầu của dòng) theo thứ tự.
+
+    caps-po: thay cho `lines = text.split("\\n")` + list `offsets` (file .po
+    lớn như vietnamese.po ~18 MB / ~350k dòng thì 2 list đó tốn thêm ~45 MB
+    RAM đỉnh). Generator chỉ giữ 1 dòng tại 1 thời điểm; offset tính đúng
+    như cách cũ (mỗi dòng + 1 cho "\\n") để span byte của write-back không
+    đổi. Hành vi cuối file giống hệt split: text kết thúc bằng "\\n" thì
+    không sinh thêm dòng trống cuối (flush cuối vòng lặp đã xử lý entry dở).
+    """
+    pos = 0
+    n = len(text)
+    while pos < n:
+        nl = text.find("\n", pos)
+        if nl < 0:
+            yield text[pos:], pos
+            return
+        yield text[pos:nl], pos
+        pos = nl + 1
+
+
 def _parse_po(data: bytes, path: str, locale: Optional[str]) -> Dict[str, Any]:
     doc = decode_text(data, path)
     text = doc.text
-    lines = text.split("\n")
-    offsets: List[int] = []
-    off = 0
-    for ln in lines:
-        offsets.append(off)
-        off += len(ln) + 1
 
     pairs: List[Tuple[str, str, str, List[str]]] = []
     spans: List[Dict[str, Any]] = []
@@ -243,9 +260,8 @@ def _parse_po(data: bytes, path: str, locale: Optional[str]) -> Dict[str, Any]:
                           "prefix": None})
 
     cur = _PoEntry()
-    for li, raw in enumerate(lines):
+    for raw, start in _iter_po_lines(text):
         line = raw[:-1] if raw.endswith("\r") else raw
-        start = offsets[li]
         if line == "":
             flush(cur)
             cur = _PoEntry()

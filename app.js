@@ -2089,6 +2089,30 @@ function defaultTranslateFile() {
 $("translate-source-select").addEventListener("change", (ev) => {
   loadExtractedToTranslate(ev.target.value);
 });
+// Nạp file JSON đã trích xuất theo chunk 1 MB ký tự (caps-po): file dịch
+// lớn (vd vi.json của DST ~9 MB, ~87,8k key) vượt trần 4 MB của
+// read_extracted 1 lần. Offset tính theo ký tự Python (code point); dùng
+// `end` server trả về làm offset tiếp theo (không tự cộng, tránh lệch với
+// ký tự ngoài BMP mà JS đếm 2 đơn vị UTF-16). File <= 4 MB vẫn 1 lần
+// gọi là xong (done=true ngay chunk đầu). Lỗi trả nguyên object
+// {ok:false} để caller báo như cũ.
+async function readExtractedChunked(name, onProgress) {
+  const CHUNK = 1024 * 1024;
+  let offset = 0, text = "", bytes = 0, total = 0;
+  for (;;) {
+    const msg = await callWorker("run", { fn: "read_extracted", args: [name, offset, CHUNK], files: [] });
+    const parsed = JSON.parse(msg.result);
+    if (!parsed || parsed.ok !== true) return parsed;
+    text += parsed.text || "";
+    bytes = parsed.bytes || bytes;
+    total = parsed.total_chars || total;
+    if (onProgress) onProgress(parsed.end || 0, total, bytes);
+    if (parsed.done) break;
+    offset = parsed.end;
+    if (typeof offset !== "number" || offset <= 0) throw new Error("read_extracted chunked: end không hợp lệ");
+  }
+  return { ok: true, name, text, bytes, chunked: true };
+}
 // Nạp 1 file JSON đã trích xuất vào ô dịch (qua bridge read_extracted).
 // Dùng callWorker trực tiếp (KHÔNG dùng runOp): thao tác này không liên
 // quan file game, nên lỗi của nó không được reset cờ fileSentFor (hotfix
@@ -2096,8 +2120,10 @@ $("translate-source-select").addEventListener("change", (ev) => {
 async function loadExtractedToTranslate(name) {
   if (!name) return;
   try {
-    const msg = await callWorker("run", { fn: "read_extracted", args: [name], files: [] });
-    const parsed = JSON.parse(msg.result);
+    const parsed = await readExtractedChunked(name, (done, total) => {
+      $("translate-info").textContent = "Đang nạp " + name + " (" +
+        (total ? Math.round(100 * done / total) : 0) + "%)…";
+    });
     if (!parsed || parsed.ok !== true) {
       $("translate-info").textContent = "Không nạp được " + name + ": " +
         (parsed && (parsed.error || parsed.code) ? (parsed.error || parsed.code) : "lỗi không rõ") +
@@ -3086,8 +3112,7 @@ $("btn-mod-load-extract").addEventListener("click", async () => {
   const name = sel && sel.value;
   if (!name) { showError("Chưa có file trích xuất — chạy Trích xuất ở tab Trích xuất trước, hoặc nhập file .json từ máy."); return; }
   try {
-    const msg = await callWorker("run", { fn: "read_extracted", args: [name], files: [] });
-    const parsed = JSON.parse(msg.result);
+    const parsed = await readExtractedChunked(name);
     if (!parsed || parsed.ok !== true) {
       showError("Không nạp được " + name + ": " + ((parsed && (parsed.error || parsed.code)) || "lỗi không rõ") + " — hãy nhập file .json từ máy.");
       return;
@@ -5515,8 +5540,8 @@ async function runSelfTest() {
       if (parsed && parsed.ok === false) throw new Error(parsed.error || "extract lỗi");
       const f = (parsed.files || []).find((x) => x && x.exported === "English.json");
       if (!f) throw new Error("extract không ra English.json (được " + (parsed.files || []).length + " file)");
-      const got = await callWorker("run", { fn: "read_extracted", args: ["English.json"] });
-      const rp = JSON.parse(got.result);
+      const got = await readExtractedChunked("English.json");
+      const rp = got;
       if (rp && rp.ok === false) throw new Error(rp.error || "không đọc được English.json");
       const kv = JSON.parse(rp.text);
       for (const [k, v] of Object.entries(SELFTEST_TEXT)) {

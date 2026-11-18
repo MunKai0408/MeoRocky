@@ -14,8 +14,13 @@ from .errors import PB3Error
 @dataclass(frozen=True)
 class Limits:
     max_input_bytes: int = 8 * 1024 ** 3
-    max_entry_bytes: int = 64 * 1024 ** 2
-    plan_max_entry_bytes: int = 8 * 1024 * 1024  # plan không đọc entry lớn hơn (X12)
+    max_entry_bytes: int = 256 * 1024 ** 2
+    plan_max_entry_bytes: int = 32 * 1024 * 1024  # plan không đọc entry lớn hơn (X12)
+    # Ngưỡng streaming (caps-po): entry Unity lớn hơn ngưỡng này thì mở bằng
+    # spool-to-temp + stream_bundle_entries thay vì nạp trọn vào RAM rồi
+    # parse_bundle (payload giải nén có thể gấp nhiều lần entry, vd Tom
+    # data.unity3d 78 MB -> payload 171 MB). Nhỏ hơn ngưỡng giữ đường cũ.
+    stream_entry_bytes: int = 32 * 1024 * 1024
     max_memory_read_bytes: int = 128 * 1024 ** 2
     max_total_uncompressed_bytes: int = 8 * 1024 ** 3
     max_entries: int = 200000
