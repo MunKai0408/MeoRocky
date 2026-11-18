@@ -58,6 +58,7 @@
   "pb3/sdk/arbitration.py",
   "pb3/sdk/batch.py",
   "pb3/sdk/bmfont.py",
+  "pb3/sdk/cff.py",
   "pb3/sdk/colab_job.py",
   "pb3/sdk/compress.py",
   "pb3/sdk/containers.py",
