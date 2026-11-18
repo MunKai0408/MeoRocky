@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Kiem tra tinh muc (E) rebuild [P0-1]: sdk/rebuild.py chi stdlib +
 Python 3.9, khong UnityPy/lz4, khong expose rebuild_zip; manifest
-(files.json 101, tests.json 178); sw.js precache 126 muc co
-sdk/rebuild.py, khong wheel chet, CACHE_VERSION v42-20261118; bridge co
+(files.json 102, tests.json 179); sw.js precache 127 muc co
+sdk/rebuild.py, khong wheel chet, CACHE_VERSION v43-20261118; bridge co
 op rebuild_apply; plan.py co progress_fn; unity.py co
 rebuild_bundle_streaming + khoa REBUILD_ALL con nguyen; UI du id (E);
 2 cho innerHTML f.source da duoc esc + code (E) moi esc du lieu game.
@@ -71,12 +71,12 @@ if "samefile" not in src and "realpath" not in src:
 
 # 3. Manifest.
 files = json.loads((SITE / "pb3" / "files.json").read_text())["files"]
-if len(files) != 101:
-    fails.append("files.json co %d file, ky vong 101" % len(files))
+if len(files) != 102:
+    fails.append("files.json co %d file, ky vong 102" % len(files))
 if "pb3/sdk/rebuild.py" not in files:
     fails.append("files.json thieu pb3/sdk/rebuild.py")
 tests = json.loads((SITE / "pb3" / "tests.json").read_text())["files"]
-if len(tests) != 178:
+if len(tests) != 179:
     fails.append("tests.json co %d file, ky vong 175" % len(tests))
 if "pb3/tests/test_rebuild.py" not in tests:
     fails.append("tests.json thieu pb3/tests/test_rebuild.py")
@@ -85,15 +85,15 @@ if "pb3/tests/test_rebuild.py" not in tests:
 sw = (SITE / "sw.js").read_text(encoding="utf-8")
 if '"pb3/sdk/rebuild.py"' not in sw:
     fails.append("sw.js precache thieu pb3/sdk/rebuild.py")
-if 'CACHE_VERSION = "v42-20261118"' not in sw:
-    fails.append("sw.js CACHE_VERSION khong phai v42-20261118")
+if 'CACHE_VERSION = "v43-20261118"' not in sw:
+    fails.append("sw.js CACHE_VERSION khong phai v43-20261118")
 m = re.search(r"const PRECACHE_URLS = \[(.*?)\];", sw, re.S)
 if not m:
     fails.append("sw.js khong tim thay PRECACHE_URLS")
 else:
     listed = re.findall(r'"([^"]+)"', m.group(1))
-    if len(listed) != 126:
-        fails.append("sw.js precache co %d muc, ky vong 126" % len(listed))
+    if len(listed) != 127:
+        fails.append("sw.js precache co %d muc, ky vong 127" % len(listed))
     dead = [u for u in listed if u != "./"
             and not (SITE / u).exists()]
     if dead:

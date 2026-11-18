@@ -78,6 +78,7 @@
   "pb3/sdk/manifest.py",
   "pb3/sdk/patch_pack.py",
   "pb3/sdk/plan.py",
+  "pb3/sdk/po_write.py",
   "pb3/sdk/rawscan.py",
   "pb3/sdk/rebuild.py",
   "pb3/sdk/repack.py",

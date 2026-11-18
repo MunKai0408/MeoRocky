@@ -34,6 +34,7 @@ import hashlib
 import json
 import os
 import re
+import tempfile
 import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Tuple
@@ -443,6 +444,47 @@ def _expand_unity_stream(path: str, vpath: str, backend, limits):
                      "%d MonoBehaviour, %d chuỗi)"
                      % (n_sf, n_text_assets, n_mb, n_mb_strings))
     return out, notes, mb
+
+
+def _expand_unity_stream_entry(nested, entry_path, backend, limits):
+    """Mở 1 entry Unity lớn TRONG container bằng spool-to-temp + streaming.
+
+    (caps-po) Entry Unity > stream_entry_bytes (vd Tom data.unity3d 78 MB
+    trong IPA) không nạp trọn vào RAM rồi parse_bundle (payload giải nén
+    171 MB sẽ thành nhiều bản copy lớn cùng lúc) mà spool từng chunk 1 MB
+    qua open_stream ra temp file rồi _expand_unity_stream
+    (stream_bundle_entries, cửa sổ trượt). Entry trong IPA thường DEFLATED
+    nên slice ngẫu nhiên phải giải nén lại từ đầu mỗi lần (O(n^2)) —
+    spool tuyến tính 1 lần là đường đúng. Temp file xóa trong finally
+    (TMPDIR của hệ thống). VFS không có open_stream (E_NOT_IMPLEMENTED)
+    thì fallback về đọc trọn + _expand_unity (đường cũ). Trả cùng định
+    dạng như _expand_unity.
+    """
+    try:
+        stream = nested.open_stream(entry_path)
+    except PB3Error as exc:
+        if exc.code == "E_NOT_IMPLEMENTED":
+            data = bytes(nested.read(entry_path, None))
+            return _expand_unity(data, entry_path, backend, limits)
+        raise
+    fd, tmp_path = tempfile.mkstemp(prefix="pb3-unity-", suffix=".bundle")
+    try:
+        with os.fdopen(fd, "wb") as fh:
+            while True:
+                chunk = stream.read(1024 * 1024)
+                if not chunk:
+                    break
+                fh.write(chunk)
+        try:
+            stream.close()
+        except Exception:  # noqa: BLE001 - đóng stream lỗi không được hỏng trích xuất
+            pass
+        return _expand_unity_stream(tmp_path, entry_path, backend, limits)
+    finally:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
 
 
 def _mb_string_is_noise(s: str) -> bool:
@@ -1279,10 +1321,11 @@ def _build_layers(root_vfs, inv: List[disc.InventoryEntry], limits, backend, log
     KHÔNG BAO GIỜ bỏ qua lặng lẽ (lỗi en.json 2026-11-16): container/
     file Unity nào đọc lỗi, quá giới hạn, hoặc cho 0 TextAsset đều ghi
     vào `skipped` (nếu truyền vào) kèm lý do + đường dẫn đầy đủ, và log.
-    Giới hạn 64MB/entry vẫn giữ (bảo vệ RAM tab iPhone; bundle text
-    localization >64MB là không tưởng) — nhưng vượt giới hạn thì phải
-    BÁO RÕ để lần chạy sau trên IPA thật đọc được lý do, thay vì bundle
-    biến mất như trước."""
+    Giới hạn entry 256 MiB (caps-po, trước là 64 MiB) vẫn giữ để bảo vệ
+    RAM tab iPhone; entry Unity trong trần nhưng > stream_entry_bytes
+    (32 MiB) thì mở bằng spool-to-temp + streaming thay vì nạp trọn —
+    còn vượt trần cứng thì phải BÁO RÕ để lần chạy sau trên IPA thật đọc
+    được lý do, thay vì bundle biến mất như trước."""
     layers = [_Layer("", root_vfs, "root")]
     nested = NestedVFS(root_vfs, limits=limits)
     virtual: Dict[str, bytes] = {}
@@ -1333,12 +1376,16 @@ def _build_layers(root_vfs, inv: List[disc.InventoryEntry], limits, backend, log
                 continue
             layers.append(_Layer(entry.path + "::", child, "nested"))
         elif entry.kind == "unity":
-            # File Unity vượt giới hạn entry (64MB): nếu là file độc lập trên
-            # đĩa (SingleFileVFS — vd data.unity3d 590MB) thì đọc streaming
-            # từng entry thay vì bỏ qua (trước đây bỏ qua lặng lẽ bằng lý do
-            # giới hạn, còn trình duyệt thì chết tab vì open_source_vfs đã
-            # nạp trọn file vào MemoryVFS trước đó). Entry trong ZIP/IPA đã
-            # là bytes trong RAM nên không stream được — giữ nguyên skip.
+            # File Unity vượt giới hạn entry (256 MiB, caps-po): nếu là file
+            # độc lập trên đĩa (SingleFileVFS — vd data.unity3d 590MB) thì
+            # đọc streaming từng entry thay vì bỏ qua (trước đây bỏ qua lặng
+            # lẽ bằng lý do giới hạn, còn trình duyệt thì chết tab vì
+            # open_source_vfs đã nạp trọn file vào MemoryVFS trước đó).
+            # Entry trong ZIP/IPA vượt trần cứng vẫn skip có lý do.
+            # Entry Unity lớn nhưng trong trần (stream_entry_bytes < size <=
+            # max_entry_bytes, vd Tom data.unity3d 78 MB trong IPA) thì
+            # spool qua stream ra temp file rồi parse streaming (caps-po) —
+            # không ôm cả entry + payload giải nén vào RAM cùng lúc.
             if entry.size > limits.max_entry_bytes:
                 if isinstance(root_vfs, SingleFileVFS) and entry.path == root_vfs.name:
                     got, notes, mb = _expand_unity_stream(root_vfs.source_path,
@@ -1349,6 +1396,15 @@ def _build_layers(root_vfs, inv: List[disc.InventoryEntry], limits, backend, log
                                  "bundle thật vượt ngưỡng này)" % (entry.size, limits.max_entry_bytes))
                     log("Unity: %s: %d byte > giới hạn %d, bỏ qua"
                         % (entry.path, entry.size, limits.max_entry_bytes))
+                    continue
+            elif entry.size > limits.stream_entry_bytes:
+                try:
+                    got, notes, mb = _expand_unity_stream_entry(
+                        nested, entry.path, backend, limits)
+                except PB3Error as exc:
+                    _add_skipped(entry.path, "không mở được file Unity (streaming) [%s]: %s"
+                                 % (exc.code, exc.message_vi or exc.detail))
+                    log("Unity: %s: không mở được (streaming) [%s]" % (entry.path, exc.code))
                     continue
             else:
                 try:

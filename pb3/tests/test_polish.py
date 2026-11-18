@@ -547,11 +547,17 @@ class TestPolishPlanProbe(TmpCase):
         self.assertEqual(rows[0].guess, "binary (lớn, chưa đọc)")
 
     def test_plan_max_entry_bytes_default_and_config(self):
-        self.assertEqual(Limits().plan_max_entry_bytes, 8 * 1024 * 1024)
+        # caps-po: plan_max 8 MiB -> 32 MiB (file .po DST 17-19 MB vào được plan);
+        # max_entry 64 MiB -> 256 MiB; stream_entry_bytes mới 32 MiB.
+        self.assertEqual(Limits().plan_max_entry_bytes, 32 * 1024 * 1024)
+        self.assertEqual(Limits().max_entry_bytes, 256 * 1024 * 1024)
+        self.assertEqual(Limits().stream_entry_bytes, 32 * 1024 * 1024)
         keys = {o.key for o in cfgmod.OPTIONS}
         self.assertIn("limits.plan_max_entry_bytes", keys)
+        self.assertIn("limits.stream_entry_bytes", keys)
         default = (ROOT / "config" / "default.toml").read_text(encoding="utf-8")
         self.assertIn("plan_max_entry_bytes", default)
+        self.assertIn("stream_entry_bytes", default)
 
 
 if __name__ == "__main__":

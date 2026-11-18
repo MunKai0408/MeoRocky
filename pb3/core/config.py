@@ -63,8 +63,9 @@ OPTIONS: Tuple[Opt, ...] = (
     _o("registry.discovery_cache", "bool", True),   # cache kết quả duyệt manifest tĩnh (B1, X13)
     _o("output.versioning", "str", "version", choices=("version", "error")),
     _o("limits.max_input_bytes", "int", 8 * GiB, 1, 1024 * GiB),
-    _o("limits.max_entry_bytes", "int", 64 * MiB, 1, 8 * GiB),
-    _o("limits.plan_max_entry_bytes", "int", 8 * MiB, 1, 8 * GiB),
+    _o("limits.max_entry_bytes", "int", 256 * MiB, 1, 8 * GiB),
+    _o("limits.plan_max_entry_bytes", "int", 32 * MiB, 1, 8 * GiB),
+    _o("limits.stream_entry_bytes", "int", 32 * MiB, 1, 8 * GiB),
     _o("limits.max_memory_read_bytes", "int", 128 * MiB, 1, 512 * MiB),
     _o("limits.max_total_uncompressed_bytes", "int", 8 * GiB, 1, 1024 * GiB),
     _o("limits.max_entries", "int", 200000, 1, 10 ** 7),

@@ -316,10 +316,11 @@ def inspect_container(source, limits=None, *, entry=None):
     from sdk.vfs import SingleFileVFS
 
     lim = limits or Limits()
-    # Giới hạn MẶC ĐỊNH của pipeline trích xuất (64 MB/entry): lý do bỏ qua
-    # của pipeline luôn so với giới hạn này, KHÔNG phải giới hạn đã nới
-    # để inspect đọc sâu (nới rồi mới so thì file 78 MB sẽ bị báo nhầm
-    # là "pipeline sẽ mở").
+    # Giới hạn MẶC ĐỊNH của pipeline trích xuất (256 MiB/entry, caps-po):
+    # lý do bỏ qua của pipeline luôn so với giới hạn này, KHÔNG phải giới
+    # hạn đã nới để inspect đọc sâu (nới rồi mới so thì file vượt trần sẽ
+    # bị báo nhầm là "pipeline sẽ mở"). File 78 MB (Tom data.unity3d) nằm
+    # trong trần 256 MiB nên pipeline mở thật bằng streaming (caps-po).
     default_lim = Limits()
     name = source if isinstance(source, str) else "<bytes>"
     report = {"label": LABEL, "file": str(name), "unity_files": [],
@@ -338,7 +339,7 @@ def inspect_container(source, limits=None, *, entry=None):
         report["error"] = {"code": exc.code,
                            "message": exc.message_vi or exc.detail}
         return report
-    # Entry Unity vượt giới hạn đọc mặc định (64 MB): inspect cố ý đọc sâu
+    # Entry Unity vượt giới hạn đọc mặc định (256 MiB, caps-po): inspect cố ý đọc sâu
     # nên mở lại VFS với giới hạn nới lên đúng cỡ entry lớn nhất đã khai
     # báo trong inventory (không phải giới hạn mở — entry vẫn được stream
     # từng phần sau đó, không ôm cả payload; file độc lập trên đĩa thì

@@ -25,8 +25,9 @@ versioning = "version"     # version: tạo name.v1.ext, name.v2.ext... | error:
 
 [limits]                   # đặc tả 2.3, 5.2, 9.2, 18.4
 max_input_bytes = 8589934592              # 8 GiB: file đầu vào tối đa
-max_entry_bytes = 67108864                # 64 MiB: 1 entry/object tối đa
-plan_max_entry_bytes = 8388608          # 8 MiB: plan không đọc entry lớn hơn (chỉ ghi dòng)
+max_entry_bytes = 268435456               # 256 MiB: 1 entry/object tối đa
+plan_max_entry_bytes = 33554432         # 32 MiB: plan không đọc entry lớn hơn (chỉ ghi dòng)
+stream_entry_bytes = 33554432           # 32 MiB: entry Unity lớn hơn thì mở streaming (spool + stream_bundle_entries)
 max_memory_read_bytes = 134217728         # 128 MiB: tối đa nạp 1 lần vào RAM (trần 512 MiB)
 max_total_uncompressed_bytes = 8589934592 # 8 GiB: tổng giải nén
 max_entries = 200000
