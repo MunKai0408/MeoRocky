@@ -16,9 +16,10 @@ thao tác "dùng chung 1 font" trả về file font_unified.zip để tải về
 gốc trong tab trình duyệt.
 
 Điều tra trung thực trước khi code (xem exp/analysis_font_unify_results.md):
-- TMP_FontAsset: tạo atlas SDF chỉ làm được trong Unity Editor
-  (Font Asset Creator + FontEngine; docs Unity TextMeshPro). Web chỉ
-  lập được kế hoạch fallback (C6) + glyph plan (mục 7) — tái dùng.
+- TMP_FontAsset: tạo atlas SDF tái tạo được bằng tính năng thử nghiệm
+  tmp_sdf_regen (sdk/sdf.py + bridge, đo MAE so với atlas gốc); Unity
+  Editor (Font Asset Creator + FontEngine) vẫn là phương án dự phòng.
+  Web cũng lập được kế hoạch fallback (C6) + glyph plan (mục 7).
 - Font TTF rời (file .ttf hoặc entry trong IPA/ZIP): web gộp ĐƯỢC
   thật bằng sdk/font.merge_vietnamese (copy outline glyf + cmap).
 - Font OTF/CFF: chỉ đọc được cmap, KHÔNG gộp được (giới hạn sdk/font).
@@ -58,9 +59,11 @@ MAX_LISTED_MISSING = 150
 
 #: Giới hạn thật của thao tác "dùng chung 1 font" (hiển thị trong UI + plan).
 LIMITS = [
-    "Atlas SDF của TextMeshPro KHÔNG tạo được trên web — chỉ sinh được "
-    "trong Unity Editor (Font Asset Creator + FontEngine). Web chỉ lập "
-    "kế hoạch fallback (mục C6) + glyph plan (mục 7) để nạp vào Editor.",
+    "Atlas SDF của TextMeshPro tái tạo được bằng tính năng thử nghiệm "
+    "'Tái tạo atlas SDF' ở mục TMP (sdk/sdf.py + bridge tmp_sdf_regen, "
+    "đo MAE so với atlas gốc); Unity Editor (Font Asset Creator + "
+    "FontEngine) vẫn là phương án dự phòng. Web cũng lập kế hoạch "
+    "fallback (mục C6) + glyph plan (mục 7) để nạp vào Editor.",
     "Font TTF rời (file .ttf hoặc entry trong IPA/ZIP) gộp ĐƯỢC thật "
     "trên web: copy glyph tiếng Việt còn thiếu từ Be Vietnam Pro vào "
     "font gốc (sdk/font.merge_vietnamese) — file đã gộp nằm trong "

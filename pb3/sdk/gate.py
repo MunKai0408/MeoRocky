@@ -63,6 +63,9 @@ CHECK_PLACEHOLDERS = "placeholders"
 CHECK_DIFFVERIFY = "diffverify"
 CHECK_FONTS = "fonts"
 CHECK_INTEGRITY = "integrity"
+#: Kiem tra atlas SDF tai tao (TMP) — check RIENG cho luong tmp_sdf_regen,
+#: khong nam trong CHECK_IDS/run_gate (run_gate khong co dau vao SDF).
+CHECK_TMP_SDF = "tmp_sdf"
 CHECK_IDS = (CHECK_TRANSLATION, CHECK_PLACEHOLDERS, CHECK_DIFFVERIFY,
              CHECK_FONTS, CHECK_INTEGRITY)
 
@@ -514,6 +517,129 @@ def check_font_coverage(translations: Dict[str, str],
          "unreadable": len(unreadable), "display_fonts": len(supplied),
          "used_vietnamese": len(used), "target_lang": target_lang},
         fonts=report_fonts, used_chars=[chr(cp) for cp in used])
+
+
+# ------------------------------------------- (f) atlas SDF tai tao (TMP)
+def check_tmp_sdf(table_bytes, layout, atlas_bytes, atlas_w, atlas_h,
+                  expected_count=None):
+    """(f) Kiem tra atlas SDF tai tao (TMP) truoc khi ghi nguoc.
+
+    table_bytes: bytes bang glyph moi (da gom count int32 dau).
+    layout: "old" (36 byte/record, id=codepoint) / "new" (52 byte/record,
+    id=glyph index, rect y tu BOTTOM). atlas_bytes: bytes atlas moi
+    (BOTTOM-UP, 1 byte/px). atlas_w/h: kich thuoc atlas. expected_count:
+    so glyph ky vong (neu co).
+    Chi kiem tra CAU TRUC: atlas dung kich thuoc; bang doc duoc (moi
+    record hop le, khong trung id); rect nam trong atlas; scale==1.0;
+    atlasIndex==0 + trailing==0 (layout moi); so glyph khop ky vong.
+    Khong do MAE (MAE do bridge tmp_sdf_regen bao, xem
+    sdk/sdf.measure_atlas_error). FAIL thi khong ghi nguoc.
+    """
+    from sdk import tmp_font as _tf
+
+    failures = []
+    warnings = []
+    counts = {"layout": layout, "atlas": "%dx%d" % (atlas_w, atlas_h),
+              "glyphs": 0, "placeholders": 0}
+    if layout not in ("old", "new"):
+        return _check(
+            CHECK_TMP_SDF, "Atlas SDF tái tạo", "fail",
+            "Layout bảng glyph không hợp lệ: %r (chỉ 'old'/'new')."
+            % (layout,),
+            [{"kind": "bad_layout",
+              "message_vi": "Layout bảng glyph %r không hợp lệ." % (layout,)}],
+            [], counts)
+    if len(atlas_bytes) != atlas_w * atlas_h:
+        failures.append({
+            "kind": "atlas_size",
+            "message_vi": "Atlas mới %d byte, khác %dx%d=%d byte kỳ vọng."
+                          % (len(atlas_bytes), atlas_w, atlas_h,
+                             atlas_w * atlas_h)})
+    stride = 52 if layout == "new" else 36
+    if len(table_bytes) < 4:
+        failures.append({
+            "kind": "table_short",
+            "message_vi": "Bảng glyph mới quá ngắn (%d byte)."
+                          % len(table_bytes)})
+        return _check(CHECK_TMP_SDF, "Atlas SDF tái tạo", "fail",
+                      "Bảng glyph mới không đọc được.", failures, warnings,
+                      counts)
+    import struct as _struct
+    (count,) = _struct.unpack_from("<i", table_bytes, 0)
+    counts["glyphs"] = count
+    if count < 0 or 4 + stride * count > len(table_bytes):
+        failures.append({
+            "kind": "table_truncated",
+            "message_vi": "Bảng glyph khai %d record nhưng chỉ có %d byte "
+                          "(cần %d)." % (count, len(table_bytes),
+                                         4 + stride * count)})
+        return _check(CHECK_TMP_SDF, "Atlas SDF tái tạo", "fail",
+                      "Bảng glyph mới bị cắt.", failures, warnings, counts)
+    if expected_count is not None and count != expected_count:
+        failures.append({
+            "kind": "count_mismatch",
+            "message_vi": "Bảng glyph có %d record, kỳ vọng %d."
+                          % (count, expected_count)})
+    try:
+        recs = _tf.read_glyph_records(table_bytes, 0, count, stride, "<")
+    except Exception as exc:  # noqa: BLE001
+        failures.append({
+            "kind": "table_unreadable",
+            "message_vi": "Không đọc được bảng glyph: %s" % exc})
+        return _check(CHECK_TMP_SDF, "Atlas SDF tái tạo", "fail",
+                      "Bảng glyph mới không đọc được.", failures, warnings,
+                      counts)
+    seen = set()
+    for i, r in enumerate(recs):
+        gid = r["id"]
+        if gid in seen:
+            failures.append({
+                "kind": "duplicate_id",
+                "message_vi": "Trùng id %s ở record %d." % (gid, i)})
+        seen.add(gid)
+        if layout == "new":
+            w, h = r["width"], r["height"]
+            rx, ry, rw, rh = r["rect"]
+            if r["scale"] != 1.0:
+                failures.append({
+                    "kind": "bad_scale",
+                    "message_vi": "Record %d (id %s): scale %s != 1.0."
+                                  % (i, gid, r["scale"])})
+            if r["atlas_index"] != 0 or r["trailing"] != 0:
+                failures.append({
+                    "kind": "bad_trailing",
+                    "message_vi": "Record %d (id %s): atlasIndex/trailing "
+                                  "khác 0." % (i, gid)})
+        else:
+            w, h = r["width"], r["height"]
+            rx, ry, rw, rh = r["x"], r["y"], r["width"], r["height"]
+            if r["scale"] != 1.0:
+                failures.append({
+                    "kind": "bad_scale",
+                    "message_vi": "Record %d (id %s): scale %s != 1.0."
+                                  % (i, gid, r["scale"])})
+        if w < 0 or h < 0 or rw < 0 or rh < 0:
+            failures.append({
+                "kind": "negative_size",
+                "message_vi": "Record %d (id %s): kích thước âm." % (i, gid)})
+            continue
+        if w == 0 and h == 0 and rw == 0 and rh == 0:
+            counts["placeholders"] += 1
+            continue
+        if rx < 0 or ry < 0 or rx + rw > atlas_w or ry + rh > atlas_h:
+            failures.append({
+                "kind": "rect_out_of_bounds",
+                "message_vi": "Record %d (id %s): rect (%s,%s,%s,%s) vượt "
+                              "atlas %dx%d." % (i, gid, rx, ry, rw, rh,
+                                               atlas_w, atlas_h)})
+    status = "fail" if failures else "pass"
+    summary = ("Atlas SDF tái tạo: %d glyph (%d placeholder), atlas %dx%d."
+               % (count, counts["placeholders"], atlas_w, atlas_h)
+               if status == "pass" else
+               "Atlas SDF tái tạo KHÔNG ĐẠT: %d lỗi."
+               % len(failures))
+    return _check(CHECK_TMP_SDF, "Atlas SDF tái tạo", status, summary,
+                  failures, warnings, counts)
 
 
 # ------------------------------------------- (c)+(e) ke hoach + diffverify

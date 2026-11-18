@@ -21,7 +21,7 @@ fails = []
 src = (SITE / "pb3" / "sdk" / "gate.py").read_text(encoding="utf-8")
 tree = ast.parse(src)
 STDLIB = {"__future__", "collections", "hashlib", "io", "json", "os",
-          "re", "typing", "zipfile"}
+          "re", "struct", "typing", "zipfile"}
 for node in ast.walk(tree):
     if isinstance(node, ast.Import):
         for a in node.names:

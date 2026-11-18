@@ -1004,13 +1004,18 @@
     font về font Be Vietnam Pro đủ 142/142: TTF rời được gộp thật trên web,
     TMP chỉ có kế hoạch fallback, còn OTF/TTC/font nhúng chỉ thay được trong
     Unity Editor — kết quả tải về dạng font_unified.zip.
-    Giới hạn thật: atlas SDF của TextMeshPro không tái tạo được trên web —
-    chỉ tái tạo được trong Unity Editor (script kèm theo).</p>
+    Giới hạn thật: atlas SDF của TextMeshPro tái tạo được bằng tính năng
+    thử nghiệm “Tái tạo atlas SDF” ở mục TMP (đo MAE so với atlas gốc
+    trước khi ghi ngược); script Unity Editor kèm theo vẫn là phương án
+    dự phòng.</p>
     <button id="btn-font-scan">Quét font đã chọn</button>
     <button id="btn-font-merge">Gộp glyph tiếng Việt (tải merged.ttf về)</button>
     <button id="btn-font-replace" class="secondary">Lấy font Be Vietnam Pro về</button>
     <button id="btn-font-tmp">Đọc TMP_FontAsset (atlas SDF)</button>
     <button id="btn-font-fallback">Tạo font fallback (mục C6)</button>
+    <input id="inp-tmp-sdf-name" type="text" placeholder="Tên TMP asset (vd Aniara_Light SDF; để trống = asset đầu tiên)" size="42">
+    <input id="inp-tmp-sdf-extra" type="text" placeholder="Ký tự thêm (vd àáâ… hoặc U+1EA0,U+1EA1)" size="42">
+    <button id="btn-font-tmp-sdf">Tái tạo atlas SDF (thử nghiệm)</button>
     <button id="btn-font-list">Liệt kê font của game</button>
     <button id="btn-font-unify">Dùng chung 1 font Be Vietnam Pro</button>
     <div id="font-result"></div>

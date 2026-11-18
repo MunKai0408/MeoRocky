@@ -56,7 +56,7 @@ MENU: Tuple[Tuple[str, Feature], ...] = (
                   note_vi="đầu vào ≤2GB, đích ≤400MB, không quá 500MB; archive lưu trữ, giải nén lại được IPA gốc.")),
     ("7", Feature("font", "Công cụ font (4 chế độ: quét/gộp/thay font)", "services.font_tool",
                   "Đợt tổng cuối (nhóm font)", maturity="M2",
-                  note_vi="quét/gộp/thay font để game hiển thị đúng tiếng Việt; atlas SDF không tái tạo được.")),
+                  note_vi="quét/gộp/thay font để game hiển thị đúng tiếng Việt; atlas SDF tái tạo được (thử nghiệm, nút TMP).")),
 )
 
 # Lệnh CLI (đặc tả 12.2)

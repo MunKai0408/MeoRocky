@@ -5459,8 +5459,9 @@ $("btn-font-replace").addEventListener("click", async () => {
 // Chỉ đọc tham số atlas SDF từ file .assets/.unity3d/IPA đã chọn: FaceInfo,
 // bảng glyph, độ phủ tiếng Việt, tham chiếu Material/Texture. Kế hoạch glyph
 // (chuỗi ký tự thiếu + tham số atlas cần giữ) được tải về dạng
-// tmp_glyph_plan.json để nạp vào Unity Editor — atlas SDF chỉ tái tạo
-// được trong Editor, web không sinh được SDF.
+// tmp_glyph_plan.json để nạp vào Unity Editor; hoặc dùng nút
+// "Tái tạo atlas SDF" (thử nghiệm, tmp_sdf_regen) để sinh lại atlas ngay
+// trên web và đo MAE so với atlas gốc.
 $("btn-font-tmp").addEventListener("click", async () => {
   try {
     const { parsed } = await runOp("Đọc TMP_FontAsset", "tmp_font_read",
@@ -5584,6 +5585,39 @@ $("btn-font-fallback").addEventListener("click", async () => {
     if (parsed.warnings && parsed.warnings.length) {
       html += "<p class=warn>Cảnh báo: " + parsed.warnings.map(esc).join("; ") + "</p>";
     }
+    $("font-result").innerHTML = html;
+  } catch (e) { /* đã báo lỗi */ }
+});
+
+// ---- Tái tạo atlas SDF (thử nghiệm, tmp_sdf_regen) ----
+// Sinh lại atlas SDF cho 1 TMP_FontAsset từ font nhúng (cùng kích thước/
+// padding/pointSize, fail-closed nếu không xếp vừa) rồi đo MAE so với
+// atlas gốc. Dry-run: chỉ tải atlas mới (.raw) về, KHÔNG ghi vào file
+// game. Ghi ngược (M1/M2) là bước sau. Tên asset để trống = asset đầu
+// tiên có font nhúng; ô ký tự thêm nhận chuỗi ký tự hoặc U+XXXX,U+YYYY.
+$("btn-font-tmp-sdf").addEventListener("click", async () => {
+  try {
+    const name = ($("inp-tmp-sdf-name").value || "").trim() || null;
+    const extra = ($("inp-tmp-sdf-extra").value || "").trim();
+    const { parsed } = await runOp("Tái tạo atlas SDF", "tmp_sdf_regen",
+      [inputPath(), name, extra], inputFileArgs(), true);
+    const worst = (parsed.worst || []).map((w) =>
+      "U+" + w.cp.toString(16).toUpperCase().padStart(4, "0") + " MAE " + w.mae).join(", ");
+    let html = "<p><b>Tái tạo atlas SDF (thử nghiệm)</b> — asset <b>" + esc(parsed.name || "?") + "</b>" +
+      " · layout " + esc(parsed.layout || "?") + " · PointSize " + parsed.point_size +
+      " · Padding " + parsed.padding + " · atlas <b>" + esc(parsed.atlas || "?") + "</b>" +
+      " · font nguồn: <b>" + esc(parsed.font_source || "?") + "</b></p>";
+    html += "<p>Glyph: " + parsed.glyphs_old + " → <b>" + parsed.glyphs_new + "</b>" +
+      (parsed.added ? " (thêm " + parsed.added + " ký tự)" : "") +
+      (parsed.unfitted ? " · <span class=warn>không xếp vừa " + parsed.unfitted + " ký tự</span>" : "") +
+      (parsed.empty ? " · rỗng " + parsed.empty : "") + "</p>";
+    html += "<p>Sai số so với atlas gốc: trung vị MAE <b>" + parsed.median_mae + "</b> · trung bình " +
+      parsed.mean_mae + " · &lt;3: " + parsed.pct_lt3 + "%" +
+      " · <b>" + (parsed.pass ? "ĐẠT (ngưỡng trung vị &lt; 3.0)" : "CHƯA ĐẠT") + "</b>" +
+      (worst ? "<br>Kém nhất: " + esc(worst) : "") + "</p>";
+    html += "<p>" + esc(parsed.note || "") + "</p>";
+    html += "<p>File atlas mới <b>" + esc(parsed.filename || "") + "</b> đã tải về tự động. " +
+      "Đây là bản dry-run — ghi ngược vào game (M1/M2) chưa có trong đợt này.</p>";
     $("font-result").innerHTML = html;
   } catch (e) { /* đã báo lỗi */ }
 });

@@ -670,5 +670,74 @@ class TestGatePressed(unittest.TestCase):
         self.assertIn("same_path", kinds)
 
 
+class TestCheckTmpSdf(unittest.TestCase):
+    """Kiem tra atlas SDF tai tao (gate.check_tmp_sdf) — cau truc bang +
+    atlas, khong do MAE."""
+
+    @staticmethod
+    def _glyphs_old():
+        return [
+            {"cp": 65, "metrics": (10.0, 12.0, 0.0, 12.0, 11.0),
+             "rect": (0, 0, 10, 12)},
+            {"cp": 32, "metrics": (0.0, 0.0, 0.0, 0.0, 5.0),
+             "rect": (0, 0, 0, 0)},
+        ]
+
+    @staticmethod
+    def _glyphs_new():
+        return [
+            {"gid": 4, "cp": 33, "metrics": (10.0, 12.0, 0.0, 12.0, 11.0),
+             "rect": (0, 0, 10, 12)},
+            {"gid": 3, "cp": 32, "metrics": (0.0, 0.0, 0.0, 0.0, 5.0),
+             "rect": (0, 0, 0, 0)},
+        ]
+
+    def test_old_layout_pass(self):
+        from sdk import sdf as S
+        table = S.encode_glyph_table_old(self._glyphs_old())
+        res = gate.check_tmp_sdf(table, "old", bytes(64 * 64), 64, 64,
+                                 expected_count=2)
+        self.assertEqual(res["status"], "pass")
+        self.assertEqual(res["counts"]["glyphs"], 2)
+        self.assertEqual(res["counts"]["placeholders"], 1)
+
+    def test_new_layout_pass(self):
+        from sdk import sdf as S
+        table = S.encode_glyph_table_new(self._glyphs_new())
+        res = gate.check_tmp_sdf(table, "new", bytes(64 * 64), 64, 64,
+                                 expected_count=2)
+        self.assertEqual(res["status"], "pass")
+
+    def test_atlas_size_fail(self):
+        from sdk import sdf as S
+        table = S.encode_glyph_table_old(self._glyphs_old())
+        res = gate.check_tmp_sdf(table, "old", bytes(10), 64, 64)
+        self.assertEqual(res["status"], "fail")
+        kinds = [f.get("kind") for f in res["failures"]]
+        self.assertIn("atlas_size", kinds)
+
+    def test_rect_out_of_bounds_fail(self):
+        from sdk import sdf as S
+        glyphs = [{"cp": 65, "metrics": (10.0, 12.0, 0.0, 12.0, 11.0),
+                   "rect": (60, 60, 10, 12)}]
+        table = S.encode_glyph_table_old(glyphs)
+        res = gate.check_tmp_sdf(table, "old", bytes(64 * 64), 64, 64)
+        self.assertEqual(res["status"], "fail")
+        kinds = [f.get("kind") for f in res["failures"]]
+        self.assertIn("rect_out_of_bounds", kinds)
+
+    def test_count_mismatch_fail(self):
+        from sdk import sdf as S
+        table = S.encode_glyph_table_old(self._glyphs_old())
+        res = gate.check_tmp_sdf(table, "old", bytes(64 * 64), 64, 64,
+                                 expected_count=5)
+        self.assertEqual(res["status"], "fail")
+
+    def test_bad_layout_fail(self):
+        res = gate.check_tmp_sdf(b"\x00" * 10, "bogus", bytes(64 * 64),
+                                 64, 64)
+        self.assertEqual(res["status"], "fail")
+
+
 if __name__ == "__main__":
     unittest.main()

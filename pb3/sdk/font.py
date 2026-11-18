@@ -15,8 +15,13 @@ GIỚI HẠN TRUNG THỰC (xem handoff/final_font.md):
   font collection (.ttc) đọc/gộp được THEO FACE (parse_font/merge_glyphs
   nhận face_index; face khác giữ nguyên bytes, face đã gộp nối thêm ở
   cuối file — xem mục TTC; face CFF vẫn không gộp được).
-- Atlas SDF của TextMeshPro KHÔNG tái tạo được trong đợt này: gặp font
-  SDF thì báo rõ, hướng dùng chế độ (3)/(4) thay thế.
+- Atlas SDF của TextMeshPro TÁI TẠO ĐƯỢC (thử nghiệm, xem sdk/sdf.py +
+  sdk/tmp_sdf.py + bridge tmp_sdf_regen): tạo atlas mới từ font nhúng
+  (cùng kích thước/padding/pointSize, fail-closed nếu không xếp vừa),
+  đo MAE so với atlas gốc (xem exp/verify_sdf_regen.py; PB3 Aniara
+  Light/Regular trung vị MAE 1.52/2.36 < ngưỡng 3.0 — ĐẠT). Gặp font SDF
+  thì báo rõ + hướng dùng nút tái tạo SDF; chế độ (3)/(4) vẫn là
+  phương án dự phòng. Ghi ngược atlas vào game (M1/M2) là bước sau.
 - Gộp glyph chỉ copy outline + advance/lsb; không cập nhật OS/2
   (unicodeRanges), `post` (tên glyph), kerning (`kern`/`GPOS`) hay
   hinting cho glyph mới; chữ ký số DSIG bị bỏ (font gộp không còn
@@ -161,10 +166,14 @@ _CHECKSUM_MAGIC = 0xB1B0AFBA
 _HEAD_MAGIC = 0x5F0F3CF5
 
 #: Thông báo giới hạn SDF (dùng chung cho sdk + services để wording nhất quán).
-SDF_LIMIT_MSG = ("không hỗ trợ atlas SDF của TextMeshPro trong đợt này "
-                 "(không tái tạo được atlas SDF trên điện thoại); "
-                 "dùng chế độ (3) thay bằng font TTF có tiếng Việt "
-                 "hoặc chế độ (4) dùng font nhập sẵn của PB3")
+#: Tái tạo SDF đã có (thử nghiệm): nút "Tái tạo atlas SDF" ở mục TMP
+#: (bridge tmp_sdf_regen, sdk/sdf.py) — đo MAE so với atlas gốc trước
+#: khi ghi ngược; chế độ (3)/(4) vẫn là phương án dự phòng.
+SDF_LIMIT_MSG = ("atlas SDF của TextMeshPro: tái tạo được bằng tính năng "
+                 "thử nghiệm 'Tái tạo atlas SDF' ở mục TMP (sai số đo "
+                 "được, xem báo cáo MAE); dùng chế độ (3) thay bằng font "
+                 "TTF có tiếng Việt hoặc chế độ (4) dùng font nhập sẵn "
+                 "của PB3 nếu chưa muốn dùng bản thử nghiệm")
 
 #: Cờ component trong glyph composite (đặc tả TrueType).
 _COMP_ARG_WORDS = 0x0001
