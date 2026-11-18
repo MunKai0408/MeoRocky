@@ -621,28 +621,35 @@ class BatchRunner:
 
         Khi timeout: KHÔNG shutdown(wait=True) — chờ worker thì timeout
         thành vô nghĩa; executor bị bỏ (shutdown(wait=False)), thread nền
-        tự kết thúc sau, output của nó nằm ở staging riêng và bị bỏ."""
+        tự kết thúc sau, output của nó nằm ở staging riêng và bị bỏ.
+
+        Timeout chỉ đo _execute_job (chạy job); _finalize_result (ghi
+        result.json + chuyển thư mục) chạy trên luồng chính sau khi future
+        xong, không ăn vào ngân sách timeout."""
         if timeout_game is None:
             return self._execute(item, out, staging_root, kb, dry_run)
         ex = concurrent.futures.ThreadPoolExecutor(max_workers=1)
-        fut = ex.submit(self._execute, item, out, staging_root, kb, dry_run)
+        fut = ex.submit(self._execute_job, item, out, staging_root, kb, dry_run)
         try:
-            res = fut.result(timeout=float(timeout_game))
+            res, staging, final = fut.result(timeout=float(timeout_game))
             ex.shutdown(wait=True)
-            return res
+            return self._finalize_result(res, staging, final)
         except concurrent.futures.TimeoutError:
             ex.shutdown(wait=False)
             return self._timeout_result(item, timeout_game)
 
     def _run_one_async(self, item, out, staging_root, kb, dry_run, timeout_game):
-        """Worker cho jobs>1 (timeout xử lý ở _wait_future)."""
-        return self._execute(item, out, staging_root, kb, dry_run)
+        """Worker cho jobs>1 (timeout xử lý ở _wait_future; finalize chạy
+        trên luồng chính trong _wait_future, không nằm trong vùng timeout)."""
+        return self._execute_job(item, out, staging_root, kb, dry_run)
 
     def _wait_future(self, item, fut, timeout_game, out, staging_root):
         if timeout_game is None:
-            return fut.result()
+            res, staging, final = fut.result()
+            return self._finalize_result(res, staging, final)
         try:
-            return fut.result(timeout=float(timeout_game))
+            res, staging, final = fut.result(timeout=float(timeout_game))
+            return self._finalize_result(res, staging, final)
         except concurrent.futures.TimeoutError:
             return self._timeout_result(item, timeout_game)
 
@@ -664,6 +671,21 @@ class BatchRunner:
         return int(getattr(item, "_batch_index", 0) or 0)
 
     def _execute(self, item, out, staging_root, kb, dry_run) -> BatchGameResult:
+        """Chạy một game + ghi result.json + chuyển staging -> thư mục game.
+
+        Giữ nguyên hành vi cũ cho đường không timeout (gọi trực tiếp). Đường
+        có timeout dùng _execute_job + _finalize_result riêng (xem _run_one)."""
+        res, staging, final = self._execute_job(item, out, staging_root, kb, dry_run)
+        return self._finalize_result(res, staging, final)
+
+    def _execute_job(self, item, out, staging_root, kb, dry_run):
+        """Chỉ chạy job của một game (KHÔNG ghi result.json, KHÔNG chuyển thư mục).
+
+        Trả (res, staging, final). Timeout chỉ đo phần này: ghi result.json
+        (atomic_write_bytes + fsync, đo thật ~70-90ms trên VM này) từng ăn
+        vào ngân sách timeout nên job nhanh vẫn bị E_TIMEOUT oan khi timeout
+        nhỏ — xem test_timeout_slow_job_is_e_timeout_and_batch_finishes.
+        elapsed_s đo tới lúc job xong (không tính bước ghi file sau đó)."""
         t0 = self._clock()
         idx = self._index_of(item)
         slug = "game_%02d_%s" % (idx, _slug(item.path))
@@ -703,9 +725,15 @@ class BatchRunner:
             if res.budget_ok is False:
                 res.note = (res.note + "; " if res.note else "") + \
                     "chưa đạt ngân sách §9.2 (%.1fs > %.0fs)" % (res.elapsed_s, res.budget_s)
-        # Ghi result.json vào staging, rồi chuyển staging -> thư mục game
-        # (chỉ khi game chạy xong — kể cả failed/incomplete — để còn dấu vết;
-        # riêng timeout thì _timeout_result không qua đây nên staging bỏ lại).
+        return res, staging, final
+
+    def _finalize_result(self, res, staging, final) -> BatchGameResult:
+        """Ghi result.json vào staging, rồi chuyển staging -> thư mục game
+        (chỉ khi game chạy xong — kể cả failed/incomplete — để còn dấu vết;
+        riêng timeout thì _timeout_result không qua đây nên staging bỏ lại).
+
+        Chạy trên luồng gọi (sau khi future xong), KHÔNG nằm trong vùng tính
+        timeout — ghi file + fsync không được ăn vào ngân sách timeout."""
         try:
             blob = json.dumps(res.to_dict(), ensure_ascii=False, indent=1).encode("utf-8")
             safe_io.atomic_write_bytes(str(staging / RESULT_FILENAME), blob)
