@@ -134,7 +134,7 @@ for bad in ("new SharedArrayBuffer", "Cross-Origin-Opener-Policy",
 
 # ------------------------------------------------------------------ manifest
 files_json = json.load(open(os.path.join(PB3, "files.json"), encoding="utf-8"))
-chk(len(files_json["files"]) == 101,
+chk(len(files_json["files"]) == 102,
     "files.json %d file != 100 (P0-2 them sdk/gate.py)"
     % len(files_json["files"]))
 tests_json = json.load(open(os.path.join(PB3, "tests.json"), encoding="utf-8"))
