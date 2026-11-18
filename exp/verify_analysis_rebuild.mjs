@@ -8,7 +8,7 @@
 //
 //  A. Tĩnh: node --check; py_compile; check_analysis_rebuild_static.py
 //     (rebuild.py stdlib-only + Python 3.9, không UnityPy/lz4, không
-//     expose rebuild_zip, manifest 95/168, precache 120 + v23, bridge có
+//     expose rebuild_zip, manifest 105/186, precache 130 + v23, bridge có
 //     op rebuild_apply, plan.py progress_fn, unity.py streaming + khóa
 //     REBUILD_ALL, UI đủ id (E), 2 chỗ innerHTML f.source đã esc).
 //  B. Unit test Python: tests.test_rebuild (32) + test_plan + test_unity.
@@ -101,9 +101,9 @@ fs.mkdirSync(TMP, { recursive: true });
     const j = JSON.parse(r.stdout || "{}");
     if (j.fails && j.fails.length) { ok = false; detail = j.fails.join(" | "); }
     else detail = "rebuild.py stdlib-only + Python 3.9 + không UnityPy/lz4 + " +
-      "không expose rebuild_zip + chốt dest!=source + files.json=95 / " +
-      "tests.json=168 + sw.js precache 120 mục có sdk/rebuild.py, không " +
-      "wheel chết, CACHE_VERSION v28-20261117 + bridge rebuild_apply + " +
+      "không expose rebuild_zip + chốt dest!=source + files.json=105 / " +
+      "tests.json=186 + sw.js precache 130 mục có sdk/rebuild.py, không " +
+      "wheel chết, CACHE_VERSION v48-20261118 + bridge rebuild_apply + " +
       "plan.py progress_fn + unity.py streaming + khóa REBUILD_ALL + UI " +
       "đủ id (E) + 2 chỗ innerHTML f.source đã esc + render (E) esc";
   } catch (e) { ok = false; detail = "không đọc được JSON: " + (r.stdout || "") + (r.stderr || ""); }
