@@ -37,6 +37,13 @@ Thanh phan Phase 4:
                      lang cach nhau 30s, kiem tra toan ven, doi chieu
                      SHA/checkpoint, chi dong bo phan thieu, xung dot
                      thi dung); tai dung healthcheck/integrity/checkpoint.
+
+Thanh phan Phase 6:
+  simulation.py    — mo phong song EPERM trong moi truong test rieng
+                     (fault-injection os.write/os.fsync co pham vi,
+                     probe + sync gia lap, KHONG loi that, KHONG mang
+                     that); kich ban dau-cuoi detect -> checkpoint ->
+                     patch -> RECOVERY -> NORMAL + cac bien the xung dot.
 """
 from __future__ import annotations
 
@@ -133,11 +140,24 @@ try:
         recovery_summary,
         verify_calm,
     )
+    from anti_wave.simulation import (  # noqa: E402,F401
+        BUILTIN_SCENARIOS,
+        FakeGitHubSync,
+        SimulatedProbe,
+        WaveFault,
+        run_all_scenarios,
+        run_wave_scenario,
+        simulation_report_summary,
+        simulation_summary,
+        truncate_by_failed_write,
+    )
     _PHASE2_PRESENT = True
     _PHASE4_PRESENT = True
+    _PHASE6_PRESENT = True
 except ImportError:
     _PHASE2_PRESENT = False
     _PHASE4_PRESENT = False
+    _PHASE6_PRESENT = False
 
 # Luu y: CHECKPOINT_VERSION (checkpoint.py) va REDACTED (logger.py) cua
 # Phase 2 cung gia tri voi ban github_sync (1 va "[REDACTED]") — import
@@ -217,4 +237,16 @@ if _PHASE4_PRESENT:
         "save_patch_to_github",
         "validate_patch",
         "verify_calm",
+    ]
+if _PHASE6_PRESENT:
+    __all__ += [
+        "BUILTIN_SCENARIOS",
+        "FakeGitHubSync",
+        "SimulatedProbe",
+        "WaveFault",
+        "run_all_scenarios",
+        "run_wave_scenario",
+        "simulation_report_summary",
+        "simulation_summary",
+        "truncate_by_failed_write",
     ]
