@@ -39,8 +39,8 @@ class _Resp(object):
 def _find_cell_source():
     nb = json.loads(NB.read_text(encoding="utf-8"))
     codes = [c for c in nb["cells"] if c["cell_type"] == "code"]
-    assert len(codes) == 5, len(codes)
-    src = "".join(codes[2]["source"])
+    assert len(codes) == 6, len(codes)
+    src = "".join(codes[3]["source"])
     assert "GAME_FILE_NAME" in src and "find_ipa_by_name" in src
     return src
 
@@ -48,7 +48,7 @@ def _find_cell_source():
 def _cell_source():
     nb = json.loads(NB.read_text(encoding="utf-8"))
     codes = [c for c in nb["cells"] if c["cell_type"] == "code"]
-    assert len(codes) == 5, len(codes)
+    assert len(codes) == 6, len(codes)
     src = "".join(codes[-1]["source"])
     assert "WorkerProvider" in src, "cell dich thieu WorkerProvider"
     assert "TRANSLATE_AFTER_EXTRACT" in src
@@ -66,14 +66,14 @@ def _fake_gtx_urlopen(req, timeout=None):
 class TestNotebookStructure(TmpCase):
     def test_cells(self):
         nb = json.loads(NB.read_text(encoding="utf-8"))
-        self.assertEqual(len(nb["cells"]), 10)
+        self.assertEqual(len(nb["cells"]), 11)
         kinds = [c["cell_type"] for c in nb["cells"]]
-        self.assertEqual(kinds, ["markdown", "code", "code", "markdown",
-                                 "code", "markdown", "code", "markdown",
-                                 "code", "markdown"])
-        step3 = "".join(nb["cells"][7]["source"])
+        self.assertEqual(kinds, ["markdown", "code", "code", "code",
+                                 "markdown", "code", "markdown", "code",
+                                 "markdown", "code", "markdown"])
+        step3 = "".join(nb["cells"][8]["source"])
         self.assertIn("Bước 3", step3)
-        code = "".join(nb["cells"][8]["source"])
+        code = "".join(nb["cells"][9]["source"])
         self.assertIn("WorkerProvider", code)
         self.assertIn("translated.%s.json", code)
         self.assertIn("translate_json_file", code)
@@ -87,11 +87,13 @@ class TestFindCell(TmpCase):
         self.assertNotIn("Don't Starve Together_2.1.0 VH.ipa", whole)
         self.assertNotIn("Game mặc định: Don't Starve Together", whole)
         self.assertNotIn("Notebook mặc định trích game", whole)
-        notes = "".join(nb["cells"][5]["source"])
+        notes = "".join(nb["cells"][6]["source"])
         self.assertNotIn("game mặc định", notes)
         src = _find_cell_source()
-        self.assertIn('GAME_FILE_NAME = ""', src)
-        self.assertIn('DRIVE_FILE_ID = ""', src)
+        self.assertIn('GAME_FILE_NAME = globals().get("GAME_FILE_NAME", "")',
+                      src)
+        self.assertIn('DRIVE_FILE_ID = globals().get("DRIVE_FILE_ID", "")',
+                      src)
         self.assertIn("file/d/", notes)
         self.assertIn("Ví dụ: Don't Starve Together", notes)
 
@@ -105,7 +107,7 @@ class TestFindCell(TmpCase):
         ipa = self.tmp / "test.ipa"
         ipa.write_bytes(b"fake")
         src = _find_cell_source()
-        src = src.replace('GAME_FILE_NAME = ""',
+        src = src.replace('GAME_FILE_NAME = globals().get("GAME_FILE_NAME", "")',
                           'GAME_FILE_NAME = "test.ipa"')
         src = src.replace(
             'SEARCH_ROOTS = ["/content/drive/MyDrive", '

@@ -99,6 +99,7 @@
   "pb3/tests/test_bug2_merge.py",
   "pb3/tests/test_caps_po.py",
   "pb3/tests/test_castle_db.py",
+  "pb3/tests/test_colab_job.py",
   "pb3/tests/test_colab_translate.py",
   "pb3/tests/test_color_display.py",
   "pb3/tests/test_compress.py",
