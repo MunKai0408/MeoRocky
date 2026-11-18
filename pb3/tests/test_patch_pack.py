@@ -417,7 +417,15 @@ class TestPackZipAndScript(unittest.TestCase):
     def test_script_finds_no_pb3_tree_refuses_clearly(self):
         # Chi chay khi may nay khong co cay PB3 o duong dan mac dinh
         # (tren iSH co, test se bo qua).
-        if Path(os.sep + "root" + os.sep + "pb3").is_dir():
+        # Path.is_dir() chi nuot (ENOENT, ENOTDIR, EBADF, ELOOP) — tren
+        # runner GitHub (user thuong) /root mode 700 nen stat bi EACCES
+        # (PermissionError) thay vi False; khong co quyen traverse thi
+        # coi nhu khong co cay mac dinh.
+        try:
+            has_default_tree = Path(os.sep + "root" + os.sep + "pb3").is_dir()
+        except PermissionError:
+            has_default_tree = False
+        if has_default_tree:
             self.skipTest("may nay co cay PB3 mac dinh")
         bundle = _bundle_bytes()
         with tempfile.TemporaryDirectory() as td:
