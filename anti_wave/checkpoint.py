@@ -191,9 +191,9 @@ def resume_summary(checkpoint: Dict[str, Any]) -> str:
                      % (entry.get("path"), entry.get("bytes"),
                         (entry.get("sha256") or "")[:12]))
     if checkpoint.get("step"):
-        lines.append("Buoc hien tai: %s" % checkpoint["step"])
+        lines.append("Bước hiện tại: %s" % checkpoint["step"])
     if checkpoint.get("next_action"):
-        lines.append("Viec tiep theo: %s" % checkpoint["next_action"])
+        lines.append("Việc tiếp theo: %s" % checkpoint["next_action"])
     if checkpoint.get("notes"):
         lines.append("Ghi chu: %s" % checkpoint["notes"])
     return "\n".join(lines)
