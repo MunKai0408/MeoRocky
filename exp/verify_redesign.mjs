@@ -68,7 +68,7 @@ const workerJs = fs.readFileSync(SITE + "/worker.js", "utf8");
     ck("translate_proxy_kept", idxHtml.includes('id="translate-proxy"') && idxHtml.includes("diagnostics.html"));
     ck("limit_2gb_text", /≤2GB/.test(idxHtml) && /1–1,5GB/.test(idxHtml) && !/1GB/.test(idxHtml) && !/1GB/.test(appJs));
     // A4. Redesign: không URL ngoài, không ảnh ngoài, không file mẫu bịa,
-    // không COOP/COEP, đủ view/nav/thẻ/theme.
+    // không COOP/COEP, đủ view/nav/thẻ, không còn theme.
     ck("no_external_url", !/https?:\/\//.test(idxHtml) && !/https?:\/\//.test(appJs));
     ck("no_img_tag", !/<img[\s>]/.test(idxHtml));
     ck("no_fake_sample_file", !/GenshinImpact|HonkaiImpact|PUBG|\.ipa.{0,20}564/.test(idxHtml + appJs));
@@ -82,10 +82,19 @@ const workerJs = fs.readFileSync(SITE + "/worker.js", "utf8");
       .every((id) => have.has(id)));
     ck("cards_present", ["btn-card-unity", "btn-card-extract", "btn-card-translate", "btn-card-mod", "btn-card-batch", "btn-card-kb"]
       .every((id) => have.has(id)));
-    ck("theme_present", have.has("btn-theme") && have.has("setting-theme") && have.has("setting-save-history"));
+    ck("no_theme", !have.has("btn-theme") && !have.has("setting-theme")
+      && !/pb3_theme|data-theme|btn-theme/.test(idxHtml + appJs));
+    ck("save_history_present", have.has("setting-save-history"));
+    ck("bear_pastel", /--bg: #dcebf8/.test(idxHtml) && /--pink-text: #c24e77/.test(idxHtml)
+      && /<img class="logo-bear" src="icons\/icon-192\.png"/.test(idxHtml)
+      && (idxHtml.match(/<img src="icons\/icon-192\.png"/g) || []).length >= 5);
+    ck("credit_locked", !/translate-credit/.test(idxHtml + appJs)
+      && /luôn được gắn vào bản dịch/.test(idxHtml)
+      && /"translate_json", \[text, to, true, from/.test(appJs));
     ck("recent_present", have.has("recent-list") && have.has("dropzone") && have.has("unity-info") && have.has("download-bar"));
     ck("download_bar_close", have.has("btn-download-close") && /btn-download-close/.test(appJs));
-    ck("mascot_inline_svg", idxHtml.includes('id="bear-mascot"') && (idxHtml.match(/<use href="#bear-mascot"/g) || []).length >= 5);
+    ck("bear_icon_img", !idxHtml.includes('id="bear-mascot"') && !idxHtml.includes("<use href=")
+      && idxHtml.includes('<link rel="icon" type="image/png" href="icons/icon-192.png">'));
     // A5. Mod: chỉ "Thay Text" là thật; các op khác disabled + ghi rõ.
     ck("mod_ops_honest", (idxHtml.match(/chưa hỗ trợ trên web \(dùng bản iSH\)/g) || []).length >= 5
       && /id="btn-mod-op-text"/.test(idxHtml));
@@ -169,14 +178,14 @@ function loadApp() {
       "click nav Cài đặt: view-settings hiện");
     await t.getEl("btn-nav-home").click();
     assert(t.getEl("view-home").hidden === false, "click nav Trang chủ: view-home hiện lại");
-    // B2. Theme toggle đổi localStorage + nút đổi icon; không cần documentElement.
-    const before = t.ls.get("pb3_theme");
-    await t.getEl("btn-theme").click();
-    assert(t.ls.get("pb3_theme") === "light" && t.getEl("btn-theme").textContent === "☀️",
-      `theme phải sang light, thực tế ${t.ls.get("pb3_theme")} (trước: ${before})`);
-    await t.getEl("btn-theme").click();
-    assert(t.ls.get("pb3_theme") === "dark" && t.getEl("btn-theme").textContent === "🌙",
-      "theme phải về dark");
+    // B2. Không còn theme; thanh tiến độ bật/tắt spinner + class loading.
+    assert(t.ls.get("pb3_theme") === null, "không còn key localStorage pb3_theme");
+    t.ctx.progStart("Kiểm tra");
+    assert(t.getEl("progress-spinner").hidden === false, "progStart phải hiện spinner");
+    assert(t.getEl("progress-bar").classList.contains("loading"), "progStart phải gắn class loading");
+    t.ctx.progDone("Kiểm tra");
+    assert(t.getEl("progress-spinner").hidden === true, "progDone phải ẩn spinner");
+    assert(!t.getEl("progress-bar").classList.contains("loading"), "progDone phải gỡ class loading");
     // B3. File gần đây: addRecent qua sandbox -> render + localStorage metadata.
     t.ctx.addRecent({ name: "game1.zip", size: 123456, lastModified: 1000, data: new ArrayBuffer(0) });
     const listHtml = t.getEl("recent-list").innerHTML;
@@ -192,7 +201,7 @@ function loadApp() {
     assert(t.ls.get("pb3_recent_files") === null || t.ls.get("pb3_recent_files") === undefined,
       "tắt lưu lịch sử phải xóa metadata đã lưu");
     rec("fake_dom_new_ui", true,
-      "nav chuyển view đúng; theme light/dark đổi localStorage; recent render + metadata localStorage (không nội dung file); tắt lưu lịch sử xóa metadata",
+      "nav chuyển view đúng; không còn theme, spinner tiến độ bật/tắt đúng; recent render + metadata localStorage (không nội dung file); tắt lưu lịch sử xóa metadata",
       performance.now() - t0);
   } catch (e) { rec("fake_dom_new_ui", false, String(e?.message ?? e), performance.now() - t0); }
 }
@@ -243,17 +252,18 @@ try {
     const ov = await overflow();
     assert(ov.sw <= ov.cw + 1, `home tràn ngang: scrollWidth=${ov.sw} clientWidth=${ov.cw}`);
     const hero = await page.evaluate(() => ({
-      mascot: !!document.querySelector('use[href="#bear-mascot"]'),
+      logoImg: !!document.querySelector('img.logo-bear')
+        && document.querySelector(".hero-bear img")?.getAttribute("src") === "icons/icon-192.png",
       heroText: (document.querySelector(".hero h2") || {}).textContent || "",
       cards: document.querySelectorAll(".feature-card").length,
       nav: document.querySelectorAll(".bottomnav button").length,
     }));
-    assert(hero.mascot && hero.cards === 6 && hero.nav === 5,
-      `hero phải có mascot + 6 thẻ + 5 nút nav: ${JSON.stringify(hero)}`);
+    assert(hero.logoImg && hero.cards === 6 && hero.nav === 5,
+      `hero phải có logo gấu <img> + 6 thẻ + 5 nút nav: ${JSON.stringify(hero)}`);
     assert(hero.heroText.includes("Unity"), `hero phải nhắc Unity: ${hero.heroText}`);
     await shot("redesign_390_home.png");
     rec("browser_boot_home_390", true,
-      `boot Sẵn sàng; home scrollWidth=${ov.sw} (không tràn); mascot + 6 thẻ + 5 nút nav; hero: ${hero.heroText.slice(0, 50)}…`,
+      `boot Sẵn sàng; home scrollWidth=${ov.sw} (không tràn); logo gấu <img> + 6 thẻ + 5 nút nav; hero: ${hero.heroText.slice(0, 50)}…`,
       performance.now() - t0);
   }
 
@@ -401,28 +411,25 @@ try {
       performance.now() - t0);
   }
 
-  { // C7. Theme sáng thật: toggle -> data-theme=light + localStorage; reload vẫn sáng
+  { // C7. Giao diện pastel thật: không nút theme, logo là ảnh gấu, nền xanh pastel
     const t0 = performance.now();
     await page.click("#btn-nav-settings");
-    await page.click("#btn-theme");
-    const light = await page.evaluate(() => ({
-      theme: document.documentElement.getAttribute("data-theme"),
-      stored: localStorage.getItem("pb3_theme"),
-      checkbox: document.getElementById("setting-theme").checked,
+    const pastel = await page.evaluate(() => ({
+      noThemeBtn: !document.getElementById("btn-theme"),
+      noThemeSetting: !document.getElementById("setting-theme"),
+      noDataTheme: !document.documentElement.hasAttribute("data-theme"),
+      logoImg: !!document.querySelector("img.logo-bear"),
+      logoSrc: document.querySelector("img.logo-bear")?.getAttribute("src"),
+      bg: getComputedStyle(document.body).backgroundColor,
+      creditNote: document.body.textContent.includes("luôn được gắn vào bản dịch"),
     }));
-    assert(light.theme === "light" && light.stored === "light" && light.checkbox === true,
-      `sau toggle phải light cả 3 chỗ: ${JSON.stringify(light)}`);
-    await shot("redesign_390_settings_light.png");
-    await page.reload();
-    await waitReady();
-    const kept = await page.evaluate(() => document.documentElement.getAttribute("data-theme"));
-    assert(kept === "light", `reload xong theme sáng phải giữ (inline head script), thực tế ${kept}`);
-    // Trả về tối để không ảnh hưởng lần chụp sau.
-    await page.click("#btn-theme");
-    const back = await page.evaluate(() => document.documentElement.getAttribute("data-theme"));
-    assert(back === null, `toggle lại phải về tối, thực tế ${back}`);
-    rec("browser_theme_light_real", true,
-      "toggle sáng: data-theme=light + localStorage=light + checkbox Cài đặt đồng bộ; reload vẫn sáng; toggle lại về tối",
+    assert(pastel.noThemeBtn && pastel.noThemeSetting && pastel.noDataTheme
+      && pastel.logoImg && pastel.logoSrc === "icons/icon-192.png"
+      && pastel.bg === "rgb(220, 235, 248)" && pastel.creditNote,
+      `giao diện pastel chưa đúng: ${JSON.stringify(pastel)}`);
+    await shot("redesign_390_settings_pastel.png");
+    rec("browser_pastel_real", true,
+      `không nút theme, logo <img> ${pastel.logoSrc}, nền body ${pastel.bg}, có ghi chú credit luôn gắn`,
       performance.now() - t0);
   }
 
