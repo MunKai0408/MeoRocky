@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Kiem tra tinh muc 8: sdk/plan.py chi stdlib + Python 3.9; manifest
-(files.json 110, tests.json 193); sw.js precache co sdk/plan.py va
-CACHE_VERSION v56-20261119 (C3 them fixtures/selftest.zip); bridge co 3 op plan_*. In JSON {"fails": [...]}.
+(files.json 110, tests.json 194); sw.js precache co sdk/plan.py va
+CACHE_VERSION v57-20261119 (C3 them fixtures/selftest.zip); bridge co 3 op plan_*. In JSON {"fails": [...]}.
 """
 import ast
 import json
@@ -41,8 +41,8 @@ if len(files) != 110:
 if "pb3/sdk/plan.py" not in files:
     fails.append("files.json thieu pb3/sdk/plan.py")
 tests = json.loads((SITE / "pb3" / "tests.json").read_text())["files"]
-if len(tests) != 193:
-    fails.append("tests.json co %d file, ky vong 193" % len(tests))
+if len(tests) != 194:
+    fails.append("tests.json co %d file, ky vong 194" % len(tests))
 if "pb3/tests/test_plan.py" not in tests:
     fails.append("tests.json thieu pb3/tests/test_plan.py")
 
@@ -50,8 +50,8 @@ if "pb3/tests/test_plan.py" not in tests:
 sw = (SITE / "sw.js").read_text(encoding="utf-8")
 if '"pb3/sdk/plan.py"' not in sw:
     fails.append("sw.js precache thieu pb3/sdk/plan.py")
-if 'CACHE_VERSION = "v56-20261119"' not in sw:
-    fails.append("sw.js CACHE_VERSION khong phai v56-20261119")
+if 'CACHE_VERSION = "v57-20261119"' not in sw:
+    fails.append("sw.js CACHE_VERSION khong phai v57-20261119")
 
 # 4. bridge co 3 op + khong goi mang trong plan.py.
 bridge = (SITE / "pb3" / "bridge.py").read_text(encoding="utf-8")

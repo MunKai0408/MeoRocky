@@ -99,7 +99,7 @@ const checkStatus = (r, id) => ((r.checks || []).find((c) => c.id === id) || {})
     else detail = "gate.py stdlib-only + Python 3.9 + không UnityPy/lz4/mạng " +
       "+ không ghi file + đủ 5 kiểm tra (translation_complete, placeholders, " +
       "diffverify, fonts, integrity) + manifest 105/186 + sw.js precache 130 " +
-      "mục có sdk/gate.py, không mục chết, CACHE_VERSION v56-20261119 + " +
+      "mục có sdk/gate.py, không mục chết, CACHE_VERSION v57-20261119 + " +
       "bridge delivery_gate + rebuild_apply bắt verdict + UI đủ id cổng + " +
       "nút Ghi bị khóa bởi verdict + render cổng esc";
   } catch (e) { ok = false; detail = "không đọc được JSON: " + (r.stdout || "") + (r.stderr || ""); }

@@ -91,7 +91,7 @@ const sha256 = (buf) => createHash("sha256").update(buf).digest("hex");
     else detail = "patch_pack.py stdlib-only + Python 3.9 + không chuỗi cấm " +
       "iSH-only + script ap parse được (stdlib + core/sdk) + files.json=105 " +
       "+ tests.json=186 + sw.js precache sdk/patch_pack.py + CACHE_VERSION " +
-      "v56-20261119 + bridge patch_pack + UI đủ 2 nút xuất pack";
+      "v57-20261119 + bridge patch_pack + UI đủ 2 nút xuất pack";
   } catch (e) { ok = false; detail = "không đọc được JSON: " + (r.stdout || "") + (r.stderr || ""); }
   rec("static_c7_checks", ok, detail, performance.now() - t0);
 }

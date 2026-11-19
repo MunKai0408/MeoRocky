@@ -180,6 +180,36 @@ class JsonPlugin(FormatPluginBase):
             return 0.8
         return 0.0
 
+    def _probe_bytes(self, data: bytes, path: str, locale: Optional[str]) -> Dict[str, Any]:
+        """Đếm nhẹ cho probe (SPEED-EXTRACT 2026-11-18): chỉ trả số lượng,
+        KHÔNG dựng LocEntry — probe toàn pipeline chỉ cần ok + entries>0
+        cho trọng tài, nhưng test_probe_counts_entries khóa số entries
+        CHÍNH XÁC nên phải đếm đúng bằng _parse_bytes.
+
+        Đường nhanh: JSON object PHẲNG (mọi giá trị là chuỗi/số/bool/null)
+        — trường hợp của hầu hết file locale (kể cả langtable 9K/PB3):
+        entries = số key + số key trùng (pairs_hook), warnings = 0,
+        conflicts = số key trùng. Mọi hình dạng khác (lồng nhau, list...)
+        fallback về _parse_bytes đầy đủ rồi chỉ lấy số lượng — đúng bằng
+        đường cũ, chỉ chậm bằng đường cũ. Lỗi decode/JSON/shape giữ nguyên
+        mã lỗi như _parse_bytes (probe bắt PB3Error -> ok False như cũ).
+        """
+        doc = decode_text(data, path)
+        pairs_hook = _Pairs()
+        try:
+            root = json.loads(doc.text, object_pairs_hook=pairs_hook)
+        except ValueError:
+            raise PB3Error("E_CORRUPT", "JSON sai cú pháp", where=path)
+        if isinstance(root, dict) and all(
+                isinstance(v, str) or isinstance(v, (bool, int, float)) or v is None
+                for v in root.values()):
+            n_dups = len(pairs_hook.dups)
+            return {"entries": len(root) + n_dups, "warnings": 0, "conflicts": n_dups}
+        res = self._parse_bytes(data, path, locale)
+        return {"entries": len(res["entries"]),
+                "warnings": len(res.get("warnings", [])),
+                "conflicts": len(res.get("conflicts", []))}
+
     def _parse_bytes(self, data: bytes, path: str, locale: Optional[str]) -> Dict[str, Any]:
         doc = decode_text(data, path)
         pairs_hook = _Pairs()

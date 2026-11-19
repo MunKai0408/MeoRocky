@@ -2512,7 +2512,14 @@ def run_extraction(req: ExtractionRequest) -> ExtractionResult:
 
     # -- bước 6+7: locale resolution, parse -> IR -> export + verify -------
     checkpoint = _load_checkpoint(req)
-    source_hash = _source_hash(req.source, root_vfs) if req.out_dir else ""
+    # SPEED-EXTRACT (2026-11-18): source_hash chỉ phục vụ checkpoint/resume
+    # (khớp hash ở dưới + _save_checkpoint trong _export khi KHÔNG gộp).
+    # Chế độ web mặc định (merge_one_file=True, resume=False) không dùng tới
+    # mà _source_hash vẫn băm TOÀN BỘ file nguồn (9K 173 MB: 0,51 s [ĐÃ ĐO
+    # THẬT] bằng profile; PB3 482 MB ~1,4 s) — bỏ qua khi không cần.
+    source_hash = ""
+    if req.out_dir and (req.resume or not req.merge_one_file):
+        source_hash = _source_hash(req.source, root_vfs)
     tables: List[LocTable] = []
     all_locales: set = set()   # mọi locale có trong game (trước khi lọc --locale)
     # Outcome không gắn locale (loc None) bị lọc cứng (--locale của batch)
