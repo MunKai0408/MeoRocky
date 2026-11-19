@@ -1685,6 +1685,34 @@ def _is_mb_lang_file(full_path: str, layer) -> bool:
     return bool(origin_map) and origin_map.get(full_path) == MB_LANG_ORIGIN
 
 
+def _untagged_rescue_target(files: List[FileOutcome],
+                            requested) -> Optional[str]:
+    """Locale gộp cứu cho game KHÔNG CÓ locale gắn nhãn nào.
+
+    Vd file JSON trần trong zip (game.json 3 key, locale None): nếu không
+    cứu thì merge bị bỏ qua (_expand_merge_targets ra tập rỗng) + _export
+    ở merge mode bỏ outcome chưa gộp + bridge lọc `f.exported` -> ra
+    0 file dù total_entries = 3 (hồi quy e2e mod_search 2026-11-17: ngày
+    2026-11-16 PASS "3 entry · 1 file · dropdown game.json", nay
+    "3 entry · 0 file", dropdown rỗng, #btn-mod-load-extract không làm gì).
+
+    Chỉ cứu khi KHÔNG có outcome nào gắn locale (game thật có locale
+    gắn nhãn thì không đổi hành vi — đã đo: 9K/PB3/EK2 đều có outcome
+    gắn locale, và outcome untagged của chúng là rác/config/animation
+    vd RuntimeInitializeOnLoads 1806 entry, EK_Avatar_Animation 22313
+    entry, tuyệt đối không được gộp bừa vào en.json) và có outcome chưa
+    gắn locale thuộc MERGE_ORIGINS còn kv. Trả locale đầu tiên yêu cầu
+    (sorted, vd "en" trong {"en","zh"}), hoặc None nếu không cứu."""
+    if not requested:
+        return None
+    if any(f.locale is not None for f in files):
+        return None
+    if not any(f.locale is None and f.kv
+               and f.origin_kind in MERGE_ORIGINS for f in files):
+        return None
+    return sorted(str(c).lower() for c in requested)[0]
+
+
 def merge_language_outcomes(files: List[FileOutcome],
                             target_locales) -> Tuple[List[FileOutcome], List[Dict[str, Any]]]:
     """Gộp các outcome ngôn ngữ thành ĐÚNG 1 outcome mỗi locale (Joseph 23:35).
@@ -1756,6 +1784,16 @@ def merge_language_outcomes(files: List[FileOutcome],
             if (f.locale is not None and f.locale.lower() == base and f.kv
                     and _admissible(f)):
                 by_lang.setdefault(target, []).append(f)
+    if not by_lang:
+        # Game không có locale gắn nhãn nào: gộp text chưa gắn locale
+        # (thuộc MERGE_ORIGINS) vào locale đầu tiên yêu cầu thay vì bỏ
+        # hết (xem _untagged_rescue_target). Game có locale thì nhánh này
+        # không chạy (by_lang đã có nhóm) nên không đổi hành vi.
+        _rescue = _untagged_rescue_target(files, targets)
+        if _rescue:
+            by_lang[_rescue] = [f for f in files
+                                if f.locale is None and f.kv
+                                and f.origin_kind in MERGE_ORIGINS]
     if not by_lang:
         return list(files), []
     merged_outcomes: Dict[str, FileOutcome] = {}
@@ -2673,6 +2711,7 @@ def run_extraction(req: ExtractionRequest) -> ExtractionResult:
         _merge_targets = locales
         if _merge_targets is None and req.locale not in (None, "all"):
             _merge_targets = {str(req.locale).lower()}
+        _requested = set(_merge_targets) if _merge_targets else None
         if _merge_targets:
             _present = {str(f.locale).lower() for f in result.files if f.locale}
             # MERGE-MB-GENERIC: thêm mọi locale có trên outcome MB tách
@@ -2688,6 +2727,14 @@ def run_extraction(req: ExtractionRequest) -> ExtractionResult:
                        else None)
             _merge_targets = _expand_merge_targets(
                 _merge_targets, _present, _mb_arg)
+        if not _merge_targets:
+            # Game không có locale gắn nhãn nào (vd chỉ có file JSON trần):
+            # _expand_merge_targets ra tập rỗng vì không có locale nào
+            # trong dữ liệu -> cứu bằng cách gộp text chưa gắn locale vào
+            # locale đầu tiên yêu cầu (xem _untagged_rescue_target).
+            _rescue = _untagged_rescue_target(result.files, _requested)
+            if _rescue:
+                _merge_targets = {_rescue}
         if _merge_targets:
             _apply_merge(result, _merge_targets)
             for _ms in result.merged_files:

@@ -9,7 +9,7 @@
 //  1. Tĩnh/thuần: hàm chọn lại tồn tại + định tuyến đúng tab; renderRecent
 //     có nút "Chọn lại file" trên MỌI dòng (còn trong phiên: kèm "Tải lại";
 //     hết phiên: kèm ghi chú "hết phiên — chọn lại file từ máy", KHÔNG có
-//     "Tải lại"); sw.js CACHE_VERSION v23; files.json=95 / tests.json=168.
+//     "Tải lại"); sw.js CACHE_VERSION v23; files.json=105 / tests.json=186.
 //  2. UI 390px — CẢ 5 game thật, CÒN TRONG PHIÊN: mở file ở khung chính
 //     rồi bấm "Chọn lại file" trên dòng đó -> mở lại ngay (không mở hộp
 //     chọn file), đúng tab Danh sách, state.file vẫn là file đó.
@@ -173,11 +173,11 @@ if (want(1)) {
     if (c.includes("v17-20261116") || c.includes("v17 ")) noV17.push(f);
   }
   rec("static_counts_and_cache",
-    filesJson.files.length === 95 && testsJson.files.length === 168 &&
-    swJs.includes('CACHE_VERSION = "v28-20261117"') && !swJs.includes("v19-20261116") &&
+    filesJson.files.length === 105 && testsJson.files.length === 186 &&
+    swJs.includes('CACHE_VERSION = "v55-20261118"') && !swJs.includes("v19-20261116") &&
     noV17.length === 0,
-    "files.json=" + filesJson.files.length + " (ky vong 95) · tests.json=" + testsJson.files.length +
-    " (ky vong 168) · sw.js v28-20261117: " + swJs.includes('CACHE_VERSION = "v28-20261117"') +
+    "files.json=" + filesJson.files.length + " (ky vong 105) · tests.json=" + testsJson.files.length +
+    " (ky vong 186) · sw.js v55-20261118: " + swJs.includes('CACHE_VERSION = "v55-20261118"') +
     " · file exp con sot v17: " + (noV17.join(",") || "khong"), performance.now() - t);
   t = performance.now();
   const r = sh("node --check " + SITE + "/app.js && node --check " + SITE + "/worker.js && node --check " + SITE + "/worker-pool.js", EXP);

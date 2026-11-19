@@ -409,17 +409,24 @@ class TestBatchRun(BatchCase):
         self.assertEqual(summary.games[0].error_code, "E_CONFIG_INVALID")
 
     def test_timeout_slow_job_is_e_timeout_and_batch_finishes(self):
+        # Biên an toàn theo số đo thật: job chậm sleep 1.0s so với timeout
+        # 0.5s (tỉ lệ 2×); job nhanh chỉ tốn vài ms trong worker + jitter
+        # khởi động thread (đo thô tối đa ~46ms) — biên 10×. Trước đây
+        # timeout 0.05s NHỎ HƠN overhead cố định ~0.09s của _execute (ghi
+        # result.json + fsync) nên job nhanh bị E_TIMEOUT oan ~50% lần chạy;
+        # SDK nay tách finalize khỏi vùng timeout (xem batch._execute_job),
+        # test vẫn giữ biên rộng để không phụ thuộc tải máy.
         import time as _time
 
         def slow_job(item, staging, ctx):
             if "slow" in item.path:
-                _time.sleep(0.3)
+                _time.sleep(1.0)
             return {"status": "ok", "files": []}
 
         items = [BatchItem(path="/tmp/slow-game.zip"),
                  BatchItem(path="/tmp/fast-game.zip")]
         summary = BatchRunner(job_runner=slow_job).run(
-            items, out_dir=self.out, timeout_game=0.05)
+            items, out_dir=self.out, timeout_game=0.5)
         self.assertEqual((summary.ok, summary.failed), (1, 1))
         self.assertEqual(summary.games[0].error_code, "E_TIMEOUT")
         self.assertEqual(summary.games[0].status, "failed")

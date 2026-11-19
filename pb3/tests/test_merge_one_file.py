@@ -165,6 +165,50 @@ class MergeOutcomesCase(unittest.TestCase):
         req = ExtractionRequest(source="game.ipa")
         self.assertFalse(req.merge_one_file)
 
+    def test_untagged_only_rescued_into_first_target(self):
+        # Hồi quy e2e mod_search 2026-11-17: game chỉ có file JSON trần
+        # không gắn locale (game.json 3 key) thì merge bị bỏ qua +
+        # _export bỏ outcome chưa gộp + bridge lọc f.exported -> ra
+        # 0 file dù total_entries = 3. Nay gộp vào locale đầu tiên
+        # yêu cầu ("en") thay vì bỏ hết.
+        game = _out("game.json", None,
+                    {"setting": "Cài đặt", "play": "Chơi", "quit": "Thoát"},
+                    source="game.json", exported=None)
+        junk = _out("u::anim.json", None, {"a": "1"})
+        junk.origin_kind = "generic_flat"
+        merged, stats = merge_language_outcomes([game, junk], {"en", "zh"})
+        self.assertEqual(len(merged), 2)  # 1 file gộp en + 1 file generic
+        en = merged[0]
+        self.assertTrue(en.merged)
+        self.assertEqual(en.locale, "en")
+        self.assertEqual(list(en.kv), ["setting", "play", "quit"])
+        self.assertEqual(en.merged_from, ["game.json"])
+        self.assertEqual(len(stats), 1)
+        self.assertEqual(stats[0]["file"], "en.json")
+        self.assertEqual(stats[0]["keys"], 3)
+        self.assertFalse(merged[1].merged)  # generic_flat không được cứu
+        self.assertEqual(merged[1].locale, None)
+
+    def test_untagged_not_rescued_when_tagged_exists(self):
+        # Guard: game CÓ locale gắn nhãn (ở đây chỉ có zh) thì text chưa
+        # gắn locale KHÔNG được gộp bừa vào en — chỉ cứu khi game không
+        # có outcome gắn locale nào. Đã đo trên game thật: 9K/PB3/EK2
+        # đều có outcome untagged là rác/config/animation (vd
+        # EK_Avatar_Animation 22313 entry) nên tuyệt đối không gộp bừa.
+        files = [
+            _out("u::a.zh.json", "zh", {"A": "yi"}, exported="a.zh.json"),
+            _out("u::cfg.json", None, {"X": "1"}),
+        ]
+        merged, stats = merge_language_outcomes(files, {"en", "zh"})
+        self.assertEqual(len(merged), 2)
+        self.assertTrue(merged[0].merged)
+        self.assertEqual(merged[0].locale, "zh")
+        self.assertEqual(list(merged[0].kv), ["A"])
+        self.assertFalse(merged[1].merged)  # config giữ nguyên, không gộp
+        self.assertEqual(merged[1].locale, None)
+        self.assertEqual(len(stats), 1)
+        self.assertEqual(stats[0]["locale"], "zh")
+
 
 class ExportMergedCase(unittest.TestCase):
     def test_export_writes_en_json_and_sidecar(self):

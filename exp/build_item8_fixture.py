@@ -2,7 +2,7 @@
 """Sinh fixture cho muc 8 (plan JSON + REBUILD_ALL).
 
 Dung builder CO SAN trong repo (chi doc, khong sua):
-  site/pb3/tests/fixtures/unity/build_fixtures.py
+  pb3/tests/fixtures/unity/build_fixtures.py
   - build_serialized_file(version, objects, types)
   - text_asset_data(name, script)
   - build_bundle(version, entries, compression)
@@ -25,7 +25,7 @@ import sys
 import zipfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, os.path.join(HERE, "..", "site", "pb3", "tests",
+sys.path.insert(0, os.path.join(HERE, "..", "pb3", "tests",
                                 "fixtures", "unity"))
 from build_fixtures import build_bundle, build_serialized_file, text_asset_data
 

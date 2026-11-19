@@ -340,7 +340,7 @@
   }
 
   var api = {
-    WARN_600MB: WARN_600MB, STRONG_800MB: STRONG_800MB, MAX_2GB: MAX_2GB,
+    WARN_140MB: WARN_140MB, STRONG_190MB: STRONG_190MB, MAX_2GB: MAX_2GB,
     fmtBytes: fmtBytes, sizeWarning: sizeWarning,
     findEocd: findEocd, listZipEntries: listZipEntries,
     localDataOffset: localDataOffset,

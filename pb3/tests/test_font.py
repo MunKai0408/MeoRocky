@@ -7,6 +7,7 @@ font thật của game — trừ font nhập sẵn fonts/BeVietnamPro-Regular.tt
 from __future__ import annotations
 
 import argparse
+import base64
 import os
 import unicodedata
 import zipfile
@@ -22,6 +23,62 @@ from tests.helpers import TmpCase
 from tests.helpers import pytest  # noqa: F401 - marker needs_fixture (stub trên iSH)
 
 ROOT = Path(__file__).resolve().parent.parent
+
+# Font nhập sẵn chỉ có dạng .b64 trong repo (file .ttf nhị phân không commit;
+# CI giải mã ở .github/workflows/test.yml:143-145). Clone mới chạy pytest
+# local sẽ thiếu pb3/fonts/BeVietnamPro-Regular.ttf -> 5 test đỏ. Giải mã
+# tại setup test (đúng cách CI làm), chỉ khi file thiếu; dọn lại sau test
+# nếu file do setup này tạo ra (không đụng file CI đã giải mã sẵn).
+_BUNDLED_FONT_B64 = ROOT.parent / "fonts" / "BeVietnamPro-Regular.ttf.b64"
+_CREATED_BUNDLED_FONT = False
+
+
+def _decode_bundled_font_bytes():
+    """Đọc + giải mã .b64 của font nhập sẵn; trả bytes hoặc None khi thiếu nguồn/hỏng."""
+    if not _BUNDLED_FONT_B64.is_file():
+        return None
+    try:
+        return base64.b64decode(_BUNDLED_FONT_B64.read_text().replace("\n", "").replace(" ", ""))
+    except Exception:
+        return None
+
+
+def _ensure_bundled_font(fonts_dir=None):
+    """Giải mã font nhập sẵn từ .b64 khi file .ttf thiếu (như CI làm).
+
+    Trả True nếu vừa giải mã (file mới tạo hoặc vừa sửa file rác 0 byte);
+    False nếu file đã có sẵn (không ghi đè) hoặc không có nguồn .b64 để
+    giải mã (khi đó test vẫn lỗi FileNotFoundError như trước, không giấu
+    lỗi môi trường). File 0 byte được sửa vì đó là debris của lần ghi dở
+    do EPERM (ghi mở file rồi lỗi khi write — gặp thật 2026-11-17: file
+    0 byte làm 5 test font FAIL với E_CORRUPT dù setup đã chạy). File
+    không rỗng thì không chạm vào (kể cả khi nội dung sai — lỗi sẽ hiện
+    rõ E_CORRUPT chứ không bị giấu; xem test_decode_does_not_overwrite)."""
+    fonts_dir = Path(fonts_dir) if fonts_dir is not None else ROOT / "fonts"
+    target = fonts_dir / fs.BUNDLED_FONT_NAME
+    if target.is_file() and target.stat().st_size > 0:
+        return False
+    raw = _decode_bundled_font_bytes()
+    if raw is None:
+        return False
+    fonts_dir.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(raw)
+    return True
+
+
+def setUpModule():
+    global _CREATED_BUNDLED_FONT
+    _CREATED_BUNDLED_FONT = _ensure_bundled_font()
+
+
+def tearDownModule():
+    global _CREATED_BUNDLED_FONT
+    if _CREATED_BUNDLED_FONT:
+        try:
+            (ROOT / "fonts" / fs.BUNDLED_FONT_NAME).unlink()
+        except OSError:
+            pass
+        _CREATED_BUNDLED_FONT = False
 
 
 def _fake_app(tmp: Path, root: Path = ROOT):
@@ -197,6 +254,35 @@ class TestBundledFont(TmpCase):
         text = lic.read_text(encoding="utf-8")
         self.assertIn("SIL Open Font License", text)
         self.assertIn("Be Vietnam Pro", text)
+
+
+class TestBundledFontDecode(TmpCase):
+    def test_decode_creates_ttf_from_b64_when_missing(self):
+        fonts_dir = self.tmp / "fonts"
+        self.assertTrue(_ensure_bundled_font(fonts_dir))
+        data = (fonts_dir / fs.BUNDLED_FONT_NAME).read_bytes()
+        self.assertEqual(fs.parse_font(data).family, "Be Vietnam Pro")
+        self.assertTrue(fs.coverage(data).is_full)
+
+    def test_decode_does_not_overwrite_existing(self):
+        fonts_dir = self.tmp / "fonts"
+        fonts_dir.mkdir(parents=True)
+        sentinel = b"khong-phai-font"
+        (fonts_dir / fs.BUNDLED_FONT_NAME).write_bytes(sentinel)
+        self.assertFalse(_ensure_bundled_font(fonts_dir))
+        self.assertEqual((fonts_dir / fs.BUNDLED_FONT_NAME).read_bytes(), sentinel)
+
+    def test_decode_repairs_empty_file(self):
+        # Hoi quy 2026-11-17: lan ghi do EPERM (mo file roi loi khi write)
+        # de lai file .ttf 0 byte; setup cu thay file ton tai nen khong sua,
+        # 5 test font FAIL voi E_CORRUPT. File 0 byte phai duoc giai ma lai.
+        fonts_dir = self.tmp / "fonts"
+        fonts_dir.mkdir(parents=True)
+        (fonts_dir / fs.BUNDLED_FONT_NAME).write_bytes(b"")
+        self.assertTrue(_ensure_bundled_font(fonts_dir))
+        data = (fonts_dir / fs.BUNDLED_FONT_NAME).read_bytes()
+        self.assertEqual(fs.parse_font(data).family, "Be Vietnam Pro")
+        self.assertTrue(fs.coverage(data).is_full)
 
 
 class TestMerge(TmpCase):

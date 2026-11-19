@@ -577,11 +577,12 @@
   <div id="tab-translate" class="card" hidden>
     <h2>Dịch (Google + từ điển offline)</h2>
     <p class="note">Chỉ dịch VALUE, giữ nguyên KEY. Bật Google Translate để dịch mọi
-    chuỗi qua Google (cần mạng; dịch theo batch 100 chuỗi/request nên file
-    1000 chuỗi chỉ mất khoảng chục giây nếu mạng tốt; hàng đợi lưu bền nên
-    tắt tab vẫn tiếp tục được). Nếu Google không dùng được (mất mạng, bị
-    giới hạn tốc độ, trình duyệt chặn CORS) thì tự động thử MyMemory (và
-    LibreTranslate nếu đã cấu hình bên dưới) rồi dùng từ điển offline
+    chuỗi qua Google (cần mạng; đo thật 2026-11-17 qua Google Translate miễn phí
+    khoảng 0,9 chuỗi/giây — file 1000 chuỗi mất khoảng 15–20 phút, file 500 chuỗi
+    khoảng 8–10 phút; đang có đợt tăng tốc dịch nên con số này có thể cải thiện ở
+    bản sau; hàng đợi lưu bền nên tắt tab vẫn tiếp tục được). Nếu Google không dùng
+    được (mất mạng, bị giới hạn tốc độ, trình duyệt chặn CORS) thì tự động thử
+    MyMemory (và LibreTranslate nếu đã cấu hình bên dưới) rồi dùng từ điển offline
     (~1.700 cụm thông dụng cho 36 cặp ngôn ngữ) và báo rõ lý do + bước nào đã dùng.</p>
     <div class="row">
       <label style="flex:1;min-width:220px">URL proxy dịch (Cloudflare Worker, không bắt buộc):
