@@ -386,6 +386,29 @@ class TestModJobRunnerFixture(TmpCase):
             self._run_fixture(VI, repack=True)
         self.assertEqual(ctx.exception.code, "E_CONFIG_INVALID")
 
+    def test_repack_on_non_ipa_fails_before_apply(self):
+        # Fail-fast (sua 00:21 +07 19/11, sua lai vi tri sau khi thay
+        # check truoc cong pha 2 test gate_fail/gate_only): cong van
+        # chay (gate-report co, verdict PASS) roi loi truoc khi ep —
+        # khong ton thoi gian ep, khong ghi summary/applied.zip.
+        out = Path(self.tmp) / "out"
+        with self.assertRaises(PB3Error) as ctx:
+            self._run_fixture(VI, repack=True)
+        self.assertEqual(ctx.exception.code, "E_CONFIG_INVALID")
+        gate_back = json.loads(
+            (out / "gate-report.json").read_text(encoding="utf-8"))
+        self.assertEqual(gate_back["verdict"], "PASS")
+        self.assertFalse((out / "summary.json").exists())
+        self.assertFalse((out / "applied.zip").exists())
+
+    def test_missing_display_font_fails_closed(self):
+        # Duong dan font khong ton tai -> E_INPUT_NOT_FOUND (khong
+        # phai FileNotFoundError tho — sua 00:21 +07 19/11).
+        with self.assertRaises(PB3Error) as ctx:
+            self._run_fixture(VI, repack=False,
+                              display_font_path="khong-co-font.ttf")
+        self.assertEqual(ctx.exception.code, "E_INPUT_NOT_FOUND")
+
     def test_missing_ipa_fails_closed(self):
         src = _write_json(Path(self.tmp) / "en.json", SRC)
         tr = _write_json(Path(self.tmp) / "vi.json", VI)

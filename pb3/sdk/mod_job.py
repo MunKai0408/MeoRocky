@@ -257,8 +257,14 @@ def _display_fonts(display_font_path):
                                             "BeVietnamPro-Regular.ttf")]
     if str(display_font_path).strip().lower() == "scan":
         return []
-    with open(str(display_font_path), "rb") as fh:
-        data = fh.read()
+    try:
+        with open(str(display_font_path), "rb") as fh:
+            data = fh.read()
+    except OSError as exc:
+        raise _err("E_INPUT_NOT_FOUND",
+                   "Khong tim thay file font hien thi: %s (%s)."
+                   % (display_font_path, exc),
+                   "Dung font mac dinh (bo trong) hoac 'scan'.")
     return [_gate.font_entry_from_bytes(
         data, os.path.basename(str(display_font_path)))]
 
@@ -457,6 +463,18 @@ def run_mod_job(*, ipa_path, original_path, translation_path, out_dir,
     if gate_only:
         return _finish("gate_only_pass",
                        "Chi chay cong (gate_only) — cong DAT, khong ep.")
+    # Fail-fast TRUOC KHI EP (sau cong PASS): bat repack ma file goc
+    # khong phai IPA thi loi ngay — truoc day check nay nam sau buoc
+    # ep (chay het buoc ep ton phut roi moi bao loi, summary cung
+    # khong duoc ghi). Dat sau cong de cong FAIL / gate_only van tra
+    # ket qua binh thuong (khong ep thi khong can repack).
+    if repack and not is_ipa:
+        raise _err("E_CONFIG_INVALID",
+                   "Da bat repack nhung file goc %r khong phai IPA "
+                   "(khong co dau ZIP) — chi dong goi lai IPA duoc."
+                   % source_name,
+                   "Tat repack (repack=false) khi ep file "
+                   ".assets/bundle don, hoac chon file IPA.")
     _prog(2)
 
     # 3. Ep that. apply_rebuild ghi thang zip ket qua vao
@@ -495,17 +513,11 @@ def run_mod_job(*, ipa_path, original_path, translation_path, out_dir,
     if os.path.isfile(applied_zip_path):
         summary["applied_zip"] = APPLIED_ZIP_NAME
 
-    # 4. Repack (chi khi goc la IPA).
+    # 4. Repack (chi khi goc la IPA — da fail-fast o tren neu khong
+    # phai IPA ma repack=true).
     pressed_bytes = None
     pressed_name = None
     if repack:
-        if not is_ipa:
-            raise _err("E_CONFIG_INVALID",
-                       "Da bat repack nhung file goc %r khong phai IPA "
-                       "(khong co dau ZIP) — chi dong goi lai IPA duoc."
-                       % source_name,
-                       "Tat repack (repack=false) khi ep file "
-                       ".assets/bundle don, hoac chon file IPA.")
         t_repack0 = time.monotonic()
         repacked = eng.repack(
             ipa_path, units, out_dir=repack_dir, units_dir=applied_dir)
@@ -515,13 +527,15 @@ def run_mod_job(*, ipa_path, original_path, translation_path, out_dir,
         summary["repacked_bytes"] = int(repacked["size_after"])
         summary["repacked_md5"] = _md5_of(repacked["dest"])
         summary["repack_checks"] = repacked.get("checks") or []
-        pressed_bytes = open(repacked["dest"], "rb").read()
+        with open(repacked["dest"], "rb") as fh:
+            pressed_bytes = fh.read()
         pressed_name = repacked["filename"]
     else:
         # Khong repack: chi kiem pressed duoc khi goc la 1 file don
         # (.assets/bundle) va chi co 1 don vi da patch.
         if not is_ipa and len(applied_files) == 1:
-            pressed_bytes = open(applied_files[0], "rb").read()
+            with open(applied_files[0], "rb") as fh:
+                pressed_bytes = fh.read()
             pressed_name = os.path.basename(applied_files[0])
         else:
             summary["pressed_gate_skipped_reason"] = (

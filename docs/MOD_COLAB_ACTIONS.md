@@ -192,9 +192,13 @@ plan hay luồng nhập kết quả — chúng không gắn Unity.
   người dùng muốn thử đường nhanh thì chọn PATCH_INPLACE trên panel.
   Cổng + repack + kiểm lại chiếm ~202/230 giây — tăng tốc các bước đó
   thuộc hướng tốc độ chung (speed coordinator), không phải Mod job.
-- PB3 (IPA 482 MB, 2348 key): runner xong (cổng PASS, pressed PASS,
-  repack 475 MB) — thời gian từng bước trong `summary["timings"]`
-  của lần chạy verify (xem báo cáo PR).
+- PB3 (IPA 482 MB, 2348 key, bản dịch [FIXTURE], đo trong lần chạy
+  verify `test_mod_job.py` 2026-11-18, máy đang tải nặng): cổng
+  370,4 s / ép 185,3 s / repack 57,9 s / kiểm lại 370,5 s /
+  **tổng 989,9 s (~16,5 phút)**, RAM đỉnh 1983,3 MB, repack
+  475.352.588 B, cổng PASS + pressed PASS. (Cổng PB3 chậm hơn 9K
+  nhiều vì file lớn + máy tải nặng lúc đo; số tuyệt đối chỉ có ý
+  nghĩa tương đối trên cùng máy.)
 - EK2 (IPA 290 MB): cổng 46,5 giây rồi FAIL (bundle mã hóa) — không
   ép, không repack.
 
