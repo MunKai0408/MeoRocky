@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Kiem tra tinh cong kiem tra truoc khi giao (P0-2, buoc 6):
 sdk/gate.py chi stdlib + Python 3.9, khong UnityPy/lz4, khong ghi file;
-manifest (files.json 110, tests.json 195); sw.js precache 138 muc co
-sdk/gate.py, khong muc chet, CACHE_VERSION v60-20261120; bridge co op
+manifest (files.json 111, tests.json 196); sw.js precache 139 muc co
+sdk/gate.py, khong muc chet, CACHE_VERSION v61-20261120; bridge co op
 delivery_gate + rebuild_apply bat verdict cong khi duoc truyen; UI du
 id cong + nut Ghi bi khoa boi verdict + render cong esc du lieu game.
 In JSON {"fails": [...]}.
@@ -72,29 +72,29 @@ for need in ("def check_translation_completeness(",
 
 # 3. Manifest.
 files = json.loads((SITE / "pb3" / "files.json").read_text())["files"]
-if len(files) != 110:
-    fails.append("files.json co %d file, ky vong 110" % len(files))
+if len(files) != 111:
+    fails.append("files.json co %d file, ky vong 111" % len(files))
 if "pb3/sdk/gate.py" not in files:
     fails.append("files.json thieu pb3/sdk/gate.py")
 tests = json.loads((SITE / "pb3" / "tests.json").read_text())["files"]
-if len(tests) != 195:
-    fails.append("tests.json co %d file, ky vong 195" % len(tests))
+if len(tests) != 196:
+    fails.append("tests.json co %d file, ky vong 196" % len(tests))
 if "pb3/tests/test_gate.py" not in tests:
     fails.append("tests.json thieu pb3/tests/test_gate.py")
 
-# 4. sw.js: precache 138 muc, co sdk/gate.py, khong muc chet, v22.
+# 4. sw.js: precache 139 muc, co sdk/gate.py, khong muc chet, v22.
 sw = (SITE / "sw.js").read_text(encoding="utf-8")
 if '"pb3/sdk/gate.py"' not in sw:
     fails.append("sw.js precache thieu pb3/sdk/gate.py")
-if 'CACHE_VERSION = "v60-20261120"' not in sw:
-    fails.append("sw.js CACHE_VERSION khong phai v60-20261120")
+if 'CACHE_VERSION = "v61-20261120"' not in sw:
+    fails.append("sw.js CACHE_VERSION khong phai v61-20261120")
 m = re.search(r"const PRECACHE_URLS = \[(.*?)\];", sw, re.S)
 if not m:
     fails.append("sw.js khong tim thay PRECACHE_URLS")
 else:
     listed = re.findall(r'"([^"]+)"', m.group(1))
-    if len(listed) != 138:
-        fails.append("sw.js precache co %d muc, ky vong 138" % len(listed))
+    if len(listed) != 139:
+        fails.append("sw.js precache co %d muc, ky vong 139" % len(listed))
     dead = [u for u in listed if u != "./"
             and not (SITE / u).exists()]
     if dead:
