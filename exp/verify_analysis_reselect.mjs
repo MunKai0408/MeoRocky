@@ -174,10 +174,10 @@ if (want(1)) {
   }
   rec("static_counts_and_cache",
     filesJson.files.length === 105 && testsJson.files.length === 186 &&
-    swJs.includes('CACHE_VERSION = "v57-20261119"') && !swJs.includes("v19-20261116") &&
+    swJs.includes('CACHE_VERSION = "v59-20261119"') && !swJs.includes("v19-20261116") &&
     noV17.length === 0,
     "files.json=" + filesJson.files.length + " (ky vong 105) · tests.json=" + testsJson.files.length +
-    " (ky vong 186) · sw.js v57-20261119: " + swJs.includes('CACHE_VERSION = "v57-20261119"') +
+    " (ky vong 186) · sw.js v59-20261119: " + swJs.includes('CACHE_VERSION = "v59-20261119"') +
     " · file exp con sot v17: " + (noV17.join(",") || "khong"), performance.now() - t);
   t = performance.now();
   const r = sh("node --check " + SITE + "/app.js && node --check " + SITE + "/worker.js && node --check " + SITE + "/worker-pool.js", EXP);

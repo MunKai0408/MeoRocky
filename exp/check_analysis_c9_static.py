@@ -4,7 +4,7 @@ tu dong 1 khi RAM thiet bi <= 4 GB, luu localStorage) + sua cau sai ve
 song song (pool chay song song THAT: moi worker 1 thread he dieu hanh
 that; chi ben trong 1 worker thi Python tuan tu vi Pyodide khong co
 pthreads). Manifest (files.json 110, tests.json 194) sau phan D; sw.js
-CACHE_VERSION v57-20261119; khong them file site nao.
+CACHE_VERSION v59-20261119; khong them file site nao.
 In JSON {"fails": [...]}.
 """
 import json
@@ -102,8 +102,8 @@ if len(tests) != 194:
     fails.append("tests.json co %d file, ky vong 194" % len(tests))
 
 # 6. sw.js CACHE_VERSION v19.
-if 'CACHE_VERSION = "v57-20261119"' not in sw:
-    fails.append("sw.js CACHE_VERSION khong phai v57-20261119")
+if 'CACHE_VERSION = "v59-20261119"' not in sw:
+    fails.append("sw.js CACHE_VERSION khong phai v59-20261119")
 if 'CACHE_VERSION = "v13-20261116"' in sw:
     fails.append("sw.js van con CACHE_VERSION v13")
 
