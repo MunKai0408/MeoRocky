@@ -97,7 +97,7 @@ const fzstdLicense = fs.readFileSync(SITE + "/fzstd/LICENSE", "utf8");
     licenseMIT: fzstdLicense.startsWith("MIT License") && fzstdLicense.includes("Copyright (c) 2020 Arjun Barrett"),
     licenseNote: fs.existsSync(SITE + "/fzstd/README.md") && /MIT/.test(fs.readFileSync(SITE + "/fzstd/README.md", "utf8")) &&
       /101arrowz\/fzstd/.test(fs.readFileSync(SITE + "/fzstd/README.md", "utf8")),
-    swVersionV48: ver === "v55-20261118",
+    swVersionV48: ver === "v56-20261119",
     swPrecacheFzstd: listed.includes("fzstd/index.mjs"),
     swPrecacheCount130: listed.length === 130,
     workerDynamicImport: /await import\("\.\/fzstd\/index\.mjs"\)/.test(workerSrc),
@@ -123,7 +123,7 @@ const fzstdLicense = fs.readFileSync(SITE + "/fzstd/LICENSE", "utf8");
   rec("static_fzstd_v9_zstd_markers", missing.length === 0,
     "node --check OK: worker.js, sw.js, fzstd/index.mjs" + (bad.length ? " | LỖI: " + bad.join(", ") : "") +
     "; fzstd/index.mjs=24407B, export decompress, LICENSE MIT © 2020 Arjun Barrett + README ghi công 101arrowz/fzstd; " +
-    "CACHE_VERSION=" + ver + " (cần v55-20261118); precache có fzstd/index.mjs=" + listed.includes("fzstd/index.mjs") +
+    "CACHE_VERSION=" + ver + " (cần v56-20261119); precache có fzstd/index.mjs=" + listed.includes("fzstd/index.mjs") +
     " (tổng " + listed.length + " mục, cần 130); worker.js dynamic import fzstd + globalThis.pb3_zstd_decompress + fallback null khi lỗi; " +
     "sdk/unity.py: " + Object.entries(checks).map(([k, v]) => k + "=" + v).join(", ") +
     (missing.length ? " | THIẾU: " + missing.join(", ") : ""),

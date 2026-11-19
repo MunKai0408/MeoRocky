@@ -85,7 +85,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     else detail = "format_probe.py stdlib-only + Python 3.9 + không gọi mạng " +
       "+ ENGINE_SUPPORT trung thực (mọi engine có unsupported, unknown " +
       "supported rỗng) + files.json=105 / tests.json=186 + sw.js precache " +
-      "sdk/format_probe.py + CACHE_VERSION v55-20261118 + bridge format_probe " +
+      "sdk/format_probe.py + CACHE_VERSION v56-20261119 + bridge format_probe " +
       "+ UI đủ nút probe/input riêng/tải JSON + gợi ý probe khi lỗi " +
       "E_UNSUPPORTED_FORMAT + tiếng Việt đủ dấu";
   } catch (e) { ok = false; detail = "không đọc được JSON: " + (r.stdout || "") + (r.stderr || ""); }

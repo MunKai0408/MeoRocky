@@ -865,6 +865,198 @@
     </div>
     <div id="repack-result"></div>
 
+    <div id="mod-server-section">
+      <h3>🖥️ Ép trên máy chủ (GitHub Actions) — đường chính</h3>
+      <p class="note">Cổng kiểm tra + ép + repack làm sập tab Safari? Ép ngay trong web này — việc nặng chạy ngầm trên máy chủ GitHub, xong thì tải kết quả về, không cần mở tab khác. Nhập tên game + 3 link Drive (IPA gốc, JSON gốc, JSON bản dịch), bấm “Ép trên máy chủ”, rồi bấm “Kiểm tra trạng thái” để tải kết quả. Cả 3 file phải để trên Google Drive ở chế độ "ai có link cũng xem được". Chưa có file trên Drive? Tải lên từ web ở mục Colab dự phòng bên dưới (mục “Tải file lên Drive từ web”). <a href="https://github.com/MunKai0408/MeoRocky/blob/main/docs/MOD_COLAB_ACTIONS.md" target="_blank" rel="noopener">Hướng dẫn chi tiết</a> — token GitHub chỉ lưu trong trình duyệt này, chỉ gửi tới api.github.com. IPA đã repack &gt;400 MB thì Actions không trả được qua artifact (giới hạn miễn phí 500 MB) — khi đó dùng đường Colab dự phòng bên dưới.</p>
+      <div class="row">
+        <label style="flex:1;min-width:200px">Tên game:
+          <input type="text" id="mod-server-game-name" placeholder="vd: 9 Kings-1.0.6" autocomplete="off">
+        </label>
+      </div>
+      <div class="row">
+        <label style="flex:1;min-width:220px">Drive file ID hoặc link Drive của file IPA gốc:
+          <input type="text" id="mod-server-drive-ipa" placeholder="vd: 1uomLfXLz... hoặc dán nguyên link Drive" autocomplete="off">
+        </label>
+      </div>
+      <div class="row">
+        <label style="flex:1;min-width:220px">Drive file ID hoặc link Drive của file JSON gốc:
+          <input type="text" id="mod-server-drive-original" placeholder="vd: en.json trên Drive" autocomplete="off">
+        </label>
+      </div>
+      <div class="row">
+        <label style="flex:1;min-width:220px">Drive file ID hoặc link Drive của file JSON bản dịch:
+          <input type="text" id="mod-server-drive-translation" placeholder="vd: translated.vi.json trên Drive" autocomplete="off">
+        </label>
+      </div>
+      <div class="row">
+        <label>Ngôn ngữ đích của bản dịch:
+          <select id="mod-server-to-lang" style="width:auto">
+            <option value="vi" selected>Tiếng Việt</option>
+            <option value="en">Tiếng Anh</option>
+            <option value="de">Tiếng Đức</option>
+            <option value="fr">Tiếng Pháp</option>
+            <option value="es">Tiếng Tây Ban Nha</option>
+            <option value="pt">Tiếng Bồ Đào Nha</option>
+            <option value="it">Tiếng Ý</option>
+            <option value="nl">Tiếng Hà Lan</option>
+            <option value="id">Tiếng Indonesia</option>
+            <option value="ms">Tiếng Malaysia</option>
+            <option value="tr">Tiếng Thổ Nhĩ Kỳ</option>
+            <option value="pl">Tiếng Ba Lan</option>
+            <option value="cs">Tiếng Séc</option>
+            <option value="sk">Tiếng Slovakia</option>
+            <option value="hu">Tiếng Hungary</option>
+            <option value="sv">Tiếng Thụy Điển</option>
+            <option value="da">Tiếng Đan Mạch</option>
+            <option value="no">Tiếng Na Uy</option>
+            <option value="fi">Tiếng Phần Lan</option>
+          </select>
+        </label>
+        <label>Chế độ ép:
+          <select id="mod-server-apply-mode" style="width:auto">
+            <option value="REBUILD_SECTION" selected>REBUILD_SECTION</option>
+            <option value="PATCH_INPLACE">PATCH_INPLACE</option>
+          </select>
+        </label>
+        <label>Font kiểm:
+          <select id="mod-server-display-font" style="width:auto">
+            <option value="donor" selected>Font đi kèm Be Vietnam Pro</option>
+            <option value="scan">Quét font trong file gốc</option>
+          </select>
+        </label>
+        <label>Engine:
+          <select id="mod-server-engine" style="width:auto">
+            <option value="unity" selected>Unity</option>
+            <option value="unreal" disabled>Unreal Engine (sắp có)</option>
+            <option value="native-ios" disabled>Native iOS (sắp có)</option>
+          </select>
+        </label>
+      </div>
+      <div class="row">
+        <label><input type="checkbox" id="mod-server-repack" checked> Đóng gói lại IPA sau khi ép</label>
+        <label><input type="checkbox" id="mod-server-gate-only"> Chỉ chạy cổng, không ép</label>
+      </div>
+      <div class="row">
+        <label style="flex:1;min-width:220px">GitHub token (cần quyền Actions — Read and write):
+          <input type="password" id="mod-server-gh-token" placeholder="ghp_... / github_pat_..." autocomplete="off">
+        </label>
+        <button id="btn-mod-server-save-token" class="secondary">Lưu token</button>
+        <button id="btn-mod-server-clear-token" class="secondary">Xóa token</button>
+      </div>
+      <p class="note" id="mod-server-token-state">Chưa lưu token.</p>
+      <div class="row">
+        <button id="btn-mod-server-run">▶️ Ép trên máy chủ</button>
+        <button id="btn-mod-server-refresh" class="secondary">Kiểm tra trạng thái</button>
+        <button id="btn-mod-server-import-gate" class="secondary">📥 Nhập báo cáo cổng…</button>
+        <input type="file" id="mod-server-import-gate-file" accept=".json,application/json" class="visually-hidden">
+      </div>
+      <div id="mod-server-status"></div>
+      <div id="mod-server-results"></div>
+    </div>
+
+    <div id="mod-colab-section">
+      <h3>☁️ Ép trên Google Colab — đường dự phòng (khi IPA đã repack &gt;400 MB)</h3>
+      <p class="note">Chỉ dùng khi đường Actions không trả được IPA đã repack (output &gt;400 MB — Actions giới hạn artifact miễn phí 500 MB). Colab lưu kết quả về Drive nên không giới hạn này — nhưng phải mở tab Colab và bấm 2 lần (cho phép Drive, rồi Run All Ctrl+F9). Bố cục và luồng y như mục Colab ở tab Trích xuất: tạo job JSON → mở Colab → kiểm tra trạng thái → nhập kết quả về tab Mod. <a href="https://github.com/MunKai0408/MeoRocky/blob/main/docs/MOD_COLAB_ACTIONS.md" target="_blank" rel="noopener">Hướng dẫn chi tiết</a> — Colab không tự chạy khi mở link: trong tab Colab bạn vẫn bấm 2 lần (cho phép Drive, rồi Run All Ctrl+F9).</p>
+      <div class="row">
+        <label style="flex:1;min-width:200px">Tên game:
+          <input type="text" id="mod-colab-game-name" placeholder="vd: 9 Kings" autocomplete="off">
+        </label>
+        <label style="flex:1;min-width:220px">Drive file ID hoặc link Drive của file IPA gốc:
+          <input type="text" id="mod-colab-drive-ipa" placeholder="vd: 1uomLfXLz... hoặc dán nguyên link Drive" autocomplete="off">
+        </label>
+      </div>
+      <div class="row">
+        <label style="flex:1;min-width:220px">Drive file ID hoặc link Drive của file JSON gốc:
+          <input type="text" id="mod-colab-drive-original" placeholder="vd: en.json trên Drive" autocomplete="off">
+        </label>
+        <label style="flex:1;min-width:220px">Drive file ID hoặc link Drive của file JSON bản dịch:
+          <input type="text" id="mod-colab-drive-translation" placeholder="vd: translated.vi.json trên Drive" autocomplete="off">
+        </label>
+      </div>
+      <div class="row">
+        <label style="flex:1;min-width:220px">Tên file .ipa (tùy chọn, để Colab tìm theo tên):
+          <input type="text" id="mod-colab-ipa-name" placeholder="vd: 9 Kings_1.0.6.ipa" autocomplete="off">
+        </label>
+      </div>
+      <div class="row">
+        <label>Ngôn ngữ đích:
+          <select id="mod-colab-to-lang" style="width:auto">
+            <option value="vi" selected>Tiếng Việt (vi)</option>
+            <option value="en">Tiếng Anh (en)</option>
+            <option value="de">Tiếng Đức (de)</option>
+            <option value="fr">Tiếng Pháp (fr)</option>
+            <option value="es">Tiếng Tây Ban Nha (es)</option>
+            <option value="it">Tiếng Ý (it)</option>
+            <option value="pt">Tiếng Bồ Đào Nha (pt)</option>
+            <option value="ru">Tiếng Nga (ru)</option>
+            <option value="ja">Tiếng Nhật (ja)</option>
+            <option value="ko">Tiếng Hàn (ko)</option>
+            <option value="zh">Tiếng Trung (zh)</option>
+          </select>
+        </label>
+        <label>Chế độ ép:
+          <select id="mod-colab-apply-mode" style="width:auto">
+            <option value="REBUILD_SECTION" selected>REBUILD_SECTION</option>
+            <option value="PATCH_INPLACE">PATCH_INPLACE</option>
+          </select>
+        </label>
+        <label>Font kiểm:
+          <select id="mod-colab-display-font" style="width:auto">
+            <option value="donor" selected>Font đi kèm Be Vietnam Pro</option>
+            <option value="scan">Quét font trong file gốc</option>
+          </select>
+        </label>
+        <label>Engine:
+          <select id="mod-colab-engine" style="width:auto">
+            <option value="unity" selected>Unity</option>
+            <option value="unreal" disabled>Unreal Engine (sắp có)</option>
+            <option value="native-ios" disabled>Native iOS (sắp có)</option>
+          </select>
+        </label>
+      </div>
+      <div class="row">
+        <label><input type="checkbox" id="mod-colab-repack" checked> Đóng gói lại IPA sau khi ép</label>
+        <label><input type="checkbox" id="mod-colab-gate-only"> Chỉ chạy cổng, không ép</label>
+      </div>
+      <div class="row">
+        <button id="btn-mod-colab-copy-job">📋 Sao chép job</button>
+        <button id="btn-mod-colab-download-job" class="secondary">⬇️ Tải job.json</button>
+        <button id="btn-mod-colab-open">☁️ Mở Colab</button>
+        <button id="btn-mod-colab-import-results" class="secondary">📥 Nhập kết quả…</button>
+        <input type="file" id="mod-colab-import-file" accept=".json,application/json" multiple class="visually-hidden">
+      </div>
+      <p class="note" id="mod-colab-status">Chưa có job — điền 3 link Drive + tên game rồi bấm 'Mở Colab'.</p>
+      <div id="mod-colab-results"></div>
+      <details>
+        <summary>Tải file lên Drive từ web (cần cài đặt OAuth 1 lần)</summary>
+        <p class="note">Chưa có file trên Drive? Tải file .ipa / .json từ web lên Drive bằng Drive API (resumable, 8 MB/chunk — tắt tab vẫn tiếp tục được). Cần Google OAuth client ID (Web application, origin https://munkai0408.github.io) — xem hướng dẫn trong <a href="https://github.com/MunKai0408/MeoRocky/blob/main/docs/COLAB_HANDOFF.md" target="_blank" rel="noopener">docs/COLAB_HANDOFF.md</a>. Token Google chỉ giữ trong bộ nhớ, không lưu lại. <b>IPA local dùng đường này:</b> chọn file trên máy rồi tải lên Drive — xong thì link Drive tự điền vào các ô bên trên, chạy job tiếp mà không rời khỏi web (trừ lúc mở Colab ở đường dự phòng).</p>
+        <div class="row">
+          <label style="flex:1;min-width:220px">Google OAuth client ID (Web application):
+            <input type="text" id="mod-colab-oauth-client-id" placeholder="vd: 123456789012-abc.apps.googleusercontent.com" autocomplete="off">
+          </label>
+          <button id="btn-mod-colab-save-client-id" class="secondary">Lưu client ID</button>
+        </div>
+        <div class="row">
+          <button id="btn-mod-colab-pick-ipa" class="secondary">📁 Chọn file .ipa…</button>
+          <button id="btn-mod-colab-upload-ipa" class="secondary">⬆️ Tải IPA lên Drive</button>
+          <input type="file" id="mod-colab-ipa-file" accept=".ipa,application/octet-stream" class="visually-hidden">
+        </div>
+        <div class="row">
+          <button id="btn-mod-colab-pick-original" class="secondary">📁 Chọn file JSON gốc…</button>
+          <button id="btn-mod-colab-upload-original" class="secondary">⬆️ Tải JSON gốc lên Drive</button>
+          <input type="file" id="mod-colab-original-file" accept=".json,application/json" class="visually-hidden">
+        </div>
+        <div class="row">
+          <button id="btn-mod-colab-pick-translation" class="secondary">📁 Chọn file JSON bản dịch…</button>
+          <button id="btn-mod-colab-upload-translation" class="secondary">⬆️ Tải bản dịch lên Drive</button>
+          <input type="file" id="mod-colab-translation-file" accept=".json,application/json" class="visually-hidden">
+        </div>
+        <div class="row">
+          <button id="btn-mod-colab-check-results" class="secondary">🔄 Kiểm tra kết quả</button>
+        </div>
+      </details>
+    </div>
+
     <details id="mod-advanced">
       <summary>Nâng cao</summary>
       <h3>Thay 1 chuỗi trong TextAsset</h3>

@@ -1,0 +1,273 @@
+# Cổng kiểm tra + ép bản dịch + repack IPA lớn trên máy chủ GitHub (chạy ngầm).
+#
+# Mục đích: cổng kiểm tra + ép file + repack IPA trên tab Mod làm sập tab
+# Safari trên iPhone (tab chỉ ~1–1,5 GB RAM) nên không chạy được trên web
+# với IPA lớn; Colab thì phải mở notebook tay. Workflow này chạy cả 3 bước
+# NGAY TRONG giao diện web MeoRocky: user nhập tên game + 3 link Drive
+# (IPA gốc, JSON gốc, JSON bản dịch) vào tab Mod, web gọi API dispatch,
+# máy chủ GitHub tải 3 file từ Drive về, chạy đúng code SDK của repo
+# (sdk.mod_job: gate -> apply -> repack -> kiểm lại pressed), trả báo cáo
+# cổng + file đã ép qua artifact.
+#
+# CHỈ chạy bằng workflow_dispatch (không chạy khi push/PR — tránh chạy
+# lung tung tốn phút Actions). Workflow KHÔNG commit gì vào repo, KHÔNG in
+# token hay nội dung file ra log.
+#
+# Điều kiện để chạy được:
+#   - Cả 3 file trên Drive phải ở chế độ "Bất kỳ ai có đường liên kết cũng
+#     xem được" — runner tải bằng link công khai qua gdown, không có tài
+#     khoản Google nào trên runner. Chưa chia sẻ thì bước tải fail với
+#     thông báo rõ ràng (file tải về không phải ZIP/JSON).
+#   - Token GitHub dùng để dispatch cần quyền Actions (Read and write)
+#     trên repo này (xem docs/MOD_COLAB_ACTIONS.md).
+#   - Link công khai của Drive có giới hạn lượt tải: file bị tải quá
+#     nhiều gần đây thì Google chặn ("Too many users...") tối đa 24 giờ —
+#     bước tải fail với thông báo riêng, chỉ cần chờ rồi bấm chạy lại.
+#
+# Giới hạn đã biết (đo thật, xem docs/MOD_COLAB_ACTIONS.md):
+#   - Runner ubuntu-latest: 16 GB RAM, 14 GB disk — đủ cho IPA ~2 GB.
+#   - Artifact miễn phí chỉ 500 MB: workflow chỉ upload artifact theo
+#     summary["artifact_plan"] (ngân sách 400 MB, chừa biên cho nén zip):
+#     gate-report.json + summary.json LUÔN được trả; applied.zip và IPA
+#     đã repack chỉ trả khi vừa ngân sách. IPA repack >400 MB (vd PB3
+#     ~482 MB, DST 1,69 GB) KHÔNG trả qua artifact được — lấy qua đường
+#     Colab (Drive, không giới hạn 500 MB); summary.json ghi rõ file nào
+#     bị loại + lý do, web hiện cảnh báo đó chứ không im lặng.
+#   - Cổng CHƯA ĐẠT là KẾT QUẢ ĐÚNG (không phải lỗi): script thoát 0,
+#     workflow xanh, trả gate-report.json để user sửa bản dịch rồi chạy
+#     lại — không ép, không repack khi cổng chưa đạt.
+#   - Font: mặc định dùng font Be Vietnam Pro đi kèm trong repo
+#     (display_font=donor, giống chế độ "Font đi kèm" trên web) vì đã đo
+#     thật: IPA 9K không có font đọc được nào nên chế độ quét (scan) luôn
+#     FAIL check font dù các check khác đều ĐẠT.
+#   - Timeout 90 phút: tải 2 GB từ Drive + cổng + ép + repack.
+name: Mod IPA lon tren may chu (cong + ep + repack)
+
+on:
+  workflow_dispatch:
+    inputs:
+      file_id:
+        description: "Drive file ID của file IPA gốc (đoạn giữa file/d/ và /view trong link Drive)"
+        required: true
+        type: string
+      original_file_id:
+        description: "Drive file ID của file JSON gốc (vd en.json đã trích xuất)"
+        required: true
+        type: string
+      translation_file_id:
+        description: "Drive file ID của file JSON bản dịch (vd translated.vi.json)"
+        required: true
+        type: string
+      game_name:
+        description: "Tên game (dùng đặt tên artifact, vd: 9 Kings-1.0.6)"
+        required: true
+        type: string
+      target_lang:
+        description: "Ngôn ngữ đích của bản dịch (vd: vi)"
+        required: false
+        default: "vi"
+        type: string
+      apply_mode:
+        description: "Chế độ ép (REBUILD_SECTION mặc định, PATCH_INPLACE khi vừa thì vá tại chỗ)"
+        required: false
+        default: "REBUILD_SECTION"
+        type: choice
+        options:
+          - REBUILD_SECTION
+          - PATCH_INPLACE
+      repack:
+        description: "Đóng gói lại IPA sau khi ép (tắt khi chỉ cần file .assets đã ép)"
+        required: false
+        default: true
+        type: boolean
+      gate_only:
+        description: "Chỉ chạy cổng kiểm tra, không ép (để xem báo cáo trước)"
+        required: false
+        default: false
+        type: boolean
+      display_font:
+        description: "Font kiểm độ phủ (donor: font Be Vietnam Pro đi kèm — mặc định; scan: quét font trong file gốc)"
+        required: false
+        default: "donor"
+        type: choice
+        options:
+          - donor
+          - scan
+      engine:
+        description: "Engine game (unity — duy nhất hiện có; Unreal/Native iOS sẽ thêm sau)"
+        required: false
+        default: "unity"
+        type: choice
+        options:
+          - unity
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  mod:
+    name: cong + ep + repack IPA lon
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12 (CI — setup-python bỏ 3.9 trên Ubuntu 26.04)
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install lz4 + gdown (SDK cần lz4; tải Drive cần gdown)
+        run: pip install lz4 gdown
+
+      - name: Chuẩn bị tên artifact (slug từ tên game)
+        run: |
+          set -euo pipefail
+          SLUG=$(printf '%s' "${{ inputs.game_name }}" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$//')
+          [ -n "$SLUG" ] || SLUG=game
+          echo "SLUG=$SLUG" >> "$GITHUB_ENV"
+          echo "slug: $SLUG"
+
+      - name: Tải IPA + JSON gốc + JSON bản dịch từ Drive (link công khai)
+        run: |
+          set -euo pipefail
+          T0=$(date +%s)
+          # gdown 5+/6+ khong con co --id (chi nhan URL hoac ID o vi tri
+          # tham so) — dung dang URL uc?id= de chay duoc moi ban gdown.
+          # gdown ghi log ra download.log: neu that bai thi doc log de
+          # phan biet 2 nguyen nhan (sai ID/chua chia se vs het quota tai
+          # cong khai cua Drive — "Too many users" — file van dung, chi
+          # can cho toi da 24 gio roi bam chay lai).
+          for spec in "game.ipa:${{ inputs.file_id }}" "original.json:${{ inputs.original_file_id }}" "translation.json:${{ inputs.translation_file_id }}"; do
+            OUT="${spec%%:*}"; ID="${spec#*:}"
+            if ! gdown "https://drive.google.com/uc?id=${ID}" -O "$OUT" 2>&1 | tee -a download.log; then
+              if grep -qi "too many users" download.log; then
+                echo "::error::Drive gioi han luot tai cong khai cua file nay (\"Too many users have viewed or downloaded this file recently\") — file van dung, chi can cho toi da 24 gio roi bam chay lai (xem docs/MOD_COLAB_ACTIONS.md muc Gioi han)."
+              else
+                echo "::error::Tai file $OUT that bai — kiem tra file ID va che do chia se \"ai co link cung xem duoc\" (xem log gdown o tren)."
+              fi
+              exit 1
+            fi
+          done
+          T1=$(date +%s)
+          echo "DOWNLOAD_SECONDS=$((T1 - T0))" >> "$GITHUB_ENV"
+          python3 - <<'EOF'
+          import hashlib, json, os
+          def md5(p):
+              h = hashlib.md5()
+              with open(p, "rb") as f:
+                  for chunk in iter(lambda: f.read(1 << 20), b""):
+                      h.update(chunk)
+              return h.hexdigest()
+          if not os.path.isfile("game.ipa") or os.path.getsize("game.ipa") == 0:
+              raise SystemExit("TAI FILE THAT BAI: game.ipa rong hoac khong co — kiem tra lai file ID.")
+          with open("game.ipa", "rb") as f:
+              head = f.read(4)
+          if head != b"PK\x03\x04":
+              raise SystemExit("FILE TAI VE KHONG PHAI IPA/ZIP (4 byte dau: %r) — file chua o che do 'ai co link cung xem duoc' hoac sai file ID." % head)
+          print("IPA: %d byte, md5=%s" % (os.path.getsize("game.ipa"), md5("game.ipa")))
+          for name in ("original.json", "translation.json"):
+              if not os.path.isfile(name) or os.path.getsize(name) == 0:
+                  raise SystemExit("TAI FILE THAT BAI: %s rong hoac khong co — kiem tra lai file ID." % name)
+              with open(name, encoding="utf-8") as f:
+                  data = json.load(f)
+              if not isinstance(data, dict) or not data:
+                  raise SystemExit("FILE %s khong phai JSON object khong rong (key -> chuoi) — kiem tra lai file." % name)
+              print("%s: %d key, md5=%s" % (name, len(data), md5(name)))
+          EOF
+
+      - name: Chạy cổng + ép + repack bằng code SDK của repo (sdk.mod_job)
+        env:
+          DOWNLOAD_SECONDS: ${{ env.DOWNLOAD_SECONDS }}
+        run: |
+          set -euo pipefail
+          REPACK_FLAG="--repack"
+          if [ "${{ inputs.repack }}" != "true" ]; then REPACK_FLAG="--no-repack"; fi
+          GATE_FLAG=""
+          if [ "${{ inputs.gate_only }}" = "true" ]; then GATE_FLAG="--gate-only"; fi
+          python3 .github/scripts/mod_large.py --ipa game.ipa \
+            --original original.json --translation translation.json \
+            --game "${{ inputs.game_name }}" \
+            --file-id "${{ inputs.file_id }}" \
+            --original-file-id "${{ inputs.original_file_id }}" \
+            --translation-file-id "${{ inputs.translation_file_id }}" \
+            --target-lang "${{ inputs.target_lang }}" \
+            --apply-mode "${{ inputs.apply_mode }}" \
+            $REPACK_FLAG $GATE_FLAG \
+            --display-font "${{ inputs.display_font }}" \
+            --engine "${{ inputs.engine }}" \
+            --out out \
+            --download-seconds "${DOWNLOAD_SECONDS:-0}"
+
+      - name: Tính artifact nào vừa ngân sách 400 MB (theo summary.json)
+        if: always()
+        run: |
+          python3 - <<'EOF'
+          import json, os
+          inc_repack = "false"
+          inc_applied = "false"
+          try:
+              s = json.load(open("out/summary.json", encoding="utf-8"))
+              names = {e["name"] for e in
+                       (s.get("artifact_plan") or {}).get("included", [])}
+              if s.get("repacked_name") in names:
+                  inc_repack = "true"
+              if "applied.zip" in names:
+                  inc_applied = "true"
+              for e in (s.get("artifact_plan") or {}).get("excluded", []):
+                  print("KHONG LEN ARTIFACT: %s (%.1f MB) — %s"
+                        % (e["name"], e["bytes"] / 1048576.0, e["reason"]))
+          except FileNotFoundError:
+              print("Khong co out/summary.json — job loi truoc khi co ket qua.")
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as f:
+              f.write("INCLUDE_REPACK=%s\n" % inc_repack)
+              f.write("INCLUDE_APPLIED=%s\n" % inc_applied)
+          print("INCLUDE_REPACK=%s INCLUDE_APPLIED=%s"
+                % (inc_repack, inc_applied))
+          EOF
+
+      - name: Upload artifact bao cao cong (gate-report.json)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: meorocky-mod-${{ env.SLUG }}-gate-report
+          path: out/gate-report.json
+          if-no-files-found: ignore
+          retention-days: 30
+
+      - name: Upload artifact bao cao kiem lai pressed
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: meorocky-mod-${{ env.SLUG }}-pressed-gate-report
+          path: out/pressed-gate-report.json
+          if-no-files-found: ignore
+          retention-days: 30
+
+      - name: Upload artifact tom tat (summary.json)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: meorocky-mod-${{ env.SLUG }}-summary
+          path: out/summary.json
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload artifact cac don vi da ep (applied.zip)
+        if: always() && env.INCLUDE_APPLIED == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: meorocky-mod-${{ env.SLUG }}-applied
+          path: out/applied.zip
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload artifact IPA da repack (chi khi vua 400 MB)
+        if: always() && env.INCLUDE_REPACK == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: meorocky-mod-${{ env.SLUG }}-repacked-ipa
+          path: out/repack/*.ipa
+          if-no-files-found: error
+          retention-days: 30

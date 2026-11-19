@@ -15,6 +15,17 @@ Nguồn job trong notebook (theo thứ tự ưu tiên, xem `resolve_job`):
    Bước 1 (hành vi cũ, giữ nguyên).
 
 Chỉ thư viện chuẩn + core.errors. Python >= 3.9. Không gọi mạng.
+
+Hai loại job (trường `kind`, mặc định "extract" để job v1 cũ vẫn
+chạy):
+- "extract": trích locale (+ dịch) như trước.
+- "mod" (mới): cổng kiểm tra + ép bản dịch + repack IPA trên
+  Colab/Actions — input thêm original_file_id (JSON gốc trên Drive)
+  + translation_file_id (JSON bản dịch trên Drive), apply_mode,
+  repack, gate_only, display_font ("donor" mặc định — font Be Vietnam
+  Pro đi kèm, vì IPA 9K không có font đọc được nên quét luôn FAIL).
+  Chạy bằng `sdk.mod_job.run_mod_job` (dùng đúng gate.run_gate /
+  rebuild.apply_rebuild / repack của SDK).
 """
 from __future__ import annotations
 
@@ -39,6 +50,15 @@ CREATED_BY = "MeoRocky web"
 # Locale notebook hỗ trợ trích (Bước 2 gọi bridge.extract với
 # locales=['en', 'zh']); locale khác fail-closed với thông báo rõ.
 SUPPORTED_LOCALES = ("en", "zh")
+
+# Loại job handoff (trường `kind`, mặc định "extract").
+JOB_KINDS = ("extract", "mod")
+# Engine cua Mod job (truong `engine`, mac dinh "unity"). Danh sach
+# nay phai khop mod_job.ENGINES (co test khoa) — them engine moi
+# (Unreal, Native iOS) thi dang ky ca 2 cho.
+JOB_ENGINES = ("unity",)
+# Chế độ ép của Mod job (đúng `mode` của rebuild.apply_rebuild).
+APPLY_MODES = ("REBUILD_SECTION", "PATCH_INPLACE")
 
 _ID_RE = re.compile(r"^[A-Za-z0-9_-]{10,}$")
 _BARE_ID_RE = re.compile(r"^[A-Za-z0-9_-]{25,}$")
@@ -115,13 +135,23 @@ def _utc_now_iso():
 def validate_job(data):
     """Kiểm tra + chuẩn hóa job (dict) -> bản copy đã điền mặc định.
 
-    Bắt buộc: game (chuỗi không rỗng), drive_file_id (ID/link hợp lệ,
-    chuẩn hóa về ID trần). Tùy chọn: locales (mặc định ["en", "zh"],
-    chỉ nhận en/zh), from_lang ("en"), to_lang ("vi"), translate
-    (True), worker_url ("" — nếu có phải https://), game_file_name
-    (""), job_id (tự sinh từ game nếu thiếu), version (phải bằng 1).
-    Trường lạ được giữ nguyên (tương thích xuôi). Lỗi -> PB3Error
-    E_CONFIG_INVALID.
+    Bắt buộc chung: game (chuỗi không rỗng), drive_file_id (ID/link
+    hợp lệ, chuẩn hóa về ID trần), version (phải bằng 1), kind
+    ("extract" mặc định | "mod").
+    kind "extract": locales (mặc định ["en", "zh"], chỉ nhận en/zh),
+    from_lang ("en"), to_lang ("vi"), translate (True), worker_url
+    ("" — nếu có phải https://), game_file_name ("").
+    kind "mod": thêm original_file_id + translation_file_id (ID/link
+    Drive hợp lệ, bắt buộc), apply_mode ("REBUILD_SECTION" mặc định |
+    "PATCH_INPLACE"), repack (True), gate_only (False), display_font
+    ("donor" mặc định | "scan"); locales/ translate/worker_url không
+    dùng cho mod (chuẩn hóa về []/False/""). engine ("unity" mặc định
+    — duy nhất hiện có; tên lạ fail-closed, xem mod_job.ENGINES).
+    display_font "donor" = cổng kiểm font bằng font Be Vietnam Pro đi
+    kèm trong repo (giống chế độ "Font đi kèm" trên web); "scan" =
+    quét font trong file gốc như mặc định web. Mặc định là "donor"
+    vì đã đo thật: IPA 9K không có font đọc được nào nên chế độ quét
+    luôn FAIL check (d) dù các check khác đều ĐẠT.
     """
     if not isinstance(data, dict):
         raise _err("E_CONFIG_INVALID", "Job phải là một object JSON.",
@@ -131,6 +161,12 @@ def validate_job(data):
                    "Phiên bản job không hỗ trợ: %r (cần version %d)."
                    % (data.get("version"), JOB_SCHEMA_VERSION),
                    "Tạo lại job từ web bản mới nhất.")
+    kind = str(data.get("kind") or "extract").strip().lower()
+    if kind not in JOB_KINDS:
+        raise _err("E_CONFIG_INVALID",
+                   "Loại job không hỗ trợ: %r (chỉ có %s)."
+                   % (kind, ", ".join(JOB_KINDS)),
+                   "Tạo lại job từ web bản mới nhất.")
     game = str(data.get("game") or "").strip()
     if not game:
         raise _err("E_CONFIG_INVALID", "Job thiếu tên game.",
@@ -139,18 +175,6 @@ def validate_job(data):
         raise _err("E_CONFIG_INVALID", "Tên game quá dài (tối đa 120 ký tự).",
                    "Rút ngắn tên game rồi tạo lại job.")
     file_id = parse_drive_file_id(data.get("drive_file_id") or "")
-    locales = data.get("locales", ["en", "zh"])
-    if isinstance(locales, str):
-        locales = [s.strip() for s in locales.split(",") if s.strip()]
-    if not isinstance(locales, list) or not locales:
-        raise _err("E_CONFIG_INVALID", "Job thiếu danh sách locale.",
-                   "Chọn ít nhất một locale (en, zh).")
-    for loc in locales:
-        if loc not in SUPPORTED_LOCALES:
-            raise _err("E_CONFIG_INVALID",
-                       "Locale chưa hỗ trợ trong job Colab: %r (chỉ có %s)."
-                       % (loc, ", ".join(SUPPORTED_LOCALES)),
-                       "Chọn lại locale en và/hoặc zh.")
     from_lang = str(data.get("from_lang") or "en").strip().lower()
     to_lang = str(data.get("to_lang") or "vi").strip().lower()
     for label, code in (("ngôn ngữ nguồn", from_lang),
@@ -163,6 +187,82 @@ def validate_job(data):
         raise _err("E_CONFIG_INVALID",
                    "Ngôn ngữ nguồn và đích trùng nhau: %r." % from_lang,
                    "Chọn ngôn ngữ đích khác nguồn.")
+    job_id = str(data.get("job_id") or "").strip()
+    if job_id and not _JOB_ID_RE.match(job_id):
+        raise _err("E_CONFIG_INVALID",
+                   "job_id không hợp lệ: %r." % job_id[:40],
+                   "Để trống job_id để web tự sinh.")
+    job = dict(data)  # giữ trường lạ để tương thích xuôi
+    base = {
+        "version": JOB_SCHEMA_VERSION,
+        "kind": kind,
+        "job_id": job_id or new_job_id(game),
+        "game": game,
+        "drive_file_id": file_id,
+        "game_file_name": str(data.get("game_file_name") or "").strip(),
+        "from_lang": from_lang,
+        "to_lang": to_lang,
+        "created_at": str(data.get("created_at") or _utc_now_iso()),
+        "created_by": str(data.get("created_by") or CREATED_BY),
+    }
+    if kind == "mod":
+        original_id = parse_drive_file_id(
+            data.get("original_file_id") or "")
+        translation_id = parse_drive_file_id(
+            data.get("translation_file_id") or "")
+        apply_mode = str(data.get("apply_mode")
+                         or "REBUILD_SECTION").strip().upper()
+        if apply_mode not in APPLY_MODES:
+            raise _err("E_CONFIG_INVALID",
+                       "Chế độ ép không hỗ trợ: %r (chỉ có %s)."
+                       % (apply_mode, ", ".join(APPLY_MODES)),
+                       "Chọn REBUILD_SECTION hoặc PATCH_INPLACE.")
+        repack = data.get("repack", True)
+        gate_only = data.get("gate_only", False)
+        for label, val in (("repack", repack), ("gate_only", gate_only)):
+            if not isinstance(val, bool):
+                raise _err("E_CONFIG_INVALID",
+                           "Trường '%s' phải là true/false." % label,
+                           "Tạo lại job từ web.")
+        display_font = str(data.get("display_font")
+                           or "donor").strip().lower()
+        if display_font not in ("donor", "scan"):
+            raise _err("E_CONFIG_INVALID",
+                       "Chế độ font không hỗ trợ: %r (chỉ có donor, scan)."
+                       % display_font,
+                       "Chọn donor (font đi kèm) hoặc scan (quét trong file).")
+        engine = str(data.get("engine") or "unity").strip().lower()
+        if engine not in JOB_ENGINES:
+            raise _err("E_CONFIG_INVALID",
+                       "Engine không hỗ trợ: %r (hiện chỉ có %s)."
+                       % (engine, ", ".join(JOB_ENGINES)),
+                       "Dùng engine unity (Unreal/Native iOS sẽ thêm sau).")
+        base.update({
+            "original_file_id": original_id,
+            "translation_file_id": translation_id,
+            "apply_mode": apply_mode,
+            "repack": repack,
+            "gate_only": gate_only,
+            "display_font": display_font,
+            "engine": engine,
+            "locales": [],
+            "translate": False,
+            "worker_url": "",
+        })
+        job.update(base)
+        return job
+    locales = data.get("locales", ["en", "zh"])
+    if isinstance(locales, str):
+        locales = [s.strip() for s in locales.split(",") if s.strip()]
+    if not isinstance(locales, list) or not locales:
+        raise _err("E_CONFIG_INVALID", "Job thiếu danh sách locale.",
+                   "Chọn ít nhất một locale (en, zh).")
+    for loc in locales:
+        if loc not in SUPPORTED_LOCALES:
+            raise _err("E_CONFIG_INVALID",
+                       "Locale chưa hỗ trợ trong job Colab: %r (chỉ có %s)."
+                       % (loc, ", ".join(SUPPORTED_LOCALES)),
+                       "Chọn lại locale en và/hoặc zh.")
     translate = data.get("translate", True)
     if not isinstance(translate, bool):
         raise _err("E_CONFIG_INVALID", "Trường 'translate' phải là true/false.",
@@ -172,26 +272,12 @@ def validate_job(data):
         raise _err("E_CONFIG_INVALID",
                    "WORKER_URL phải bắt đầu bằng https.",
                    "Dán lại URL worker đầy đủ (gồm https, vd xxx.workers.dev).")
-    job_id = str(data.get("job_id") or "").strip()
-    if job_id and not _JOB_ID_RE.match(job_id):
-        raise _err("E_CONFIG_INVALID",
-                   "job_id không hợp lệ: %r." % job_id[:40],
-                   "Để trống job_id để web tự sinh.")
-    job = dict(data)  # giữ trường lạ để tương thích xuôi
-    job.update({
-        "version": JOB_SCHEMA_VERSION,
-        "job_id": job_id or new_job_id(game),
-        "game": game,
-        "drive_file_id": file_id,
-        "game_file_name": str(data.get("game_file_name") or "").strip(),
+    base.update({
         "locales": list(locales),
-        "from_lang": from_lang,
-        "to_lang": to_lang,
         "translate": translate,
         "worker_url": worker_url,
-        "created_at": str(data.get("created_at") or _utc_now_iso()),
-        "created_by": str(data.get("created_by") or CREATED_BY),
     })
+    job.update(base)
     return job
 
 
@@ -208,6 +294,41 @@ def build_job(game, drive_file_id, *, locales=("en", "zh"), from_lang="en",
         "to_lang": to_lang,
         "translate": translate,
         "worker_url": worker_url,
+        "game_file_name": game_file_name,
+    }
+    if job_id:
+        data["job_id"] = job_id
+    if created_at:
+        data["created_at"] = created_at
+    return validate_job(data)
+
+
+def build_mod_job(game, drive_file_id, original_file_id,
+                  translation_file_id, *, target_lang="vi",
+                  apply_mode="REBUILD_SECTION", repack=True,
+                  gate_only=False, display_font="donor",
+                  game_file_name="", job_id=None,
+                  created_at=None, engine="unity"):
+    """Tạo Mod job mới (dict đã validate). `drive_file_id` (IPA gốc),
+    `original_file_id` (JSON gốc), `translation_file_id` (JSON bản
+    dịch) đều nhận cả link Drive. Chạy: cổng kiểm tra -> ép -> repack
+    (trừ khi gate_only=True thì dừng sau cổng). display_font: "donor"
+    (font Be Vietnam Pro đi kèm, mặc định — IPA 9K không có font đọc
+    được nên chế độ quét luôn FAIL) hoặc "scan" (quét font trong file
+    gốc như mặc định web). engine: "unity" (duy nhất hiện có)."""
+    data = {
+        "version": JOB_SCHEMA_VERSION,
+        "kind": "mod",
+        "engine": engine,
+        "game": game,
+        "drive_file_id": drive_file_id,
+        "original_file_id": original_file_id,
+        "translation_file_id": translation_file_id,
+        "to_lang": target_lang,
+        "apply_mode": apply_mode,
+        "repack": repack,
+        "gate_only": gate_only,
+        "display_font": display_font,
         "game_file_name": game_file_name,
     }
     if job_id:
@@ -283,14 +404,15 @@ def resolve_job(*, job_json_text=None, upload_path=None,
     return None, None
 
 
-def job_output_dir(game_file_name, game):
+def job_output_dir(game_file_name, game, suffix=""):
     """Thư mục kết quả trên Drive (tương đối từ MyDrive), khớp cách
     notebook đặt OUT_DIR: theo tên file IPA (bỏ đuôi) nếu biết, nếu
-    không thì theo tên game. Vd 'MeoRocky-output/Dead Cells 3.5.15 VH'."""
+    không thì theo tên game. Vd 'MeoRocky-output/Dead Cells 3.5.15 VH'.
+    `suffix` (vd "-mod") để Mod job không đè thư mục của job trích."""
     stem = ""
     if game_file_name:
         stem = os.path.splitext(os.path.basename(game_file_name))[0].strip()
-    return "%s/%s" % (OUTPUT_ROOT_NAME, stem or game.strip())
+    return "%s/%s%s" % (OUTPUT_ROOT_NAME, stem or game.strip(), suffix)
 
 
 def manifest_file_entry(path):
@@ -440,3 +562,112 @@ def read_manifest(path):
         raise _err("E_CORRUPT", "Manifest thiếu version/job_id.",
                    "Chạy lại notebook trên Colab.")
     return data
+
+
+# ------------------------------------------------- manifest cho Mod job
+
+def manifest_binary_entry(path, kind="file"):
+    """Một file kết quả bất kỳ (không phải locale JSON) -> entry
+    manifest {name, kind, bytes, md5}. kind: "gate-report" |
+    "summary" | "applied" | "repacked" | "file". Không đọc JSON nên
+    dùng được cho .assets / .ipa / .zip."""
+    with open(path, "rb") as fh:
+        raw = fh.read()
+    return {
+        "name": os.path.basename(path),
+        "kind": kind,
+        "bytes": len(raw),
+        "md5": hashlib.md5(raw).hexdigest(),
+    }
+
+
+def build_mod_manifest(job, status, files, gate=None, note="",
+                       job_id=None, game=None, out_dir=None,
+                       engine="unity"):
+    """Manifest handoff cho Mod job. status "done" = job đã chạy xong
+    và có báo cáo cổng (cổng ĐẠT + đã ép, hoặc cổng CHƯA ĐẠT nên dừng
+    lại — xem verdict trong `gate`); "failed" = lỗi runner trước khi
+    có báo cáo cổng. `files`: list entry từ `manifest_binary_entry`
+    (gate-report.json ĐẦU TIÊN để web tải + hiện verdict trước).
+    `gate`: verdict cổng (dict run_gate) — chỉ giữ verdict/mode/totals
+    gọn nhẹ để web hiện ngay không cần tải báo cáo.
+    `job` là dict job đã validate; khi chạy local/CLI không có job
+    (vd test, script Actions tự ráp job sau) thì truyền job=None kèm
+    job_id/game/out_dir tường minh — KHÔNG bịa Drive ID giả. `engine`:
+    tên engine đã chạy job (lấy từ job khi có job, mặc định "unity")."""
+    if status not in ("done", "failed"):
+        raise _err("E_CONFIG_INVALID",
+                   "Trạng thái manifest Mod không hợp lệ: %r." % status,
+                   "Dùng 'done' hoặc 'failed'.")
+    if job is not None:
+        j = validate_job(job)
+        if j["kind"] != "mod":
+            raise _err("E_CONFIG_INVALID",
+                       "build_mod_manifest chỉ dùng cho job kind='mod'.",
+                       "Tạo Mod job bằng build_mod_job rồi ghi lại.")
+        job_id = j["job_id"]
+        game = j["game"]
+        engine = j["engine"]
+        out_dir = job_output_dir(j["game_file_name"], j["game"],
+                                 suffix="-mod")
+    else:
+        job_id = str(job_id or "").strip()
+        if not job_id or not _JOB_ID_RE.match(job_id):
+            raise _err("E_CONFIG_INVALID",
+                       "Manifest Mod thiếu job_id hợp lệ.",
+                       "Truyền job Mod hoặc job_id tường minh.")
+        game = (game or "game").strip() or "game"
+        engine = str(engine or "unity").strip().lower()
+        if engine not in JOB_ENGINES:
+            raise _err("E_CONFIG_INVALID",
+                       "Engine không hỗ trợ: %r (hiện chỉ có %s)."
+                       % (engine, ", ".join(JOB_ENGINES)),
+                       "Dùng engine unity (Unreal/Native iOS sẽ thêm sau).")
+        if out_dir is None:
+            out_dir = job_output_dir("", game, suffix="-mod")
+    gate_out = None
+    if gate is not None:
+        if not isinstance(gate, dict) or "verdict" not in gate:
+            raise _err("E_CONFIG_INVALID",
+                       "gate trong manifest Mod phải là verdict run_gate.",
+                       "Truyền thẳng dict run_gate trả về.")
+        gate_out = {
+            "verdict": gate["verdict"],
+            "mode": gate.get("mode"),
+            "totals": gate.get("totals") or {},
+        }
+    return {
+        "version": JOB_SCHEMA_VERSION,
+        "kind": "mod",
+        "engine": engine,
+        "job_id": job_id,
+        "game": game,
+        "status": status,
+        "gate": gate_out,
+        "files": list(files),
+        "translated": [],
+        "out_dir": out_dir,
+        "updated_at": _utc_now_iso(),
+        "note": str(note or ""),
+    }
+
+
+def write_mod_manifest(out_dir, manifest):
+    """Ghi manifest Mod vào <out_dir>/handoff-manifest.json (tạo thư
+    mục cha nếu cần, flush + fsync). Manifest sai schema/kind ->
+    E_CONFIG_INVALID. Trả đường dẫn đã ghi."""
+    if not isinstance(manifest, dict) \
+            or manifest.get("version") != JOB_SCHEMA_VERSION \
+            or manifest.get("kind") != "mod" \
+            or not manifest.get("job_id"):
+        raise _err("E_CONFIG_INVALID",
+                   "Manifest Mod sai phiên bản/kind/job_id.",
+                   "Tạo manifest bằng build_mod_manifest rồi ghi lại.")
+    os.makedirs(out_dir, exist_ok=True)
+    path = os.path.join(out_dir, MANIFEST_NAME)
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(manifest, fh, ensure_ascii=False, indent=2)
+        fh.write("\n")
+        fh.flush()
+        os.fsync(fh.fileno())
+    return path
