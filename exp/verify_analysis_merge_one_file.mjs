@@ -80,10 +80,10 @@ if (want(1)) {
   }
   rec("static_counts_and_cache",
     filesJson.files.length === 105 && testsJson.files.length === 186 &&
-    swJs.includes('CACHE_VERSION = "v56-20261119"') && !swJs.includes("v19-20261116") &&
+    swJs.includes('CACHE_VERSION = "v57-20261119"') && !swJs.includes("v19-20261116") &&
     noV17.length === 0,
     "files.json=" + filesJson.files.length + " (ky vong 105) · tests.json=" + testsJson.files.length +
-    " (ky vong 186) · sw.js v56-20261119: " + swJs.includes('CACHE_VERSION = "v56-20261119"') +
+    " (ky vong 186) · sw.js v57-20261119: " + swJs.includes('CACHE_VERSION = "v57-20261119"') +
     " · file exp con sot v17/162: " + (noV17.join(",") || "khong"), performance.now() - t);
   t = performance.now();
   const c = sh("node --check " + SITE + "/app.js && node --check " + SITE + "/worker.js && node --check " + SITE + "/sw.js && python3 -m py_compile " + SITE + "/pb3/bridge.py " + SITE + "/pb3/sdk/extraction.py " + SITE + "/pb3/sdk/exporters.py " + SITE + "/pb3/tests/test_merge_one_file.py", EXP);

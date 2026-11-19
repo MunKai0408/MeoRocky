@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Kiem tra tinh muc C8: sdk/format_probe.py chi stdlib + core/sdk,
 Python 3.9 (khong match, khong X|Y, khong eval/exec, khong goi mang);
-manifest (files.json 110, tests.json 193); sw.js precache co
-sdk/format_probe.py va CACHE_VERSION v56-20261119; bridge co op
+manifest (files.json 110, tests.json 194); sw.js precache co
+sdk/format_probe.py va CACHE_VERSION v57-20261119; bridge co op
 format_probe; UI co nut probe + input file rieng + nut tai JSON;
 bang ENGINE_SUPPORT trung thuc (moi engine deu co unsupported khong
 rong; unknown co supported rong); tieng Viet moi du dau.
@@ -79,8 +79,8 @@ if len(files) != 110:
 if "pb3/sdk/format_probe.py" not in files:
     fails.append("files.json thieu pb3/sdk/format_probe.py")
 tests = json.loads((SITE / "pb3" / "tests.json").read_text())["files"]
-if len(tests) != 193:
-    fails.append("tests.json co %d file, ky vong 193" % len(tests))
+if len(tests) != 194:
+    fails.append("tests.json co %d file, ky vong 194" % len(tests))
 if "pb3/tests/test_format_probe.py" not in tests:
     fails.append("tests.json thieu pb3/tests/test_format_probe.py")
 
@@ -88,8 +88,8 @@ if "pb3/tests/test_format_probe.py" not in tests:
 sw = (SITE / "sw.js").read_text(encoding="utf-8")
 if '"pb3/sdk/format_probe.py"' not in sw:
     fails.append("sw.js precache thieu pb3/sdk/format_probe.py")
-if 'CACHE_VERSION = "v56-20261119"' not in sw:
-    fails.append("sw.js CACHE_VERSION khong phai v56-20261119")
+if 'CACHE_VERSION = "v57-20261119"' not in sw:
+    fails.append("sw.js CACHE_VERSION khong phai v57-20261119")
 
 # 6. bridge co op format_probe + khong tra ok:false cho file la (probe
 # thanh cong thi ok True, engine unknown — kiem tra chuoi bao dam).
