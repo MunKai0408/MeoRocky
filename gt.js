@@ -58,6 +58,11 @@ export function setGoogleEndpoint(url) {
 }
 export function getGoogleEndpoint() { return googleEndpointOverride || GT_ENDPOINT; }
 const GT_TIMEOUT_MS = 20000;
+const PROXY_BATCH_TIMEOUT_MS = 30000; // batch qua proxy: 25 chuỗi Workers AI
+// mất tới ~13s (đo live 2026-11-18: batch 10 chuỗi chưa cache 6,3–12,5s) —
+// timeout 20s cũ quá sát, hay timeout giả rồi bridge chia đôi vô ích;
+// 30s vẫn dưới giới hạn 1 request của Cloudflare Workers. Chỉ áp cho
+// batch proxy; dịch đơn giữ 20s như cũ.
 const GT_MAX_RETRIES = 3;               // thử lại tối đa 3 lần (như bản iSH)
 const GT_BACKOFF_MS = [1000, 2000, 4000];
 
@@ -509,7 +514,7 @@ export async function proxyTranslateBatch(texts, src, dst, url) {
   try {
     const ctrl = new AbortController();
     gtAbortCtrl = ctrl;
-    const timer = setTimeout(() => ctrl.abort(), GT_TIMEOUT_MS);
+    const timer = setTimeout(() => ctrl.abort(), PROXY_BATCH_TIMEOUT_MS);
     try {
       res = await fetch(target, {
         method: "POST",

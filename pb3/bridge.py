@@ -33,6 +33,7 @@ mỗi lần KB đổi, kb_restore nạp lại lúc boot); tải lại trang thì
 phục lại. Nút xuất .sqlite (kb_export) vẫn là đường sao lưu chính.
 """
 
+import asyncio
 import base64
 import hashlib
 import io
@@ -977,16 +978,29 @@ def _gt_error_text(exc):
 
 
 # --- Batch dịch (mục A, đợt bổ sung 13:52) ---
-# Gộp tối đa 100 chuỗi + 5000 ký tự/batch (khớp giới hạn proxy Cloudflare
+# Gộp tối đa 25 chuỗi + 5000 ký tự/batch (khớp giới hạn proxy Cloudflare
 # + giữ q joined-text vừa phải cho gtx). Batch lỗi liên tiếp 2 lần thì
 # tắt batch, về dịch từng chuỗi cho phần còn lại.
+# 25 (không phải 100) vì Workers AI: đo live 2026-11-18 [ĐÃ ĐO THẬT] batch
+# 10 chuỗi chưa cache mất 6,3–12,5s (worker tách 1 chuỗi/lần gọi AI, song
+# song 5) — batch 100 chuỗi ≈ 60s+, vượt timeout 20s của proxyTranslateBatch
+# bên gt.js nên rớt về chia đôi liên tục. Batch 25 + chạy song song 3 batch
+# (xem _BATCH_CONCURRENCY) vừa dưới timeout, vừa nhanh hơn hẳn.
 # Split-on-failure (tăng tốc dịch): batch lỗi do mất marker thì chia đôi
 # đệ quy thay vì rớt về dịch đơn cả batch — đo thật: 1 batch 100 chuỗi rớt
 # marker = 52s thay vì 2,3s. Batch <= 10 chuỗi thì không chia nữa, về đơn.
-BATCH_MAX_STRINGS = 100
+BATCH_MAX_STRINGS = 25
 BATCH_MAX_CHARS = 5000
 _BATCH_FAIL_LATCH = 2
 _BATCH_SPLIT_MIN = 10
+# Số batch dịch chạy song song (asyncio.gather, xem vòng wave trong
+# translate_json_google): đo live 2026-11-18 [ĐÃ ĐO THẬT] 3 request x 10
+# chuỗi song song xong 30 chuỗi trong 14,8s, còn 3 request tuần tự hết
+# 25,6s (~1,7x); worker chịu được 15 lần gọi AI đồng thời mà không lỗi.
+# 3 là mức an toàn (rate limit proxy 60 req/phút/IP; tổng số request
+# không đổi, chỉ dồn lại). Hủy/quota/latch giữ nguyên ngữ nghĩa như chạy
+# tuần tự (xem _run_one_batch).
+_BATCH_CONCURRENCY = 3
 # Số chuỗi tối đa gom cho 1 lần dịch lại ở bước sửa placeholder (PR #9):
 # sửa đơn từng dòng tốn ~0,5s/dòng (đo thật: 28 dòng lệch = ~14s); gom
 # batch <=25 qua _gt_batch thì ~1 request cho 25 dòng.
@@ -1101,7 +1115,7 @@ async def translate_json_google(json_text, to="vi", credit=True, src="en",
     """Dịch bảng key-value bằng Google Translate thật qua fetch() của JS.
 
     Luồng (batch, mục A): Python (async) gọi `js.pb3_google_translate_batch`
-    (gt.js) cho từng BATCH tối đa 100 chuỗi/5000 ký tự — gtx không nhận
+    (gt.js) cho từng BATCH tối đa 25 chuỗi/5000 ký tự, chạy song song tối đa 3 batch (xem _BATCH_CONCURRENCY) — gtx không nhận
     nhiều q/request (chỉ dịch q đầu, đã kiểm chứng live) nên batch gộp N
     chuỗi thành 1 q với marker ⟦1⟧, ⟦2⟧... rồi tách lại; proxy Cloudflare
     (nếu có URL) thì batch thật bằng q mảng của Translation v2. Trước khi
@@ -1352,9 +1366,8 @@ async def translate_json_google(json_text, to="vi", credit=True, src="en",
         # dừng gọi Google cho phần còn lại, dùng thẳng từ điển offline —
         # khỏi bắt người dùng chờ mỗi chuỗi thử lại 3 lần vô ích.
         consec_failures = 0
-        _split_error = [None]
 
-        async def _translate_batch_split(texts, uids):
+        async def _translate_batch_split(texts, uids, errbox):
             """Dịch 1 batch qua _gt_batch; lỗi marker thì chia đôi đệ quy.
 
             Trả danh sách uid CHƯA dịch được qua batch (rỗng = xong hết).
@@ -1363,7 +1376,8 @@ async def translate_json_google(json_text, to="vi", credit=True, src="en",
             mới rơi về dịch đơn. Batch trả sai số chuỗi cũng tính là batch
             hỏng (như mất marker) và được chia. Lỗi cancelled/quota thì
             ném lên để caller xử lý như cũ (không chia). Lỗi đầu tiên ghi
-            vào _split_error để caller báo network_error.
+            vào errbox (hộp lỗi riêng mỗi batch — batch chạy song song không
+            được dùng chung một hộp) để caller báo network_error.
             """
             nonlocal batch_requests, batch_mode, google_count
             if _gt_batch is None:
@@ -1391,34 +1405,48 @@ async def translate_json_google(json_text, to="vi", credit=True, src="en",
                 kind = _gt_kind(exc)
                 if kind in ("cancelled", "quota"):
                     raise
-                if _split_error[0] is None:
-                    _split_error[0] = exc
+                if errbox[0] is None:
+                    errbox[0] = exc
                 if (splittable or _batch_split_retryable(exc)) \
                         and len(uids) > _BATCH_SPLIT_MIN:
                     mid = len(uids) // 2
                     left = await _translate_batch_split(
-                        texts[:mid], uids[:mid])
+                        texts[:mid], uids[:mid], errbox)
                     right = await _translate_batch_split(
-                        texts[mid:], uids[mid:])
+                        texts[mid:], uids[mid:], errbox)
                     return left + right
                 return list(uids)
 
-        for batch in batches:
+        async def _run_one_batch(batch):
+            """Dịch xong 1 batch (batch + rơi về dịch đơn nếu cần).
+
+            Chạy song song tối đa _BATCH_CONCURRENCY batch trong 1 wave
+            (asyncio.gather) — các batch chạm uid rời nhau nên không ghi
+            đè nhau; mọi đếm (batch_requests, google_count, done_segments,
+            ...) chỉ tăng bằng phép += đồng bộ, an toàn trong asyncio.
+            Hủy/quota/latch: giữ nguyên ngữ nghĩa như vòng tuần tự cũ
+            (hủy thì dừng sau wave hiện tại, quota thì wave sau chỉ còn
+            offline, latch tắt batch sau 2 lần lỗi).
+            """
+            nonlocal batch_failures, network_error, quota_hit, _gt, \
+                _gt_batch, done_segments, cancelled, consec_failures, \
+                single_requests, google_count, glossary_count
             if _is_cancelled():
                 cancelled = True
-                break
+                return
             texts = [uniques[uid]["masked"] for uid in batch]
             got_batch = False
             failed_uids = list(batch)
             if _gt_batch is not None and not quota_hit:
-                _split_error[0] = None
+                _errbox = [None]
                 try:
-                    failed_uids = await _translate_batch_split(texts, batch)
+                    failed_uids = await _translate_batch_split(
+                        texts, batch, _errbox)
                 except Exception as exc:  # noqa: BLE001 - cancelled/quota
                     kind = _gt_kind(exc)
                     if kind == "cancelled":
                         cancelled = True
-                        break
+                        return
                     if network_error is None:
                         network_error = _gt_error_text(exc)
                     if kind == "quota":
@@ -1446,8 +1474,8 @@ async def translate_json_google(json_text, to="vi", credit=True, src="en",
                         consec_failures = 0
                         got_batch = True
                     else:
-                        if network_error is None and _split_error[0] is not None:
-                            network_error = _gt_error_text(_split_error[0])
+                        if network_error is None and _errbox[0] is not None:
+                            network_error = _gt_error_text(_errbox[0])
                         # Tiến độ cho các uid chia đôi đã cứu được (nếu
                         # có); vòng đơn bên dưới đếm nốt phần còn lại.
                         done_segments += sum(
@@ -1473,7 +1501,7 @@ async def translate_json_google(json_text, to="vi", credit=True, src="en",
                 done_segments += sum(len(uniques[uid]["keys"])
                                      for uid in batch)
                 _emit("translate", done_segments, total)
-                continue
+                return
             # --- Rơi về từng chuỗi cho các uid chưa xong (batch lỗi /
             # không có hàm batch / hết quota thì _gt đã None -> chỉ còn
             # glossary). Uid nào chia đôi đã dịch xong thì không dịch lại.
@@ -1537,6 +1565,15 @@ async def translate_json_google(json_text, to="vi", credit=True, src="en",
                 done_segments += len(uniques[uid]["keys"])
                 _emit("translate", done_segments, total)
             if stop_here:
+                return
+
+        for _w in range(0, len(batches), _BATCH_CONCURRENCY):
+            if _is_cancelled():
+                cancelled = True
+                break
+            _wave = batches[_w:_w + _BATCH_CONCURRENCY]
+            await asyncio.gather(*(_run_one_batch(b) for b in _wave))
+            if cancelled:
                 break
 
         for uid, u in enumerate(uniques):
@@ -1716,6 +1753,8 @@ async def translate_json_google(json_text, to="vi", credit=True, src="en",
             "unique_segments": int(len(uniques)),
             "batches": int(len(batches)),
             "batch_requests": int(batch_requests),
+            "batch_max_strings": int(BATCH_MAX_STRINGS),
+            "batch_concurrency": int(_BATCH_CONCURRENCY),
             "single_requests": int(single_requests),
             "batch_mode": batch_mode_out,
             # Key chưa dịch xong (đầy đủ, không cắt 50 như

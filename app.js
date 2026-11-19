@@ -367,7 +367,7 @@ const KB_LAST_EXPORT_KEY = "pb3_kb_last_export";
 const translateJobStore = (typeof TranslateJobStore !== "undefined")
   ? new TranslateJobStore() : null;
 const TRANSLATE_CHUNK_KEYS = 500; // số key mỗi lần gọi worker (lưu job sau mỗi chunk)
-const TRANSLATE_BATCH_STRINGS = 100; // chuỗi/request — KHỚP BATCH_MAX_STRINGS bên bridge.py
+const TRANSLATE_BATCH_STRINGS = 25; // chuỗi/request — KHỚP BATCH_MAX_STRINGS bên bridge.py
 const KB_EXPORT_REMINDER_DAYS = 7;
 
 function kbBytesFromB64(b64) {
