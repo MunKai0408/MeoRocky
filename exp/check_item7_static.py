@@ -119,8 +119,8 @@ chk("pb3/tests/test_tmp_font.py" in tests_json["files"],
     "tests.json thieu pb3/tests/test_tmp_font.py")
 sw = open(os.path.join(SITE, "sw.js"), encoding="utf-8").read()
 m = re.search(r'const CACHE_VERSION = "([^"]+)"', sw)
-chk(m is not None and m.group(1) == "v59-20261119",
-    "sw.js CACHE_VERSION %r != v59-20261119" % (m.group(1) if m else None))
+chk(m is not None and m.group(1) == "v60-20261120",
+    "sw.js CACHE_VERSION %r != v60-20261120" % (m.group(1) if m else None))
 listed = re.findall(r'"([^"]+)"', re.search(
     r"const PRECACHE_URLS = \[(.*?)\];", sw, re.S).group(1))
 chk("pb3/sdk/tmp_font.py" in listed, "sw.js precache thieu pb3/sdk/tmp_font.py")
@@ -132,7 +132,8 @@ chk(set(listed) == set(files_json["files"]) | {
     "fonts/BeVietnamPro-Regular.ttf.b64",
     "fixtures/selftest.zip",
     "fzstd/index.mjs",
-    "pb3/files.json",
+    "lz4js/index.mjs",
+    "pb3/files.json"
 } | {"pyodide/" + f for f in os.listdir(os.path.join(SITE, "pyodide"))},
     "sw.js precache lech files.json/dia")
 for f in ("app.js", "sw.js"):
