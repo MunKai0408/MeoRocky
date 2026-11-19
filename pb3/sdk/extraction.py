@@ -2050,7 +2050,8 @@ def merge_language_outcomes(files: List[FileOutcome],
     return new_files, stats
 
 
-def _expand_merge_targets(requested, present_locales, mb_locales=None) -> set:
+def _expand_merge_targets(requested, present_locales, mb_locales=None,
+                          structured_locales=None) -> set:
     """Mở rộng tập locale cần gộp theo biến thể có thật trong dữ liệu (BUG#2).
 
     requested: tập mã chữ thường người dùng xin (vd {"en", "zh"}).
@@ -2061,6 +2062,11 @@ def _expand_merge_targets(requested, present_locales, mb_locales=None) -> set:
         dù không nằm trong requested (lọc mềm không chặn MB — xem
         run_extraction), để game chỉ có text MB ra đủ 1 file mỗi locale
         có dữ liệu (vd PvZ: en/vi/ro/fr/pt/zh).
+    structured_locales: tập mã chữ thường có trên outcome CÓ CẤU TRÚC
+        (language_source / string_table / text_data_list). None = bên
+        gọi không phân biệt (gọi trực tiếp trong test) — coi mọi mã
+        present đều có cấu trúc. Chỉ dùng để quyết định nhánh Knightica
+        dưới đây; các nhánh khác không phụ thuộc vào nó.
     Quy tắc: mã xin là mã GỐC ("zh") mà dữ liệu có biến thể của nó
     ("zh-CN", "zh-TW") thì target là các biến thể đó (KHÔNG ra file
     "zh.json" nữa); chỉ khi dữ liệu không có biến thể nào thì target mới
@@ -2071,24 +2077,30 @@ def _expand_merge_targets(requested, present_locales, mb_locales=None) -> set:
     liệu thật của một biến thể, KHÔNG phải fallback chung — giữ nó làm
     target riêng; riêng "zh" -> "zh-cn" (giản thể là biến thể mặc định
     của zh khi đã có biến thể phồn thể; xem _LOCALE_NAME_OVERRIDES:
-    "Chinese (Simplified)" -> "zh"). Xin thẳng biến thể giản thể
-    ("zh-cn"/"zh-hans") mà game chỉ có bảng "zh" thì target biến thể
-    đó (bảng "zh" chính là dữ liệu giản thể); xin thẳng biến thể phồn
-    thể mà chỉ có bảng "zh" thì KHÔNG target (không bịa file phồn thể
-    từ dữ liệu giản thể). Xem merge_language_outcomes (vòng fallback).
+    "Chinese (Simplified)" -> "zh"). Quy tắc này CHỈ áp dụng khi mã gốc
+    có trên outcome CÓ CẤU TRÚC (structured_locales): outcome text_asset
+    "zh" (vd cột CSV trong fixture game1.zip) chỉ là nội dung tiếng Trung
+    chung — giữ hành vi cũ (làm fallback cho biến thể, không ra file
+    riêng). Xin thẳng biến thể giản thể ("zh-cn"/"zh-hans") mà game chỉ
+    có bảng "zh" thì target biến thể đó (bảng "zh" chính là dữ liệu giản
+    thể); xin thẳng biến thể phồn thể mà chỉ có bảng "zh" thì KHÔNG
+    target (không bịa file phồn thể từ dữ liệu giản thể). Xem
+    merge_language_outcomes (vòng fallback).
     Ngoại lệ MB (merge-mb-generic): MB "zh" KHÔNG rõ biến thể nên ra CẢ
     zh-CN lẫn zh-TW (theo chuẩn của tool: xin zh thì ra cả 2 biến thể),
     không ra zh.json — outcome "zh" làm fallback cho cả 2 target như
     bảng StringTable "zh" (xem merge_language_outcomes)."""
     targets = set()
     present = {str(p).lower() for p in (present_locales or set())}
+    structured = (None if structured_locales is None else
+                  {str(p).lower() for p in structured_locales})
     for r in (requested or set()):
         r = str(r).lower()
         variants = {p for p in present
                     if p != r and disc.locale_base(p) == r}
         if variants:
             targets.update(variants)
-            if r in present:
+            if r in present and (structured is None or r in structured):
                 targets.add("zh-cn" if r == "zh" else r)
         elif r in present:
             targets.add(r)
@@ -2914,8 +2926,16 @@ def run_extraction(req: ExtractionRequest) -> ExtractionResult:
                 for f in result.files)
             _mb_arg = (_mb_locales if _mb_locales and not _has_structured_files
                        else None)
+            # Knightica (2026-11-19): chỉ outcome CÓ CẤU TRÚC mới được
+            # coi là biến thể thật khi giữ mã gốc làm target riêng (vd
+            # bảng ST "zh" giản thể + ST "zh-hant"); outcome text_asset
+            # "zh" (vd cột CSV) chỉ là nội dung tiếng Trung chung, giữ
+            # hành vi cũ (làm fallback, không ra file riêng).
+            _structured_present = {
+                str(f.locale).lower() for f in result.files
+                if f.origin_kind in STRUCTURED_ORIGINS and f.locale and f.kv}
             _merge_targets = _expand_merge_targets(
-                _merge_targets, _present, _mb_arg)
+                _merge_targets, _present, _mb_arg, _structured_present)
         if not _merge_targets:
             # Game không có locale gắn nhãn nào (vd chỉ có file JSON trần):
             # _expand_merge_targets ra tập rỗng vì không có locale nào

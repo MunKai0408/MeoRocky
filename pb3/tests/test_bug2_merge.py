@@ -206,6 +206,20 @@ class ExpandMergeTargetsCase(unittest.TestCase):
             _expand_merge_targets({"en", "zh"}, {"en", "zh", "zh-hant"}),
             {"en", "zh-cn", "zh-hant"})
 
+    def test_unstructured_base_zh_stays_fallback_only(self):
+        # Fixture game1.zip: cột CSV "zh" chỉ là nội dung tiếng Trung
+        # chung (text_asset, không có cấu trúc) — không ra target riêng,
+        # giữ hành vi cũ (làm fallback cho biến thể).
+        self.assertEqual(
+            _expand_merge_targets({"en", "zh"}, {"en", "zh", "zh-hans"},
+                                  None, {"en", "zh-hans"}),
+            {"en", "zh-hans"})
+        # Ngược lại: "zh" có cấu trúc thì vẫn giữ target riêng.
+        self.assertEqual(
+            _expand_merge_targets({"en", "zh"}, {"en", "zh", "zh-hans"},
+                                  None, {"en", "zh", "zh-hans"}),
+            {"en", "zh-cn", "zh-hans"})
+
     def test_explicit_simplified_variant_uses_base_zh(self):
         # Xin thẳng zh-cn mà game chỉ có bảng "zh": bảng đó là giản thể.
         self.assertEqual(
