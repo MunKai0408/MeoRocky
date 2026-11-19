@@ -179,6 +179,7 @@
   "pb3/tests/test_speed_extract.py",
   "pb3/tests/test_strings_arbitration.py",
   "pb3/tests/test_support_matrix.py",
+  "pb3/tests/test_text_data.py",
   "pb3/tests/test_tiering.py",
   "pb3/tests/test_tm_export_import.py",
   "pb3/tests/test_tmp_fallback.py",

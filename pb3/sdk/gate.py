@@ -83,11 +83,14 @@ _FONT_MISSING_CAP = 50
 _ZIP_PRESSED_MAX_ENTRIES = 64
 
 # Placeholder/the dinh dang: {0}, {name}, %s/%d/%i/%f/%1$s, $var,
-# the <...>, escape \n \t \\ \' \" — gop mau cua sdk/exporters va
-# sdk/plan, so theo thu tu xuat hien (finditer) de bat ca mat ban sao.
+# the <...> (ca the dong </...> — phuong phap 5 buoc 2026-11-19: the
+# <move>/<punch> phai khop 100% tung key; truoc day chi the mo duoc
+# dem nen ban dich rot </move> van qua cong), escape \n \t \\ \' \"
+# — gop mau cua sdk/exporters va sdk/plan, so theo thu tu xuat hien
+# (finditer) de bat ca mat ban sao.
 _PLACEHOLDER_RE = re.compile(
     r"\{[^}]*\}|\%(\d+\$)?[sdif]|\$[A-Za-z_][A-Za-z0-9_]*|"
-    r"<[A-Za-z][^>]*>|\\[nrt\\'\"]")
+    r"</?[A-Za-z][^>]*>|\\[nrt\\'\"]")
 
 _REASON_VI = {
     "monobehaviour": "key MonoBehaviour có trong game nhưng chưa ép được (ánh xạ vị trí mơ hồ hoặc mô phỏng ghi lỗi — xem skipped trong plan)",

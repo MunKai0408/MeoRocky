@@ -46,6 +46,7 @@ from core.model import Provenance, SourcePath
 from sdk import arbitration as arb
 from sdk import discovery as disc
 from sdk import exporters as exp
+from sdk import text_data
 from sdk import unity as unity_sdk
 from sdk.api import LocaleRequest, PluginContext
 from sdk.containers import NestedVFS, open_vfs
@@ -303,7 +304,7 @@ def _expand_serialized(sf, assets_name: str, vpath: str):
     out: Dict[str, bytes] = {}
     notes: List[str] = []
     mb: Dict[str, Any] = {"string_tables": [], "shared_tables": [], "generic": [],
-                          "language_sources": []}
+                          "language_sources": [], "text_data_lists": []}
     tas = sf.text_assets()
     n_text_assets = len(tas)
     for _pid, name, script in tas:
@@ -327,6 +328,13 @@ def _expand_serialized(sf, assets_name: str, vpath: str):
             # (đường đó bỏ chuỗi rỗng -> lệch cột). Đếm chuỗi = số term.
             mb["language_sources"].append((assets_name, item))
             n_mb_strings += len(item.get("terms") or [])
+        elif kind == "text_data_list":
+            # Bảng text dạng danh sách (sdk/text_data): KHÔNG đi qua
+            # đường quét chuỗi phẳng (mất cấu trúc cột/key). Đếm chuỗi =
+            # số giá trị (entry × cột).
+            mb["text_data_lists"].append((assets_name, item))
+            n_mb_strings += sum(len(e.get("values") or [])
+                                for e in item.get("entries") or [])
         else:
             mb["generic"].append((assets_name, item))
             fields = item.get("fields")
@@ -362,7 +370,7 @@ def _expand_unity(data: bytes, vpath: str, backend, limits) -> Tuple[Dict[str, b
     out: Dict[str, bytes] = {}
     notes: List[str] = []
     mb: Dict[str, Any] = {"string_tables": [], "shared_tables": [], "generic": [],
-                          "language_sources": []}
+                          "language_sources": [], "text_data_lists": []}
     assets: List[Tuple[str, Any]] = []
     det = unity_sdk.detect_bundle(data)
     if det is not None:
@@ -398,13 +406,15 @@ def _expand_unity(data: bytes, vpath: str, backend, limits) -> Tuple[Dict[str, b
     for assets_name, sf in assets:
         got, mb_i, notes_i, n_ta, n_m, n_s = _expand_serialized(sf, assets_name, vpath)
         out.update(got)
-        for k in ("string_tables", "shared_tables", "generic", "language_sources"):
+        for k in ("string_tables", "shared_tables", "generic", "language_sources",
+                  "text_data_lists"):
             mb[k].extend(mb_i[k])
         notes.extend(notes_i)
         n_text_assets += n_ta
         n_mb += n_m
         n_mb_strings += n_s
-    if not out and not mb["string_tables"] and not mb["generic"] and not mb["language_sources"]:
+    if not out and not mb["string_tables"] and not mb["generic"] \
+            and not mb["language_sources"] and not mb["text_data_lists"]:
         notes.append("không có TextAsset nào (%d SerializedFile đã mở, %d TextAsset, "
                      "%d MonoBehaviour, %d chuỗi)"
                      % (len(assets), n_text_assets, n_mb, n_mb_strings))
@@ -424,7 +434,7 @@ def _expand_unity_stream(path: str, vpath: str, backend, limits):
     out: Dict[str, bytes] = {}
     notes: List[str] = []
     mb: Dict[str, Any] = {"string_tables": [], "shared_tables": [], "generic": [],
-                          "language_sources": []}
+                          "language_sources": [], "text_data_lists": []}
     n_sf = 0
     n_text_assets = 0
     n_mb = 0
@@ -445,13 +455,15 @@ def _expand_unity_stream(path: str, vpath: str, backend, limits):
         n_sf += 1
         got, mb_i, notes_i, n_ta, n_m, n_s = _expand_serialized(sf, entry_name, vpath)
         out.update(got)
-        for k in ("string_tables", "shared_tables", "generic", "language_sources"):
+        for k in ("string_tables", "shared_tables", "generic", "language_sources",
+                  "text_data_lists"):
             mb[k].extend(mb_i[k])
         notes.extend(notes_i)
         n_text_assets += n_ta
         n_mb += n_m
         n_mb_strings += n_s
-    if not out and not mb["string_tables"] and not mb["generic"] and not mb["language_sources"]:
+    if not out and not mb["string_tables"] and not mb["generic"] \
+            and not mb["language_sources"] and not mb["text_data_lists"]:
         notes.append("không có TextAsset nào (%d SerializedFile đã mở, %d TextAsset, "
                      "%d MonoBehaviour, %d chuỗi)"
                      % (n_sf, n_text_assets, n_mb, n_mb_strings))
@@ -1259,6 +1271,108 @@ def _language_source_virtual_files(mb_lang_sources, log):
     return out
 
 
+def _text_data_list_virtual_files(mb_text_data_lists, log):
+    """File JSON ảo cho bảng text dạng danh sách: {(vpath): bytes}.
+
+    Mỗi (đơn vị, mã locale ĐẦY ĐỦ) một file, key = key thật của entry,
+    GIỮ nguyên thứ tự entry trong game; nhóm fileName chỉ ghi log
+    (metadata, không làm bẩn key). Tên file có đoạn ".textdata" để
+    không đụng file generic cùng đơn vị + ngôn ngữ
+    ("...monobehaviour.<lang>.json" — đụng tên thì dict ảo ghi đè mất
+    bảng); hậu tố ".monobehaviour.<lang>.json" giữ nguyên để nhóm
+    __mono__ + đặt tên xuất vẫn nhận ra. Mỗi biến thể (zh-CN, zh-TW...)
+    có file riêng — cột "zhs"/"zht" của game đã được ánh xạ về
+    zh-CN/zh-TW ở sdk/text_data (xin "zh" thì ra cả 2).
+
+    KIỂM CHỨNG 2 CHIỀU — bước 5 phương pháp Duy (fail-closed, raise
+    PB3Error E_CORRUPT, không ghi file nửa vời):
+      - 0 key trùng trong bảng (key trùng thì file key–value phẳng
+        không xác định được giá trị nào là đúng);
+      - 0 giá trị rỗng trong mọi cột (giá trị rỗng = bản dịch thiếu,
+        phải thấy rõ thay vì lọt vào file locale).
+    Nhiều bảng trong cùng đơn vị gộp keep-first theo thứ tự gặp, xung
+    đột đếm + log (không lặng lẽ)."""
+
+    td_units: Dict[Tuple[str, str, str], Dict[str, str]] = {}
+    td_order: List[Tuple[str, str, str]] = []
+    td_conflicts = 0
+    for unit_path, assets_name, item in mb_text_data_lists:
+        entries = item.get("entries") or []
+        columns = item.get("columns") or []
+        unit_label = unit_path + ("::" + assets_name if assets_name else "")
+        groups = item.get("groups") or {}
+        log("Unity: %s -> bảng text-data %r: %d entry, %d cột (%s; nhóm: %s)"
+            % (unit_label, item.get("name") or "?",
+               len(entries), len(columns), ", ".join(columns),
+               ", ".join("%s:%d" % kv for kv in sorted(groups.items())) or "—"))
+        seen = set()
+        dups = []
+        for e in entries:
+            key = e.get("key")
+            if key in seen:
+                dups.append(key)
+            seen.add(key)
+        if dups:
+            raise PB3Error("E_CORRUPT",
+                           "bảng text-data %r (%s) có %d key trùng (%s...) — "
+                           "không trích được file key–value phẳng"
+                           % (item.get("name") or "?", unit_label, len(dups),
+                              ", ".join(repr(k) for k in dups[:5])),
+                           where=unit_label)
+        empty: Dict[str, List[str]] = {}
+        for code in columns:
+            bad = [e.get("key") for e in entries
+                   if not (e.get("values") or {}).get(code)]
+            if bad:
+                empty[code] = bad
+        if empty:
+            detail = "; ".join(
+                "%s: %d rỗng (%s...)" % (c, len(ks),
+                                         ", ".join(repr(k) for k in ks[:3]))
+                for c, ks in sorted(empty.items()))
+            raise PB3Error("E_CORRUPT",
+                           "bảng text-data %r (%s) có giá trị rỗng: %s — "
+                           "không trích được file locale đầy đủ"
+                           % (item.get("name") or "?", unit_label, detail),
+                           where=unit_label)
+        for code in columns:
+            ukey = (unit_path, assets_name, code)
+            bucket = td_units.setdefault(ukey, {})
+            if ukey not in td_order:
+                td_order.append(ukey)
+            for e in entries:
+                key = e.get("key")
+                value = (e.get("values") or {}).get(code, "")
+                if key not in bucket:
+                    bucket[key] = value
+                elif bucket[key] != value:
+                    td_conflicts += 1
+    if td_conflicts:
+        log("Unity: bảng text-data: %d xung đột cùng key trong đơn vị "
+            "(giữ bản đầu)" % td_conflicts)
+    out: Dict[str, bytes] = {}
+    for unit_path, assets_name, code in td_order:
+        kv = td_units[(unit_path, assets_name, code)]
+        if not kv:
+            continue
+        # Ten file dung ma chu thuong (nhu bang ngon ngu) de detect_locale
+        # + ban ke cot nhan dung; log van dung ma canonical (zh-CN).
+        file_code = code.lower()
+        if assets_name:
+            stem = _sanitize_segment(os.path.splitext(os.path.basename(assets_name))[0]
+                                     or "assets")
+            vpath = "%s::%s::%s.textdata.monobehaviour.%s.json" % (unit_path, assets_name, stem, file_code)
+        else:
+            stem = _sanitize_segment(os.path.splitext(os.path.basename(unit_path))[0]
+                                     or "assets")
+            vpath = "%s::%s.textdata.monobehaviour.%s.json" % (unit_path, stem, file_code)
+        out[vpath] = json.dumps(kv, ensure_ascii=False, indent=1).encode("utf-8")
+        log("Unity: %s -> bảng text-data [%s]: %d key (xuất %s)"
+            % (unit_path + ("::" + assets_name if assets_name else ""),
+               code, len(kv), vpath))
+    return out
+
+
 def _fill_string_table_universe(grouped, shared_keys):
     """Điền "" cho key trong universe SharedTableData mà bucket chưa có (BUG#2).
 
@@ -1350,6 +1464,7 @@ def _build_layers(root_vfs, inv: List[disc.InventoryEntry], limits, backend, log
     mb_shared: List[Dict[str, Any]] = []
     mb_generic_units: Dict[Tuple[str, str], List[Dict[str, Any]]] = {}
     mb_lang_sources: List[Tuple[str, str, Dict[str, Any]]] = []
+    mb_text_data_lists: List[Tuple[str, str, Dict[str, Any]]] = []
     total = len(inv)
 
     def _add_skipped(path: str, reason: str) -> None:
@@ -1463,9 +1578,14 @@ def _build_layers(root_vfs, inv: List[disc.InventoryEntry], limits, backend, log
                 mb_generic_units.setdefault((entry.path, assets_name), []).append(item)
             for assets_name, item in mb["language_sources"]:
                 mb_lang_sources.append((entry.path, assets_name, item))
+            for assets_name, item in mb["text_data_lists"]:
+                mb_text_data_lists.append((entry.path, assets_name, item))
             n_st = len(mb["string_tables"])
             n_gen = len(mb["generic"])
             n_ls = len(mb["language_sources"])
+            n_td = len(mb["text_data_lists"])
+            n_td_entries = sum(len(_it.get("entries") or [])
+                               for _an, _it in mb["text_data_lists"])
             n_ls_terms = sum(len(_it.get("terms") or [])
                              for _an, _it in mb["language_sources"])
             n_gen_str = 0
@@ -1473,7 +1593,7 @@ def _build_layers(root_vfs, inv: List[disc.InventoryEntry], limits, backend, log
                 _f = _it.get("fields")
                 _s = _it.get("strings")
                 n_gen_str += len(_f) if isinstance(_f, dict) else len(_s or [])
-            if got or n_st or n_gen or n_ls:
+            if got or n_st or n_gen or n_ls or n_td:
                 virtual.update(got)
                 for _vp in got:
                     # TextAsset Unity: file locale có cấu trúc (JSON/CSV/
@@ -1481,10 +1601,12 @@ def _build_layers(root_vfs, inv: List[disc.InventoryEntry], limits, backend, log
                     virtual_origin[_vp] = "text_asset"
                 # Giữ nguyên tiền tố log cũ "-> N TextAsset" (harness cũ
                 # kiểm tra đúng chuỗi này) rồi thêm số liệu MonoBehaviour.
-                log("Unity: %s -> %d TextAsset, %d StringTable, %d MonoBehaviour (%d chuỗi)%s"
+                log("Unity: %s -> %d TextAsset, %d StringTable, %d MonoBehaviour (%d chuỗi)%s%s"
                     % (entry.path, len(got), n_st, n_gen, n_gen_str,
                        (", %d bảng ngôn ngữ (%d term)" % (n_ls, n_ls_terms))
-                       if n_ls else ""))
+                       if n_ls else "",
+                       (", %d bảng text-data (%d entry)" % (n_td, n_td_entries))
+                       if n_td else ""))
                 for n in notes:
                     log("Unity: %s: %s" % (entry.path, n))
             else:
@@ -1514,6 +1636,12 @@ def _build_layers(root_vfs, inv: List[disc.InventoryEntry], limits, backend, log
     #   ".monobehaviour.<lang>.json" giữ nguyên để nhóm __mono__ + đặt tên
     #   xuất vẫn nhận ra. Mỗi biến thể (zh-CN, zh-TW...) có file riêng theo
     #   _language_source_all_columns — không gộp về mã gốc nữa.
+    # - Bảng text dạng danh sách (sdk/text_data): LUÔN 1 file mỗi mã ĐẦY
+    #   ĐỦ ("<đơn vị>.textdata.monobehaviour.<code>.json", key = key thật
+    #   của entry, giữ nguyên thứ tự entry); nhóm fileName chỉ ghi log
+    #   (metadata, không làm bẩn key). Trích fail-closed: 0 key trùng +
+    #   0 giá trị rỗng mọi cột, sai thì raise (xem
+    #   _text_data_list_virtual_files).
     # - Generic: 1 file "<đơn vị>.monobehaviour.json" cho mỗi .assets / CAB
     #   (vd "...resources.assets::resources.monobehaviour.json"); khi tách
     #   ngôn ngữ thì 1 file mỗi ngôn ngữ ("...monobehaviour.<lang>.json").
@@ -1568,6 +1696,10 @@ def _build_layers(root_vfs, inv: List[disc.InventoryEntry], limits, backend, log
         for _vp, _b in _language_source_virtual_files(mb_lang_sources, log).items():
             virtual[_vp] = _b
             virtual_origin[_vp] = "language_source"
+    if mb_text_data_lists:
+        for _vp, _b in _text_data_list_virtual_files(mb_text_data_lists, log).items():
+            virtual[_vp] = _b
+            virtual_origin[_vp] = text_data.ORIGIN
     for (unit_path, assets_name), items in sorted(mb_generic_units.items()):
         res = _mb_generic_kv(items, split_languages=split_mono_languages)
         kept, dropped = res["kept"], res["dropped"]
@@ -1664,9 +1796,14 @@ MERGE_CONFLICTS_CAP = 500  # số xung đột tối đa ghi chi tiết vào repo
 # game đã có I2/ST (9K/PB3/EK2) không có MB nào lọt vào, chuẩn md5 giữ
 # nguyên; game chỉ có text trong MB generic (vd PvZ Fusion) mới được
 # gộp (xem _mb_admissible trong merge_language_outcomes).
-MERGE_ORIGINS = frozenset({"language_source", "string_table", "text_asset"})
+# TEXT-DATA-LIST (2026-11-19): bảng text dạng danh sách (sdk/text_data)
+# là nguồn có cấu trúc như I2/ST — xuất file ảo riêng mỗi locale, được
+# gộp vào file locale, và sự hiện diện của nó chặn MB-generic.
+MERGE_ORIGINS = frozenset({"language_source", "string_table", "text_asset",
+                           "text_data_list"})
 # Nguồn ngôn ngữ CÓ CẤU TRÚC — sự hiện diện của chúng chặn MB-generic.
-STRUCTURED_ORIGINS = frozenset({"language_source", "string_table"})
+STRUCTURED_ORIGINS = frozenset({"language_source", "string_table",
+                                "text_data_list"})
 
 
 def _mb_admissible(origin_kind: str, has_structured: bool) -> bool:
@@ -1719,8 +1856,8 @@ def merge_language_outcomes(files: List[FileOutcome],
 
     BUG#2 (2026-11-17) — hợp đồng mới (cũ: gộp mọi outcome theo locale):
       - Chỉ gộp outcome có origin_kind thuộc MERGE_ORIGINS
-        (language_source / string_table / text_asset). Outcome generic_flat
-        hoặc other KHÔNG gộp, không lọt vào file locale.
+        (language_source / string_table / text_asset / text_data_list).
+        Outcome generic_flat hoặc other KHÔNG gộp, không lọt vào file locale.
       - MERGE-MB-GENERIC (2026-11-18): outcome monobehaviour_lang (MB
         generic đã tách ngôn ngữ thành công) CŨNG được gộp — nhưng CHỈ
         khi trong danh sách outcome KHÔNG có nguồn có cấu trúc nào
@@ -1834,11 +1971,17 @@ def merge_language_outcomes(files: List[FileOutcome],
                         "dropped": {"value": value, "source": f.source or f.path},
                     })
         # Nhãn nguồn riêng: file gộp toàn từ MB tách ngôn ngữ mang
-        # origin monobehaviour_lang; gộp lẫn (vd TextAsset + MB) giữ
-        # text_asset như trước (không thể lẫn I2/ST vì MB đã bị chặn
-        # khi có nguồn có cấu trúc — xem has_structured ở trên).
-        merged_origin = (MB_LANG_ORIGIN if all(
-            f.origin_kind == MB_LANG_ORIGIN for f in group) else "text_asset")
+        # origin monobehaviour_lang; file gộp toàn từ bảng text-data
+        # mang origin text_data_list; gộp lẫn (vd TextAsset + MB, hoặc
+        # StringTable + text-data) giữ text_asset như trước (không thể
+        # lẫn I2/ST với MB-generic vì MB đã bị chặn khi có nguồn có
+        # cấu trúc — xem has_structured ở trên).
+        if all(f.origin_kind == MB_LANG_ORIGIN for f in group):
+            merged_origin = MB_LANG_ORIGIN
+        elif all(f.origin_kind == text_data.ORIGIN for f in group):
+            merged_origin = text_data.ORIGIN
+        else:
+            merged_origin = "text_asset"
         out = FileOutcome("<%s:%s>" % ("merged", canonical), "merge_one_file", canonical,
                           entries=len(kv), ok=len(kv), kv=kv,
                           source=group[0].source or group[0].path,
@@ -1969,6 +2112,8 @@ def _build_language_columns(layers, result: ExtractionResult, locales) -> None:
         for vpath, origin in sorted(layer.origin_map.items()):
             if origin == "language_source":
                 m = re.search(r"\.langtable\.monobehaviour\.(.+)\.json$", vpath)
+            elif origin == text_data.ORIGIN:
+                m = re.search(r"\.textdata\.monobehaviour\.(.+)\.json$", vpath)
             elif origin == MB_LANG_ORIGIN:
                 # Chi liet ke cot MB khi game KHONG co nguon co cau truc
                 # (MB la nguon chinh); game co I2/ST thi ban ke giu

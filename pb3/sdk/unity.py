@@ -83,6 +83,7 @@ from core import hashing
 from core.errors import PB3Error, error_from_exception
 from core.limits import Limits
 from sdk import lz4pure
+from sdk import text_data
 from sdk.manifest import WRITE_MODES
 
 UNITYFS_MAGIC = b"UnityFS"
@@ -1689,6 +1690,15 @@ class SerializedFile:
           (values[i] thuộc languages[i], GIỮ chuỗi rỗng). Từ type tree
           (nếu có) hoặc byte-walk đã validate (nếu không); object không
           khớp layout thì rơi về generic như trước.
+        - kind "text_data_list": bảng text dạng danh sách (phương pháp
+          5 bước 2026-11-19, game Nhiệt Huyết Sinh Tồn): list entry có
+          key chuỗi + >= 2 cột ngôn ngữ (tên field là mã locale) + tùy
+          chọn trường nhóm fileName — xem sdk/text_data.py. Nhận diện
+          bằng cấu trúc, không hardcode tên game/bundle/class/field;
+          list dữ liệu thuần (vd Master*Data, entry m_Id số) không khớp
+          và rơi về generic. Trả {list_field, key_field, group_field,
+          columns (mã canonical theo thứ tự gặp đầu), entries [{key,
+          group, values}], groups {nhóm: số entry}}.
         - kind "generic": MonoBehaviour khác — fields {đường_dẫn: chuỗi}
           nếu có type tree, strings [chuỗi...] nếu không (quét đã xác minh).
         Object đọc lỗi bị bỏ qua kèm ghi chú vào `warnings` (nếu có) thay
@@ -1748,6 +1758,17 @@ class SerializedFile:
                                     "terms": ls["terms"],
                                     "trailing_bytes": ls["trailing_bytes"]})
                     else:
+                        td = text_data.text_data_list_from_fields(val)
+                        if td is not None:
+                            out.append({"path_id": o.path_id, "name": name or "",
+                                        "kind": "text_data_list",
+                                        "list_field": td["list_field"],
+                                        "key_field": td["key_field"],
+                                        "group_field": td["group_field"],
+                                        "columns": td["columns"],
+                                        "entries": td["entries"],
+                                        "groups": td["groups"]})
+                            continue
                         fields = {}
                         _flatten_typetree_strings(val, "", fields)
                         out.append({"path_id": o.path_id, "name": name or "",
