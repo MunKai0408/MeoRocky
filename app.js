@@ -2324,6 +2324,241 @@ serverSyncTokenUI();
 // Mở lại web mà lần chạy trước chưa xong thì hỏi tiếp trạng thái.
 (function () { const saved = serverLoadRun(); if (saved) serverPoll(); })();
 
+// ---- Ép trên máy chủ (GitHub Actions, Mod job) — đường chính ----
+// Cổng + ép + repack IPA lớn ngay trong web, mirror 1:1 luồng trích xuất
+// trên máy chủ ở trên (serverRun/serverPoll/serverShowResults): chỉ khác
+// workflow (mod-large.yml), input (3 file Drive: IPA + JSON gốc + JSON
+// dịch) và cách hiện kết quả (báo cáo cổng nhập vào Bước 3 qua hook
+// window.MeoRockyMod.showGateReport; IPA repack >400 MB thì Actions
+// không trả qua artifact được — hiện rõ lý do + chỉ đường Colab).
+// Tái dùng: serverGh, serverDriveIdFromInput, serverGetToken/SetToken,
+// serverDownloadArtifact, SERVER_GH_API, SERVER_TOKEN_KEY (cùng 1 token
+// GitHub, cùng localStorage). Không log token bao giờ.
+const MOD_SERVER_WORKFLOW = "mod-large.yml";
+const MOD_SERVER_RUN_KEY = "meorocky_mod_server_run";
+
+function modServerSyncTokenUI() {
+  const t = serverGetToken();
+  const st = $("mod-server-token-state");
+  const input = $("mod-server-gh-token");
+  if (input && !input.value && t) input.value = t;
+  if (st) {
+    st.textContent = t
+      ? "Đã lưu token (kết thúc …" + t.slice(-4) + "). Token chỉ nằm trong trình duyệt này, chỉ gửi tới api.github.com."
+      : "Chưa lưu token.";
+  }
+}
+function modServerSaveRun(run) {
+  try { localStorage.setItem(MOD_SERVER_RUN_KEY, JSON.stringify(run)); } catch (e) { /* localStorage không có */ }
+}
+function modServerLoadRun() {
+  try {
+    const raw = localStorage.getItem(MOD_SERVER_RUN_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch (e) { return null; }
+}
+
+async function modServerRun() {
+  clearError();
+  const game = ($("mod-server-game-name").value || "").trim();
+  const fileId = serverDriveIdFromInput($("mod-server-drive-ipa").value || "");
+  const originalId = serverDriveIdFromInput($("mod-server-drive-original").value || "");
+  const translationId = serverDriveIdFromInput($("mod-server-drive-translation").value || "");
+  const targetLang = $("mod-server-to-lang").value || "vi";
+  const applyMode = $("mod-server-apply-mode").value || "REBUILD_SECTION";
+  const repack = $("mod-server-repack").checked ? "true" : "false";
+  const gateOnly = $("mod-server-gate-only").checked ? "true" : "false";
+  const displayFont = $("mod-server-display-font").value || "donor";
+  const engine = $("mod-server-engine").value || "unity";
+  const token = serverGetToken();
+  if (!game) { showError("Nhập tên game trước."); return; }
+  if (!fileId) { showError("Nhập Drive file ID hoặc dán link Drive của file IPA gốc (file phải ở chế độ “ai có link cũng xem được”)."); return; }
+  if (!originalId) { showError("Nhập Drive file ID hoặc dán link Drive của file JSON gốc (en.json đã trích xuất, ở chế độ “ai có link cũng xem được”)."); return; }
+  if (!translationId) { showError("Nhập Drive file ID hoặc dán link Drive của file JSON bản dịch (translated.vi.json, ở chế độ “ai có link cũng xem được”)."); return; }
+  if (engine !== "unity") { showError("Engine " + engine + " chưa hỗ trợ — hiện chỉ có Unity (Unreal/Native iOS sẽ thêm sau)."); return; }
+  if (!token) { showError("Chưa có GitHub token — nhập token có quyền Actions (Read and write) rồi bấm “Lưu token”. Xem Hướng dẫn bên trên."); return; }
+  const st = $("mod-server-status");
+  st.textContent = "Đang gửi lệnh ép lên GitHub…";
+  const dispatchedAt = Date.now();
+  let r;
+  try {
+    r = await serverGh("/actions/workflows/" + MOD_SERVER_WORKFLOW + "/dispatches", {
+      method: "POST",
+      body: { ref: "main", inputs: { file_id: fileId, original_file_id: originalId, translation_file_id: translationId, game_name: game, target_lang: targetLang, apply_mode: applyMode, repack, gate_only: gateOnly, display_font: displayFont, engine } },
+    });
+  } catch (e) {
+    showError("Gửi lệnh ép lỗi mạng: " + (e && e.message ? e.message : e));
+    return;
+  }
+  if (r.status === 204) {
+    modServerSaveRun({ game, fileId, originalId, translationId, dispatchedAt, runId: null });
+    st.textContent = "Đã gửi lệnh ép — đang chờ máy chủ nhận việc (hỏi lại mỗi 15 giây; đóng tab rồi mở lại vẫn xem được)…";
+    modServerPoll();
+    return;
+  }
+  if (r.status === 401) { showError("Token sai hoặc đã hết hạn (401) — kiểm tra lại token rồi lưu lại."); return; }
+  if (r.status === 403) { showError("Token thiếu quyền (403) — token cần quyền Actions (Read and write) trên repo MunKai0408/MeoRocky. Xem Hướng dẫn."); return; }
+  if (r.status === 404) { showError("Không thấy workflow trên main (404) — workflow mod-large.yml chưa gộp vào main, hoặc token thiếu quyền xem repo."); return; }
+  if (r.status === 422) { showError("GitHub từ chối lệnh ép (422): " + ((r.data && r.data.message) || "kiểm tra lại tên game / file ID.")); return; }
+  showError("Gửi lệnh ép lỗi (HTTP " + r.status + "): " + ((r.data && r.data.message) || "thử lại sau."));
+}
+
+// Dispatch trả 204 không kèm run id — liệt kê các run workflow_dispatch
+// mới nhất rồi lấy run đầu tiên tạo sau lúc gửi lệnh.
+async function modServerFindRun(dispatchedAt) {
+  const r = await serverGh("/actions/workflows/" + MOD_SERVER_WORKFLOW + "/runs?event=workflow_dispatch&branch=main&per_page=5");
+  if (r.status !== 200 || !r.data || !Array.isArray(r.data.workflow_runs)) return null;
+  for (const run of r.data.workflow_runs) {
+    const created = Date.parse(run.created_at || "");
+    if (!isNaN(created) && created >= dispatchedAt - 60000) return run;
+  }
+  return null;
+}
+
+async function modServerPoll() {
+  const saved = modServerLoadRun();
+  if (!saved) return;
+  const st = $("mod-server-status");
+  try {
+    let run = null;
+    if (saved.runId) {
+      const r = await serverGh("/actions/runs/" + saved.runId);
+      if (r.status === 200) run = r.data;
+    } else {
+      run = await modServerFindRun(saved.dispatchedAt);
+      if (run) { saved.runId = run.id; modServerSaveRun(saved); }
+    }
+    if (!run) {
+      st.textContent = "Đã gửi lệnh ép — máy chủ chưa nhận việc, đang chờ…";
+      setTimeout(modServerPoll, SERVER_POLL_MS);
+      return;
+    }
+    if (run.status !== "completed") {
+      st.textContent = "Máy chủ đang " + (run.status === "queued" ? "chờ lượt chạy" : "cổng + ép") +
+        " — run #" + run.run_number + " (bắt đầu " + new Date(run.created_at).toLocaleString("vi-VN") +
+        "). Hỏi lại sau 15 giây…";
+      setTimeout(modServerPoll, SERVER_POLL_MS);
+      return;
+    }
+    if (run.conclusion === "success") {
+      st.textContent = "✅ Xong! Đang lấy danh sách file kết quả…";
+      await modServerShowResults(run);
+    } else if (run.conclusion === "cancelled") {
+      st.textContent = "Run đã bị hủy trên GitHub.";
+    } else {
+      st.textContent = "❌ Chạy lỗi (" + (run.conclusion || "không rõ") + "). Xem log trên GitHub: ";
+      const a = document.createElement("a");
+      a.href = run.html_url; a.target = "_blank"; a.rel = "noopener";
+      a.textContent = "mở run #" + run.run_number;
+      st.appendChild(a);
+      st.appendChild(document.createTextNode(" — thường do file chưa chia sẻ link hoặc sai file ID (xem Hướng dẫn)."));
+    }
+  } catch (e) {
+    st.textContent = "Hỏi trạng thái lỗi: " + (e && e.message ? e.message : e) + " — bấm “Kiểm tra trạng thái” để thử lại.";
+  }
+}
+
+async function modServerShowResults(run) {
+  const box = $("mod-server-results");
+  box.textContent = "";
+  const r = await serverGh("/actions/runs/" + run.id + "/artifacts?per_page=30");
+  if (r.status !== 200 || !r.data || !Array.isArray(r.data.artifacts)) {
+    box.textContent = "Lấy danh sách artifact lỗi (HTTP " + r.status + "). Mở run trên GitHub để tải tay: ";
+    const a = document.createElement("a");
+    a.href = run.html_url; a.target = "_blank"; a.rel = "noopener";
+    a.textContent = "mở run #" + run.run_number;
+    box.appendChild(a);
+    return;
+  }
+  const arts = r.data.artifacts.filter((a) => !a.expired);
+  if (!arts.length) {
+    box.textContent = "Run xong nhưng không có artifact nào (hết hạn hoặc job lỗi trước khi có kết quả — xem log trên GitHub).";
+    return;
+  }
+  const title = document.createElement("p");
+  title.textContent = "Kết quả (run #" + run.run_number + ") — bấm để tải (mỗi file tải về là .zip chứa đúng 1 file đó):";
+  box.appendChild(title);
+  const ul = document.createElement("ul");
+  for (const a of arts) {
+    const li = document.createElement("li");
+    const b = document.createElement("button");
+    b.className = "secondary";
+    b.textContent = "⬇️ " + a.name + " (" + fmtBytes(a.size_in_bytes) + ")";
+    b.addEventListener("click", () => serverDownloadArtifact(a));
+    li.appendChild(b);
+    ul.appendChild(li);
+  }
+  box.appendChild(ul);
+  const hasGate = arts.some((a) => a.name.indexOf("gate-report") >= 0);
+  const hasRepacked = arts.some((a) => a.name.indexOf("repacked-ipa") >= 0);
+  const hasSummary = arts.some((a) => a.name.indexOf("summary") >= 0);
+  if (hasGate) {
+    const note = document.createElement("p");
+    note.className = "note";
+    note.textContent = "Đã có báo cáo cổng — tải gate-report.zip về, giải nén rồi bấm “Nhập báo cáo cổng…” ở trên để hiện verdict ở Bước 3.";
+    box.appendChild(note);
+  }
+  if (!hasRepacked) {
+    const warn = document.createElement("p");
+    warn.className = "note";
+    warn.textContent = "Không thấy IPA đã repack trong kết quả — có 2 khả năng: (1) cổng CHƯA ĐẠT nên không ép (xem gate-report.json); (2) IPA đã repack vượt 400 MB nên Actions không trả qua artifact được (xem summary.json). Trường hợp (2) thì chạy lại bằng đường Colab dự phòng bên dưới.";
+    box.appendChild(warn);
+  }
+  if (hasSummary) {
+    const note2 = document.createElement("p");
+    note2.className = "note";
+    note2.textContent = "File summary.json ghi verdict cổng, số key đã ép, md5, thời gian chạy và file nào không lên được artifact (+ lý do). Artifact lưu 30 ngày.";
+    box.appendChild(note2);
+  }
+}
+
+$("btn-mod-server-save-token").addEventListener("click", () => {
+  const v = ($("mod-server-gh-token").value || "").trim();
+  if (!v) { showError("Nhập token trước khi lưu."); return; }
+  if (!/^(ghp_|github_pat_)/.test(v)) { showError("Token trông không đúng dạng GitHub (thường bắt đầu ghp_ hoặc github_pat_) — kiểm tra lại."); return; }
+  serverSetToken(v);
+  modServerSyncTokenUI();
+  serverSyncTokenUI();
+  setStatus("Đã lưu token vào trình duyệt này.");
+});
+$("btn-mod-server-clear-token").addEventListener("click", () => {
+  serverSetToken("");
+  const input = $("mod-server-gh-token");
+  if (input) input.value = "";
+  modServerSyncTokenUI();
+  serverSyncTokenUI();
+  setStatus("Đã xóa token.");
+});
+$("btn-mod-server-run").addEventListener("click", modServerRun);
+$("btn-mod-server-refresh").addEventListener("click", () => {
+  const saved = modServerLoadRun();
+  if (!saved) { $("mod-server-status").textContent = "Chưa có lần ép nào được lưu trong trình duyệt này."; return; }
+  modServerPoll();
+});
+$("btn-mod-server-import-gate").addEventListener("click", () => {
+  const input = $("mod-server-import-gate-file");
+  if (input) input.click();
+});
+$("mod-server-import-gate-file").addEventListener("change", (ev) => {
+  const f = ev.target.files && ev.target.files[0];
+  if (!f) return;
+  f.text().then((text) => {
+    let parsed = null;
+    try { parsed = JSON.parse(text); } catch (e) { /* báo dưới */ }
+    if (!parsed || !parsed.verdict) {
+      showError("File này không phải báo cáo cổng (gate-report.json) — chọn đúng file báo cáo cổng đã tải về.");
+      return;
+    }
+    window.MeoRockyMod.showGateReport(parsed);
+    $("mod-server-status").textContent = "Đã nhập báo cáo cổng (" +
+      (parsed.verdict === "PASS" ? "ĐẠT" : "CHƯA ĐẠT") + ") — xem ở Bước 3 bên trên.";
+  });
+  ev.target.value = "";
+});
+modServerSyncTokenUI();
+// Mở lại web mà lần ép trước chưa xong thì hỏi tiếp trạng thái.
+(function () { const saved = modServerLoadRun(); if (saved) modServerPoll(); })();
+
 // ---- Dịch ----
 // URL proxy dịch (Cloudflare Worker, mục 2): lưu localStorage, để trống =
 // gọi trực tiếp Google như trước. Gửi sang worker ngay khi tải trang
@@ -4465,6 +4700,15 @@ function gateRenderResult(parsed) {
   html += "<p class=\"note\">" + esc(parsed.note || "") + "</p>";
   $("gate-result").innerHTML = html;
 }
+
+// Hook cho kết quả cổng từ máy chủ (Mod job Colab/Actions): hiện báo
+// cáo cổng của job Mod vào đúng #gate-result như cổng chạy local —
+// KHÔNG chạm state.gate (verdict này là của file + bản dịch trên máy
+// chủ, không phải của file local đang mở, nên không mở khóa nút
+// "Ép và ghi file" trên điện thoại).
+window.MeoRockyMod = {
+  showGateReport: function (parsed) { gateRenderResult(parsed); }
+};
 async function gateRun() {
   if (!state.file) { showError("Chưa chọn file. Hãy chọn file ở trên trước."); return; }
   const src = rebuildSourceData();

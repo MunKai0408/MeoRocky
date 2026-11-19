@@ -16,6 +16,12 @@
  * bấm 2 lần trong tab Colab: (1) cho phép truy cập Drive, (2) Run All
  * (Ctrl+F9). Không có tham số URL nào thay được 2 lần bấm đó.
  *
+ * Mod job (tab Mod > mục Colab, đường dự phòng khi Actions không trả
+ * được IPA repack >400 MB): cùng máy móc trên, job kind="mod"
+ * (buildModJob), panel mod-colab-*; kết quả nhập khác — báo cáo cổng
+ * hiện ở Bước 3 qua window.MeoRockyMod.showGateReport (app.js), file
+ * lớn chỉ đưa link tải Drive (không nạp blob vào RAM Safari).
+ *
  * File này KHÔNG sửa app.js (tránh xung đột với nhánh Actions): mọi
  * logic nằm ở đây, panel trong index.html gọi qua window.ColabHandoff.
  * Nhập kết quả dùng DataTransfer nạp file vào đúng input có sẵn của
@@ -143,6 +149,59 @@
     return "meorocky-job-" + job.job_id + ".json";
   }
 
+  // opts: {game, driveInput (IPA), originalInput, translationInput,
+  // toLang, applyMode ("REBUILD_SECTION"|"PATCH_INPLACE"), repack,
+  // gateOnly, displayFont ("donor"|"scan"), gameFileName, jobId?}
+  // -> job kind="mod" (khop pb3/sdk/colab_job.py: build_mod_job).
+  function buildModJob(opts) {
+    opts = opts || {};
+    var game = String(opts.game || "").trim();
+    if (!game) throw fail("Chưa nhập tên game.");
+    if (game.length > 120) throw fail("Tên game quá dài (tối đa 120 ký tự).");
+    var fileId = parseDriveFileId(opts.driveInput || "");
+    var originalId = parseDriveFileId(opts.originalInput || "");
+    var translationId = parseDriveFileId(opts.translationInput || "");
+    var toLang = String(opts.toLang || "vi").trim().toLowerCase();
+    if (!/^[a-z]{2,3}$/.test(toLang)) throw fail("Mã ngôn ngữ đích không hợp lệ.");
+    if (toLang === "en") throw fail("Ngôn ngữ nguồn và đích trùng nhau.");
+    var applyMode = String(opts.applyMode || "REBUILD_SECTION").trim().toUpperCase();
+    if (applyMode !== "REBUILD_SECTION" && applyMode !== "PATCH_INPLACE") {
+      throw fail("Chế độ ép không hỗ trợ: " + applyMode + ".");
+    }
+    var displayFont = String(opts.displayFont || "donor").trim().toLowerCase();
+    if (displayFont !== "donor" && displayFont !== "scan") {
+      throw fail("Chế độ font không hỗ trợ: " + displayFont + ".");
+    }
+    var engine = String(opts.engine || "unity").trim().toLowerCase();
+    if (engine !== "unity") {
+      throw fail("Engine " + engine + " chưa hỗ trợ — hiện chỉ có Unity (Unreal/Native iOS sẽ thêm sau).");
+    }
+    var jobId = String(opts.jobId || "").trim();
+    if (jobId && !JOB_ID_RE.test(jobId)) throw fail("job_id không hợp lệ.");
+    return {
+      version: 1,
+      kind: "mod",
+      engine: engine,
+      job_id: jobId || newJobId(game),
+      game: game,
+      drive_file_id: fileId,
+      game_file_name: String(opts.gameFileName || "").trim(),
+      original_file_id: originalId,
+      translation_file_id: translationId,
+      from_lang: "en",
+      to_lang: toLang,
+      apply_mode: applyMode,
+      repack: opts.repack !== false,
+      gate_only: opts.gateOnly === true,
+      display_font: displayFont,
+      locales: [],
+      translate: false,
+      worker_url: "",
+      created_at: new Date().toISOString(),
+      created_by: "MeoRocky web"
+    };
+  }
+
   function jobToJson(job) {
     return JSON.stringify(job, null, 2) + "\n";
   }
@@ -180,6 +239,18 @@
     });
     (manifest.translated || []).forEach(function (f) {
       out.push({ name: f.name, kind: "translated" });
+    });
+    return out;
+  }
+
+  // File kết quả của manifest Mod: giữ nguyên kind trong manifest
+  // ("gate-report" | "summary" | "applied" | "repacked") để web biết
+  // file nào hiện báo cáo, file nào chỉ đưa link tải (file lớn).
+  function modManifestResultFiles(manifest) {
+    var out = [];
+    (manifest.files || []).forEach(function (f) {
+      out.push({ name: f.name, kind: f.kind || "file",
+                 bytes: f.bytes || 0 });
     });
     return out;
   }
@@ -610,6 +681,405 @@
     lsSet(LS_PENDING, null);
   }
 
+  // ---------------- Mod job qua Colab (đường dự phòng) ----------------
+  // Tái dùng đúng máy móc Drive/poll ở trên (connectDrive, ensureFolder,
+  // uploadFileResumable, writeJobToDrive, pollOnce): chỉ khác panel
+  // (mod-colab-*) + cách nhập kết quả (báo cáo cổng hiện ở Bước 3 qua
+  // window.MeoRockyMod.showGateReport; file lớn chỉ đưa link tải Drive
+  // chứ không nạp blob hàng trăm MB vào RAM Safari).
+
+  var LS_MOD_LAST_JOB = "meorocky_mod_colab_last_job";
+  var LS_MOD_PENDING = "meorocky_mod_colab_pending_job";
+  var modPollTimer = null;
+  var modPollTries = 0;
+
+  function setModStatus(text) {
+    var el = $("mod-colab-status");
+    if (el) el.textContent = text;
+  }
+
+  function showModError(text) {
+    setModStatus(text);
+  }
+
+  function readModPanel() {
+    function v(id) {
+      var el = $(id);
+      return el ? el.value : "";
+    }
+    function checked(id) {
+      var el = $(id);
+      return el ? el.checked : false;
+    }
+    return {
+      game: v("mod-colab-game-name"),
+      driveInput: v("mod-colab-drive-ipa"),
+      originalInput: v("mod-colab-drive-original"),
+      translationInput: v("mod-colab-drive-translation"),
+      toLang: v("mod-colab-to-lang") || "vi",
+      applyMode: v("mod-colab-apply-mode") || "REBUILD_SECTION",
+      repack: checked("mod-colab-repack"),
+      gateOnly: checked("mod-colab-gate-only"),
+      displayFont: v("mod-colab-display-font") || "donor",
+      engine: v("mod-colab-engine") || "unity",
+      gameFileName: v("mod-colab-ipa-name")
+    };
+  }
+
+  function saveLastModJob(job) {
+    lsSet(LS_MOD_LAST_JOB, JSON.stringify(job));
+  }
+
+  function currentModJob() {
+    var job;
+    try {
+      job = buildModJob(readModPanel());
+      saveLastModJob(job);
+      return job;
+    } catch (err) {
+      showModError(err.message || String(err));
+      return null;
+    }
+  }
+
+  function fmtModBytes(n) {
+    if (!n && n !== 0) return "";
+    if (n < 1048576) return (n / 1024).toFixed(0) + " KB";
+    return (n / 1048576).toFixed(1) + " MB";
+  }
+
+  // Tải kết quả Mod: JSON nhỏ (báo cáo cổng, summary) thì tải blob để
+  // hiện ngay; file lớn (applied.zip, IPA repack) chỉ lấy Drive file ID
+  // để hiện link tải — không giữ blob trong RAM.
+  function downloadModResults(manifest) {
+    var wanted = modManifestResultFiles(manifest);
+    var small = wanted.filter(function (r) {
+      return r.kind === "gate-report" || r.kind === "summary";
+    });
+    var big = wanted.filter(function (r) {
+      return r.kind !== "gate-report" && r.kind !== "summary";
+    });
+    var lists = wanted.map(function (r) {
+      return driveList("name = '" + r.name.replace(/'/g, "\\'") +
+        "' and trashed = false");
+    });
+    return Promise.all(lists).then(function (groups) {
+      var byName = {};
+      groups.forEach(function (g, i) {
+        if (g.length) byName[wanted[i].name] = g[0].id;
+      });
+      var missing = wanted.filter(function (r) { return !byName[r.name]; })
+        .map(function (r) { return r.name; });
+      if (missing.length) {
+        throw new Error("Chưa thấy đủ file kết quả trên Drive (thiếu: " +
+          missing.join(", ") + ").");
+      }
+      var downs = small.map(function (r) {
+        return driveDownload(byName[r.name]).then(function (blob) {
+          return { name: r.name, kind: r.kind, blob: blob };
+        });
+      });
+      return Promise.all(downs).then(function (jsons) {
+        var links = big.map(function (r) {
+          return { name: r.name, kind: r.kind, bytes: r.bytes,
+                   driveId: byName[r.name],
+                   url: "https://drive.google.com/uc?id=" +
+                     encodeURIComponent(byName[r.name]) +
+                     "&export=download" };
+        });
+        return { jsons: jsons, links: links, manifest: manifest };
+      });
+    });
+  }
+
+  // Nhập kết quả Mod về web: báo cáo cổng hiện ở Bước 3 (tab Mod) qua
+  // hook của app.js; summary hiện dòng trạng thái; file lớn đưa link.
+  function importModResults(downloaded) {
+    var manifest = downloaded.manifest;
+    var box = $("mod-colab-results");
+    var gate = null;
+    var summary = null;
+    var reads = downloaded.jsons.map(function (f) {
+      return f.blob.text().then(function (text) {
+        try { return { name: f.name, kind: f.kind, data: JSON.parse(text) }; }
+        catch (e) { return { name: f.name, kind: f.kind, data: null }; }
+      });
+    });
+    return Promise.all(reads).then(function (parsed) {
+      parsed.forEach(function (p) {
+        if (p.kind === "gate-report" && p.data && p.data.verdict) {
+          if (!gate) gate = p.data;
+        }
+        if (p.kind === "summary" && p.data) summary = p.data;
+      });
+      var verdict = manifest.gate ? manifest.gate.verdict
+        : (gate ? gate.verdict : "?");
+      if (gate && typeof window !== "undefined" && window.MeoRockyMod &&
+          typeof window.MeoRockyMod.showGateReport === "function") {
+        window.MeoRockyMod.showGateReport(gate);
+        setModStatus("Colab xong — cổng kiểm tra: " +
+          (verdict === "PASS" ? "ĐẠT" : "CHƯA ĐẠT") +
+          " (đã hiện ở Bước 3 bên trên). " +
+          (summary && summary.note ? summary.note : ""));
+      } else {
+        setModStatus("Colab xong — cổng kiểm tra: " +
+          (verdict === "PASS" ? "ĐẠT" : "CHƯA ĐẠT") +
+          ". Mở tab Mod xem Bước 3 (cần tải lại trang nếu chưa thấy).");
+      }
+      if (box) {
+        box.textContent = "";
+        var title = document.createElement("p");
+        title.textContent = "Kết quả Mod (job " + manifest.job_id + "):";
+        box.appendChild(title);
+        if (summary && summary.note) {
+          var note = document.createElement("p");
+          note.className = "note";
+          note.textContent = summary.note;
+          box.appendChild(note);
+        }
+        var ul = document.createElement("ul");
+        downloaded.links.forEach(function (l) {
+          var li = document.createElement("li");
+          var a = document.createElement("a");
+          a.href = l.url;
+          a.target = "_blank";
+          a.rel = "noopener";
+          a.textContent = "⬇️ " + l.name + " (" + fmtModBytes(l.bytes) + ")";
+          li.appendChild(a);
+          li.appendChild(document.createTextNode(
+            l.kind === "repacked"
+              ? " — IPA đã repack (cần ký lại trước khi cài)"
+              : " — các đơn vị đã ép"));
+          ul.appendChild(li);
+        });
+        if (downloaded.links.length) box.appendChild(ul);
+        var hint = document.createElement("p");
+        hint.className = "note";
+        hint.textContent = "Báo cáo cổng (gate-report.json) đã hiện ở Bước 3 bên trên — " +
+          "bấm “Nhập báo cáo cổng…” ở mục Actions nếu muốn nhập lại từ file đã tải về.";
+        box.appendChild(hint);
+      }
+      return true;
+    });
+  }
+
+  function stopModAutoPoll() {
+    if (modPollTimer) { clearInterval(modPollTimer); modPollTimer = null; }
+    lsSet(LS_MOD_PENDING, null);
+  }
+
+  function startModAutoPoll(jobId) {
+    stopModAutoPoll();
+    modPollTries = 0;
+    lsSet(LS_MOD_PENDING, JSON.stringify({ job_id: jobId, startedAt: Date.now() }));
+    modPollTimer = setInterval(function () {
+      modPollTries += 1;
+      if (modPollTries > POLL_MAX_TRIES) {
+        stopModAutoPoll();
+        setModStatus("Hết 2 giờ chờ kết quả — bấm 'Kiểm tra kết quả' để hỏi lại.");
+        return;
+      }
+      pollOnce(jobId).then(function (r) {
+        if (r.status === "done") {
+          stopModAutoPoll();
+          setModStatus("Colab xong rồi — đang tải kết quả về…");
+          return downloadModResults(r.manifest).then(importModResults)
+            .catch(function (err) { showModError(err.message || String(err)); });
+        }
+        setModStatus("Đang chờ Colab… (lần hỏi " + modPollTries +
+          ", trạng thái: " + r.status + ")");
+      }).catch(function (err) {
+        if (err && /401|hết hạn/.test(err.message || "")) {
+          stopModAutoPoll();
+          showModError(err.message);
+        }
+      });
+    }, POLL_EVERY_MS);
+  }
+
+  // Upload 1 file đã chọn lên Drive rồi điền ID vào ô Drive tương ứng
+  // (pickerId: input file; driveInputId: ô Drive cần điền).
+  function uploadModPickedFile(pickerId, driveInputId, label) {
+    var job = currentModJob();
+    if (!job) return;
+    var picker = $(pickerId);
+    if (!picker) { showModError("Thiếu ô chọn file."); return; }
+    if (!picker.files || !picker.files.length) {
+      showModError("Chọn file " + label + " trên máy trước (nút 'Chọn file…').");
+      return;
+    }
+    var file = picker.files[0];
+    setModStatus("Đang kết nối Drive…");
+    connectDrive().then(function () {
+      return ensureFolder(JOB_DIR_NAME);
+    }).then(function (rootId) {
+      setModStatus("Đang tải " + file.name + " lên Drive (0%)…");
+      return uploadFileResumable(file, rootId, function (done, total) {
+        setModStatus("Đang tải " + file.name + " lên Drive (" +
+          Math.round(100 * done / total) + "%)…");
+      });
+    }).then(function (meta) {
+      var input = $(driveInputId);
+      if (input) input.value = meta.id;
+      if (driveInputId === "mod-colab-drive-ipa") {
+        job.drive_file_id = meta.id;
+        job.game_file_name = file.name;
+        var nameEl = $("mod-colab-ipa-name");
+        if (nameEl && !nameEl.value) nameEl.value = file.name;
+      }
+      saveLastModJob(job);
+      setModStatus("Đã tải xong " + label + " — đang ghi job lên Drive…");
+      return writeJobToDrive(job);
+    }).then(function () {
+      setModStatus("Xong: file + job đã lên Drive. Bấm 'Mở Colab' — notebook sẽ tự đọc job, không cần dán gì.");
+    }).catch(function (err) { showModError(err.message || String(err)); });
+  }
+
+  function initMod() {
+    if (typeof document === "undefined") return;
+    try {
+      var last = JSON.parse(lsGet(LS_MOD_LAST_JOB) || "null");
+      if (last) {
+        var fill = function (id, val) {
+          var el = $(id);
+          if (el && !el.value && val) el.value = val;
+        };
+        fill("mod-colab-game-name", last.game);
+        fill("mod-colab-drive-ipa", last.drive_file_id);
+        fill("mod-colab-drive-original", last.original_file_id);
+        fill("mod-colab-drive-translation", last.translation_file_id);
+        fill("mod-colab-ipa-name", last.game_file_name);
+        var cid = $( "mod-colab-oauth-client-id");
+        if (cid && !cid.value) cid.value = lsGet(LS_CLIENT_ID) || "";
+      } else {
+        var cid0 = $("mod-colab-oauth-client-id");
+        if (cid0 && !cid0.value) cid0.value = lsGet(LS_CLIENT_ID) || "";
+      }
+    } catch (e) { /* job cũ hỏng thì bỏ qua */ }
+
+    on("btn-mod-colab-copy-job", "click", function () {
+      var job = currentModJob();
+      if (job) copyText(jobToJson(job), "Đã sao chép Mod job (" + job.job_id + ") — dán vào ô JOB_JSON trong notebook Colab.");
+    });
+    on("btn-mod-colab-download-job", "click", function () {
+      var job = currentModJob();
+      if (job) {
+        downloadText(jobFileName(job), jobToJson(job));
+        setModStatus("Đã tải " + jobFileName(job) + " — upload file này vào khung Files của Colab (hoặc để web tự ghi lên Drive ở mục bên dưới).");
+      }
+    });
+    on("btn-mod-colab-open", "click", function () {
+      var job = currentModJob();
+      if (!job) return;
+      window.open(NOTEBOOK_URL, "_blank", "noopener");
+      if (accessToken) {
+        setModStatus("Đã mở notebook Colab — trong tab mới: bấm cho phép Drive, job đã có sẵn trên Drive nên không cần dán gì, rồi Run All (Ctrl+F9). Web sẽ tự hỏi kết quả mỗi phút.");
+        startModAutoPoll(job.job_id);
+      } else {
+        setModStatus("Đã mở notebook Colab — trong tab mới: bấm cho phép Drive, dán job (đã sao chép sẵn? chưa — bấm 'Sao chép job' trước) hoặc upload " +
+          jobFileName(job) + ", rồi Run All (Ctrl+F9). Muốn web tự hỏi kết quả thì kết nối Drive ở mục bên dưới trước.");
+      }
+    });
+    on("btn-mod-colab-import-results", "click", function () {
+      var input = $("mod-colab-import-file");
+      if (input) input.click();
+    });
+    on("mod-colab-import-file", "change", function (ev) {
+      var list = ev.target.files;
+      if (!list || !list.length) return;
+      var reads = [];
+      for (var i = 0; i < list.length; i++) {
+        (function (file) {
+          reads.push(file.text().then(function (text) {
+            try { return { name: file.name, data: JSON.parse(text) }; }
+            catch (e) { return { name: file.name, data: null }; }
+          }));
+        })(list[i]);
+      }
+      Promise.all(reads).then(function (files) {
+        var gate = null;
+        files.forEach(function (f) {
+          if (f.data && f.data.verdict &&
+              /gate-report/i.test(f.name) && !gate) gate = f.data;
+        });
+        if (gate && typeof window !== "undefined" && window.MeoRockyMod &&
+            typeof window.MeoRockyMod.showGateReport === "function") {
+          window.MeoRockyMod.showGateReport(gate);
+          setModStatus("Đã nhập báo cáo cổng (" +
+            (gate.verdict === "PASS" ? "ĐẠT" : "CHƯA ĐẠT") +
+            ") — xem ở Bước 3 bên trên.");
+        } else {
+          setModStatus("Không thấy báo cáo cổng trong các file đã chọn — chọn file gate-report.json (tải từ Colab/Actions).");
+        }
+      });
+      ev.target.value = "";
+    });
+    on("btn-mod-colab-check-results", "click", function () {
+      var job = currentModJob();
+      if (!job) return;
+      setModStatus("Đang hỏi Drive xem Mod job " + job.job_id + " xong chưa…");
+      connectDrive().then(function () {
+        return pollOnce(job.job_id);
+      }).then(function (r) {
+        if (r.status === "done") {
+          setModStatus("Colab xong rồi — đang tải kết quả về…");
+          return downloadModResults(r.manifest).then(importModResults);
+        }
+        setModStatus("Colab chưa xong (trạng thái: " + r.status + ") — cứ để tab mở, web sẽ hỏi lại mỗi phút.");
+        startModAutoPoll(job.job_id);
+      }).catch(function (err) { showModError(err.message || String(err)); });
+    });
+    on("btn-mod-colab-pick-ipa", "click", function () {
+      var picker = $("mod-colab-ipa-file");
+      if (picker) picker.click();
+    });
+    on("mod-colab-ipa-file", "change", function (ev) {
+      var f = ev.target.files && ev.target.files[0];
+      if (f) {
+        setModStatus("Đã chọn: " + f.name + " (" + (f.size / 1048576).toFixed(1) +
+          " MB) — bấm 'Tải IPA lên Drive' (có thể mất nhiều phút, cứ để tab mở).");
+      }
+    });
+    on("btn-mod-colab-upload-ipa", "click", function () {
+      uploadModPickedFile("mod-colab-ipa-file", "mod-colab-drive-ipa", "IPA");
+    });
+    on("btn-mod-colab-pick-original", "click", function () {
+      var picker = $("mod-colab-original-file");
+      if (picker) picker.click();
+    });
+    on("mod-colab-original-file", "change", function (ev) {
+      var f = ev.target.files && ev.target.files[0];
+      if (f) setModStatus("Đã chọn JSON gốc: " + f.name + " — bấm 'Tải JSON gốc lên Drive'.");
+    });
+    on("btn-mod-colab-upload-original", "click", function () {
+      uploadModPickedFile("mod-colab-original-file", "mod-colab-drive-original", "JSON gốc");
+    });
+    on("btn-mod-colab-pick-translation", "click", function () {
+      var picker = $("mod-colab-translation-file");
+      if (picker) picker.click();
+    });
+    on("mod-colab-translation-file", "change", function (ev) {
+      var f = ev.target.files && ev.target.files[0];
+      if (f) setModStatus("Đã chọn JSON bản dịch: " + f.name + " — bấm 'Tải bản dịch lên Drive'.");
+    });
+    on("btn-mod-colab-upload-translation", "click", function () {
+      uploadModPickedFile("mod-colab-translation-file", "mod-colab-drive-translation", "JSON bản dịch");
+    });
+    on("btn-mod-colab-save-client-id", "click", function () {
+      var el = $("mod-colab-oauth-client-id");
+      var v = el ? el.value.trim() : "";
+      if (!v) { showModError("Chưa nhập OAuth client ID."); return; }
+      lsSet(LS_CLIENT_ID, v);
+      setModStatus("Đã lưu OAuth client ID (chỉ trong trình duyệt này). Bấm 'Kết nối Drive' để cấp quyền.");
+    });
+    try {
+      var pending = JSON.parse(lsGet(LS_MOD_PENDING) || "null");
+      if (pending && pending.job_id && Date.now() - pending.startedAt < 2 * 3600 * 1000) {
+        setModStatus("Mod job " + pending.job_id + " đang chờ kết quả trên Drive — bấm 'Kiểm tra kết quả' để hỏi (cần kết nối Drive lại).");
+      }
+    } catch (e) { /* bỏ qua */ }
+  }
+
   // ---------------- Gắn UI ----------------
 
   function on(id, event, fn) {
@@ -781,6 +1251,10 @@
         setStatus("Job " + pending.job_id + " đang chờ kết quả trên Drive — bấm 'Kiểm tra kết quả' để hỏi (cần kết nối Drive lại).");
       }
     } catch (e) { /* bỏ qua */ }
+
+    // Panel Mod job (tab Mod > mục Colab, đường dự phòng khi Actions
+    // không trả được IPA repack >400 MB) — cùng máy móc Drive/poll.
+    initMod();
   }
 
   if (typeof document !== "undefined") {
@@ -798,11 +1272,13 @@
       slugifyGame: slugifyGame,
       newJobId: newJobId,
       buildJob: buildJob,
+      buildModJob: buildModJob,
       jobFileName: jobFileName,
       jobToJson: jobToJson,
       chunkRanges: chunkRanges,
       findManifestForJob: findManifestForJob,
       manifestResultFiles: manifestResultFiles,
+      modManifestResultFiles: modManifestResultFiles,
       multipartBody: multipartBody,
       NOTEBOOK_URL: NOTEBOOK_URL,
       MANIFEST_NAME: MANIFEST_NAME
@@ -812,6 +1288,7 @@
   if (typeof window !== "undefined") {
     window.ColabHandoff = {
       buildJob: buildJob,
+      buildModJob: buildModJob,
       parseDriveFileId: parseDriveFileId,
       jobToJson: jobToJson
     };
