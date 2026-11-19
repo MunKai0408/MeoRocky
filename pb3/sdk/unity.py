@@ -158,6 +158,19 @@ def support_matrix():
 
 
 # ------------------------------------------------------------------ reader
+_READER_STRUCT_CACHE: Dict[Tuple[str, str], "struct.Struct"] = {}
+
+
+def _reader_struct(endian: str, fmt: str) -> "struct.Struct":
+    """struct.Struct biên dịch sẵn cho (endian, fmt) — xem _Reader.unpack."""
+    key = (endian, fmt)
+    st = _READER_STRUCT_CACHE.get(key)
+    if st is None:
+        st = struct.Struct(endian + fmt)
+        _READER_STRUCT_CACHE[key] = st
+    return st
+
+
 class _Reader:
     """Đọc nhị phân có kiểm tra giới hạn (không đọc quá buffer)."""
 
@@ -185,10 +198,17 @@ class _Reader:
         return out
 
     def unpack(self, fmt):
-        size = struct.calcsize(fmt)
-        self._need(size)
-        out = struct.unpack_from(self.endian + fmt, self._b, self.pos)
-        self.pos += size
+        # SPEED-EXTRACT (2026-11-18): struct Struct biên dịch sẵn theo
+        # (endian, fmt) thay vì struct.calcsize(fmt) + nối chuỗi endian +
+        # struct.unpack_from MỖI lần gọi (9K: 108.868 lần unpack, 0,22 s
+        # tottime [ĐÃ ĐO THẬT] bằng profile). Ngữ nghĩa giữ nguyên:
+        # Struct(endian+fmt).size == calcsize(fmt) với mọi fmt đang dùng
+        # (chỉ kiểu số nguyên, không có đệm căn khác nhau giữa native và
+        # standard), unpack_from đọc đúng như cũ.
+        st = _reader_struct(self.endian, fmt)
+        self._need(st.size)
+        out = st.unpack_from(self._b, self.pos)
+        self.pos += st.size
         return out[0] if len(out) == 1 else out
 
     def u8(self):
