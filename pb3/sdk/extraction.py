@@ -2714,6 +2714,15 @@ def run_extraction(req: ExtractionRequest) -> ExtractionResult:
         _requested = set(_merge_targets) if _merge_targets else None
         if _merge_targets:
             _present = {str(f.locale).lower() for f in result.files if f.locale}
+            # MERGE-MB-GENERIC: thêm mọi locale có trên outcome MB tách
+            # ngôn ngữ (đã miễn lọc mềm ở trên) — CHỈ khi game không có
+            # nguồn có cấu trúc nào; merge_language_outcomes kiểm tra
+            # lại quyền ưu tiên này một lần nữa trước khi gộp.
+            _mb_locales = {str(f.locale).lower() for f in result.files
+                           if f.origin_kind == MB_LANG_ORIGIN and f.locale and f.kv}
+            _has_structured_files = any(
+                f.origin_kind in STRUCTURED_ORIGINS and f.kv
+                for f in result.files)
             _mb_arg = (_mb_locales if _mb_locales and not _has_structured_files
                        else None)
             _merge_targets = _expand_merge_targets(
