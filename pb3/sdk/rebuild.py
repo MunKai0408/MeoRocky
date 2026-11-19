@@ -811,7 +811,18 @@ def _classify_unmatched(keys, translations, text_values, mb_terms,
                 and all(v == translations[key] for v in mb_values[key]):
             unchanged += 1
         elif _st_key_in_index(key, mb_index):
-            unmatched.append({"key": key, "reason": "string_table_other_unit"})
+            # Entry ST khong co trong bang locale goc (chi co trong
+            # SharedTableData): gia tri goc hieu dung la "" (trich xuat
+            # cho "" cho entry thieu; build_plan cung bo qua viec chen
+            # entry "" vi "before '' == after '' -> khong doi"). Ban
+            # dich "" thi khong co gi de ep -> unchanged. Ban dich khac
+            # "" van la other_unit (can chen entry — plan xu ly o don
+            # vi cua bang).
+            if translations[key] == "":
+                unchanged += 1
+            else:
+                unmatched.append({"key": key,
+                                  "reason": "string_table_other_unit"})
         elif key in mb_terms:
             unmatched.append({"key": key, "reason": "monobehaviour"})
         else:

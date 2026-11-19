@@ -732,13 +732,17 @@ def _build_plans(source_bytes: bytes, source_name: str,
                       "mode": mode, "size_before": int(size_before),
                       "simulated": cur})
     # Phan loai key thua tu du lieu dan xuat cua scan (SF da tha).
-    # LUU Y: khong truyen mb_values o day — giu Y HET hanh vi cu cua
-    # _build_plans (apply_rebuild thi co truyen; hai duong von lech nhau
-    # o diem nay, dung "sua" o day keo doi verdict).
+    # TRUYEN mb_values nhu duong apply/preview: key ma moi gia tri goc
+    # MB da biet deu bang ban dich thi unchanged (khong can ep), khong
+    # phai unmatched. Khong truyen thi cong FAIL oan tren key khong doi
+    # (vd 9K v1.0.6: 106 key vi == en) dong thoi lech voi chinh ban xem
+    # truoc cua no (integrity FAIL) — day la loi, khong phai hanh vi can
+    # giu. Fail-closed van giu: chi unchanged khi MOI gia tri goc deu
+    # == ban dich; key nao co 1 gia tri goc khac ban dich van unmatched.
     leftover = [k for k in translations if k not in planned_keys]
     unmatched, unchanged = _rb._classify_unmatched(
         leftover, translations, scan["text_values"], scan["mb_terms"],
-        mb_index=mb_index,
+        mb_values=scan["mb_values"], mb_index=mb_index,
         csv_values=_rb._collect_csv_values(source_bytes, be, lim,
                                            source_locale),
         source_locale=source_locale,

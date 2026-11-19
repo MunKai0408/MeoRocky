@@ -540,6 +540,24 @@ class TestGateMonoBehaviour(unittest.TestCase):
         dv = _check(res, "diffverify")
         self.assertEqual(dv["unmatched_by_reason"], {})
 
+    def test_mb_unchanged_key_passes(self):
+        # 106-key 9K (run 44522190372): key MB ma ban dich == gia tri
+        # goc thi khong can ep -> unchanged, khong phai unmatched ->
+        # cong PASS. Hoi quy cho _build_plans khong truyen mb_values
+        # (cong FAIL oan + lech voi ban xem truoc cua chinh no).
+        sf_bytes = self._mb_sf()
+        key = self._mb_key(sf_bytes)
+        self.assertEqual(key, "MyMB.s1")
+        src = {"other": "zzz", key: key}
+        tr = {"other": "zzz đã dịch", key: "Hello MB World"}
+        res = _run(sf_bytes, tr, source_texts=src,
+                   source_name="t.assets")
+        self.assertEqual(res["verdict"], "PASS")
+        dv = _check(res, "diffverify")
+        self.assertEqual(dv["unmatched_by_reason"], {})
+        self.assertEqual(res["totals"]["unmatched"], 0)
+        self.assertEqual(res["totals"]["unchanged"], 1)
+
     def test_mb_unmatched_allowed_passes(self):
         # Key mo ho khong ep duoc nhung nam trong allowlist -> PASS va
         # allowlist duoc tinh la da dung 1 lan.
