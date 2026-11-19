@@ -193,9 +193,13 @@ class FileOutcome:
     # BUG#2: nguồn gốc nội dung của outcome — language_source (bảng ngôn
     # ngữ có cấu trúc) | string_table (StringTable gộp nhóm) | generic_flat
     # (quét phẳng MonoBehaviour / dò chuỗi thô, key vị trí .s/.p) |
-    # text_asset (file locale có cấu trúc khác: TextAsset, CSV, .po...) |
-    # other (không phải text localizable: plist, abi, config...). Merge
-    # một file chỉ gộp language_source + string_table + text_asset.
+    # monobehaviour_lang (MonoBehaviour generic ĐÃ TÁCH NGÔN NGỮ thành
+    # công: 1 file mỗi locale, key ổn định .p<path_id> — xem
+    # merge-mb-generic) | text_asset (file locale có cấu trúc khác:
+    # TextAsset, CSV, .po...) | other (không phải text localizable:
+    # plist, abi, config...). Merge một file chỉ gộp language_source +
+    # string_table + text_asset, CỘNG monobehaviour_lang khi game không
+    # có nguồn có cấu trúc nào (I2/ST thắng trước).
     # Mặc định "text_asset" để outcome tổng hợp trong test + plugin chưa
     # phân loại giữ hành vi cũ; pipeline luôn gắn rõ ở lúc tạo outcome.
     origin_kind: str = "text_asset"
@@ -244,6 +248,13 @@ class ExtractionResult:
     shared_index: Dict[str, Dict[str, int]] = field(default_factory=dict)
 
 
+# File MonoBehaviour generic đã tách ngôn ngữ thành công (xem _expand_unity
+# + merge-mb-generic): 1 file ảo mỗi locale, key ổn định (.p<path_id>,
+# không hậu tố #N phụ thuộc thứ tự). Định nghĩa ở đây (trước _expand_unity)
+# vì _expand_unity gắn nhãn này lúc dựng lớp virtual.
+MB_LANG_ORIGIN = "monobehaviour_lang"
+
+
 # ------------------------------------------------------------------ lớp VFS
 class _Layer:
     """Một lớp VFS để quét ứng viên: (tiền tố vpath, vfs)."""
@@ -255,7 +266,8 @@ class _Layer:
         self.kind = kind
         # BUG#2: origin_kind của từng file ảo trong lớp (chỉ lớp virtual
         # mới có): {vpath: language_source | string_table | generic_flat |
-        # text_asset} — để run_extraction gắn thẻ nguồn cho FileOutcome.
+        # monobehaviour_lang | text_asset} — để run_extraction gắn thẻ
+        # nguồn cho FileOutcome.
         self.origin_map: Dict[str, str] = dict(origin_map or {})
 
 
@@ -1509,8 +1521,13 @@ def _build_layers(root_vfs, inv: List[disc.InventoryEntry], limits, backend, log
     #   (không validate được cấu trúc bảng); xóa hẳn sẽ mất text thật không
     #   gắn nguồn trong prefab/UI — xem README/HANDOVER. Output locale mới
     #   (locales/) không dùng đường này nên không có key hậu tố .sN/.pN/.xN.
-    #   BUG#2: file generic gắn origin_kind "generic_flat" nên merge một
-    #   file LOẠI khỏi file locale (rác vứt hết theo quyết định người dùng).
+    #   BUG#2: file generic CHƯA TÁCH (1 file gộp, key #N) gắn origin_kind
+    #   "generic_flat" nên merge một file LOẠI khỏi file locale (rác vứt
+    #   hết theo quyết định người dùng). MERGE-MB-GENERIC: file generic
+    #   ĐÃ TÁCH NGÔN NGỮ (1 file mỗi locale, key ổn định .p<path_id>)
+    #   gắn "monobehaviour_lang" — merge chỉ nhận chúng khi game KHÔNG
+    #   có nguồn ngôn ngữ có cấu trúc nào (I2/ST thắng trước, xem
+    #   merge_language_outcomes); game có I2/ST giữ nguyên output.
     # Thứ tự key GIỮ NGUYÊN thứ tự gốc trong game (ý 7): dict Python giữ
     # thứ tự chèn, KHÔNG sort_keys ở đây (cũng không sorted() key ở các
     # bước sau — xem _mb_generic_kv, export_key_value_json). Riêng khối
@@ -1570,7 +1587,7 @@ def _build_layers(root_vfs, inv: List[disc.InventoryEntry], limits, backend, log
                                              or "assets")
                     vpath = "%s::%s.monobehaviour.%s.json" % (unit_path, stem, lang)
                 virtual[vpath] = json.dumps(lkv, ensure_ascii=False, indent=1).encode("utf-8")
-                virtual_origin[vpath] = "generic_flat"
+                virtual_origin[vpath] = MB_LANG_ORIGIN
                 log("Unity: %s -> MonoBehaviour [%s]: %d chuỗi (xuất %s)"
                     % (unit_label, lang, len(lkv), vpath))
             log("Unity: %s -> MonoBehaviour tách ngôn ngữ: %d chuỗi "
@@ -1639,7 +1656,33 @@ MERGE_CONFLICTS_CAP = 500  # số xung đột tối đa ghi chi tiết vào repo
 # BUG#2: chỉ outcome có nguồn CÓ CẤU TRÚC mới được gộp vào file locale.
 # generic_flat (quét phẳng MonoBehaviour, key vị trí .s/.p) và other
 # (plist/abi/config...) KHÔNG gộp — chúng là rác theo quyết định người dùng.
+# MERGE-MB-GENERIC (2026-11-18): ngoại lệ DUY NHẤT là origin
+# "monobehaviour_lang" — file MonoBehaviour generic ĐÃ TÁCH NGÔN NGỮ
+# thành công (1 file mỗi locale, key ổn định .p<path_id>, không hậu tố
+# #N phụ thuộc thứ tự) — và CHỈ khi game KHÔNG có nguồn ngôn ngữ có
+# cấu trúc nào (language_source / string_table): I2/ST thắng trước, nên
+# game đã có I2/ST (9K/PB3/EK2) không có MB nào lọt vào, chuẩn md5 giữ
+# nguyên; game chỉ có text trong MB generic (vd PvZ Fusion) mới được
+# gộp (xem _mb_admissible trong merge_language_outcomes).
 MERGE_ORIGINS = frozenset({"language_source", "string_table", "text_asset"})
+# Nguồn ngôn ngữ CÓ CẤU TRÚC — sự hiện diện của chúng chặn MB-generic.
+STRUCTURED_ORIGINS = frozenset({"language_source", "string_table"})
+
+
+def _mb_admissible(origin_kind: str, has_structured: bool) -> bool:
+    """Outcome MB tách ngôn ngữ có được gộp không (merge-mb-generic).
+
+    Chỉ nhận origin monobehaviour_lang VÀ game không có nguồn có cấu
+    trúc nào. generic_flat (file gộp chưa tách, key #N; dò chuỗi thô)
+    không bao giờ đủ điều kiện — rác vẫn bị loại như cũ."""
+    return origin_kind == MB_LANG_ORIGIN and not has_structured
+
+
+def _is_mb_lang_file(full_path: str, layer) -> bool:
+    """Đường dẫn có phải file ảo MB tách ngôn ngữ không (theo origin_map
+    của lớp virtual mà _build_layers đã gắn)."""
+    origin_map = getattr(layer, "origin_map", None) if layer is not None else None
+    return bool(origin_map) and origin_map.get(full_path) == MB_LANG_ORIGIN
 
 
 def merge_language_outcomes(files: List[FileOutcome],
@@ -1650,6 +1693,16 @@ def merge_language_outcomes(files: List[FileOutcome],
       - Chỉ gộp outcome có origin_kind thuộc MERGE_ORIGINS
         (language_source / string_table / text_asset). Outcome generic_flat
         hoặc other KHÔNG gộp, không lọt vào file locale.
+      - MERGE-MB-GENERIC (2026-11-18): outcome monobehaviour_lang (MB
+        generic đã tách ngôn ngữ thành công) CŨNG được gộp — nhưng CHỈ
+        khi trong danh sách outcome KHÔNG có nguồn có cấu trúc nào
+        (language_source / string_table): I2/ST thắng trước. Game đã có
+        I2/ST (9K/PB3/EK2) giữ nguyên output byte-identical; game chỉ
+        có text MB generic (vd PvZ Fusion) mới ra file locale từ MB.
+        Outcome gộp toàn từ MB mang origin_kind monobehaviour_lang
+        (nhãn nguồn riêng); thống kê mỗi locale có thêm "mb_keys" (số
+        key lấy từ MB). File MB gộp chưa tách (generic_flat, key #N)
+        và dò chuỗi thô (generic_flat) vẫn KHÔNG gộp như cũ.
       - Mỗi biến thể là 1 target riêng (zh-CN, zh-TW...). Outcome mang mã
         GỐC ("zh") được gộp làm fallback SAU các outcome biến thể của cùng
         target (vd bảng StringTable chỉ có cột "zh" thì cả zh-CN lẫn zh-TW
@@ -1677,10 +1730,20 @@ def merge_language_outcomes(files: List[FileOutcome],
     targets = {str(c).lower() for c in (target_locales or set())}
     if not targets:
         return list(files), []
+    # MERGE-MB-GENERIC: I2/ST thắng trước — chỉ khi KHÔNG có outcome có
+    # cấu trúc nào (kv rỗng không tính) thì MB tách ngôn ngữ mới được gộp.
+    has_structured = any(
+        f.origin_kind in STRUCTURED_ORIGINS and f.kv for f in files)
+
+    def _admissible(f):
+        if f.origin_kind in MERGE_ORIGINS:
+            return True
+        return _mb_admissible(f.origin_kind, has_structured)
+
     # Nhóm theo target: outcome biến thể trước, outcome mã gốc (fallback) sau.
     by_lang: Dict[str, List[FileOutcome]] = {}
     for f in files:
-        if f.locale is None or not f.kv or f.origin_kind not in MERGE_ORIGINS:
+        if f.locale is None or not f.kv or not _admissible(f):
             continue
         loc = f.locale.lower()
         if loc in targets:
@@ -1691,7 +1754,7 @@ def merge_language_outcomes(files: List[FileOutcome],
             continue
         for f in files:
             if (f.locale is not None and f.locale.lower() == base and f.kv
-                    and f.origin_kind in MERGE_ORIGINS):
+                    and _admissible(f)):
                 by_lang.setdefault(target, []).append(f)
     if not by_lang:
         return list(files), []
@@ -1702,6 +1765,7 @@ def merge_language_outcomes(files: List[FileOutcome],
         canonical = disc.canonical_locale_code(lang)
         kv: Dict[str, str] = {}
         sources: Dict[str, str] = {}
+        key_from_mb: Dict[str, bool] = {}
         dups = 0
         filled_empty = 0
         conflicts: List[Dict[str, Any]] = []
@@ -1712,6 +1776,7 @@ def merge_language_outcomes(files: List[FileOutcome],
                 if key not in kv:
                     kv[key] = value
                     sources[key] = f.source or f.path
+                    key_from_mb[key] = f.origin_kind == MB_LANG_ORIGIN
                 elif kv[key] == value:
                     dups += 1
                 elif kv[key] == "" and value != "":
@@ -1719,6 +1784,7 @@ def merge_language_outcomes(files: List[FileOutcome],
                     # thật: lấy bản thật, không tính xung đột.
                     kv[key] = value
                     sources[key] = f.source or f.path
+                    key_from_mb[key] = f.origin_kind == MB_LANG_ORIGIN
                     filled_empty += 1
                 elif value == "":
                     # Bản sau chỉ là chỗ trống: bỏ qua, giữ bản thật.
@@ -1729,12 +1795,19 @@ def merge_language_outcomes(files: List[FileOutcome],
                         "kept": {"value": kv[key], "source": sources[key]},
                         "dropped": {"value": value, "source": f.source or f.path},
                     })
+        # Nhãn nguồn riêng: file gộp toàn từ MB tách ngôn ngữ mang
+        # origin monobehaviour_lang; gộp lẫn (vd TextAsset + MB) giữ
+        # text_asset như trước (không thể lẫn I2/ST vì MB đã bị chặn
+        # khi có nguồn có cấu trúc — xem has_structured ở trên).
+        merged_origin = (MB_LANG_ORIGIN if all(
+            f.origin_kind == MB_LANG_ORIGIN for f in group) else "text_asset")
         out = FileOutcome("<%s:%s>" % ("merged", canonical), "merge_one_file", canonical,
                           entries=len(kv), ok=len(kv), kv=kv,
                           source=group[0].source or group[0].path,
                           merged=True,
                           merged_from=[(f.exported or f.path) for f in group],
-                          merge_sources=sources)
+                          merge_sources=sources,
+                          origin_kind=merged_origin)
         merged_outcomes[lang] = out
         stats.append({
             "locale": canonical,
@@ -1744,6 +1817,7 @@ def merge_language_outcomes(files: List[FileOutcome],
             "sources": [(f.exported or f.path) for f in group],
             "duplicates_identical": dups,
             "filled_empty": filled_empty,
+            "mb_keys": sum(1 for v in key_from_mb.values() if v),
             "conflicts": conflicts[:MERGE_CONFLICTS_CAP],
             "conflicts_total": len(conflicts),
             "conflicts_truncated": len(conflicts) > MERGE_CONFLICTS_CAP,
@@ -1772,25 +1846,47 @@ def merge_language_outcomes(files: List[FileOutcome],
     return new_files, stats
 
 
-def _expand_merge_targets(requested, present_locales) -> set:
+def _expand_merge_targets(requested, present_locales, mb_locales=None) -> set:
     """Mở rộng tập locale cần gộp theo biến thể có thật trong dữ liệu (BUG#2).
 
     requested: tập mã chữ thường người dùng xin (vd {"en", "zh"}).
     present_locales: tập mã chữ thường có trong result.files.
+    mb_locales: tập mã chữ thường có trên outcome MB tách ngôn ngữ
+        (monobehaviour_lang) — chỉ truyền vào khi game KHÔNG có nguồn
+        có cấu trúc (bên gọi đã kiểm tra); các locale này thành target
+        dù không nằm trong requested (lọc mềm không chặn MB — xem
+        run_extraction), để game chỉ có text MB ra đủ 1 file mỗi locale
+        có dữ liệu (vd PvZ: en/vi/ro/fr/pt/zh).
     Quy tắc: mã xin là mã GỐC ("zh") mà dữ liệu có biến thể của nó
     ("zh-CN", "zh-TW") thì target là các biến thể đó (KHÔNG ra file
     "zh.json" nữa); chỉ khi dữ liệu không có biến thể nào thì target mới
     là chính mã gốc (vd game chỉ có bảng "zh" thì ra zh.json). Mã xin đã
-    là biến thể ("zh-CN") thì chỉ target đúng mã đó."""
+    là biến thể ("zh-CN") thì chỉ target đúng mã đó.
+    Ngoại lệ MB (merge-mb-generic): MB "zh" KHÔNG rõ biến thể nên ra CẢ
+    zh-CN lẫn zh-TW (theo chuẩn của tool: xin zh thì ra cả 2 biến thể),
+    không ra zh.json — outcome "zh" làm fallback cho cả 2 target như
+    bảng StringTable "zh" (xem merge_language_outcomes)."""
     targets = set()
+    present = {str(p).lower() for p in (present_locales or set())}
     for r in (requested or set()):
         r = str(r).lower()
-        variants = {p for p in present_locales
+        variants = {p for p in present
                     if p != r and disc.locale_base(p) == r}
         if variants:
-            targets |= variants
-        elif r in present_locales:
+            targets.update(variants)
+        elif r in present:
             targets.add(r)
+    for m in sorted({str(x).lower() for x in (mb_locales or set())}):
+        if m == "zh":
+            variants = {p for p in present
+                        if p != "zh" and disc.locale_base(p) == "zh"}
+            if variants:
+                targets.update(variants)
+            else:
+                targets.update({"zh-cn", "zh-tw"})
+            targets.discard("zh")
+        elif m in present:
+            targets.add(m)
     return targets
 
 
@@ -1801,16 +1897,49 @@ def _build_language_columns(layers, result: ExtractionResult, locales) -> None:
     code, keys, empty, status}. status: "exported" nếu có outcome đã gộp
     cho mã đó trong result.files; "filtered" nếu mã không thuộc tập lọc
     yêu cầu; "not_exported" nếu còn lại. Không đoán số — đếm thật từ file
-    ảo (keys = số term, empty = số giá trị rỗng)."""
+    ảo (keys = số term, empty = số giá trị rỗng).
+    MERGE-MB-GENERIC: liệt kê thêm cột của file MB tách ngôn ngữ
+    (origin monobehaviour_lang, ".monobehaviour.<code>.json") — để cột
+    MB đã gộp (vd PvZ vi/ro/fr/pt) không "mất tích" khỏi bản kê. Mã "zh"
+    tính là exported khi có outcome gộp cho biến thể của nó (zh-CN /
+    zh-TW); cột MB KHÔNG bị tính "filtered" khi đang được miễn lọc mềm
+    (game không có nguồn có cấu trúc — xem run_extraction)."""
     merged_locales = {str(f.locale).lower() for f in result.files if f.merged}
+    mb_merged_locales = {str(f.locale).lower() for f in result.files
+                         if f.merged and f.origin_kind == MB_LANG_ORIGIN}
+    has_structured = any(
+        o in STRUCTURED_ORIGINS
+        for layer in layers
+        for o in (getattr(layer, "origin_map", None) or {}).values())
+
+    def _col_exported(code, merged):
+        """Cot da gop chua: dung ma locale (vd "en"), HOAC la cot GOC
+        cua mot locale bien the da gop (vd cot "zh" lam fallback cho
+        zh-CN/zh-TW — xem merge_language_outcomes). Chieu nguoc KHONG
+        tinh: bien the (vd "en-gb") khong bao gio cap cho target goc
+        "en", nen locale_in_wanted (khop ca 2 chieu) la sai o day — EK2
+        en-gb/en-us tung bi danh "exported" nham vi the."""
+        c = code.lower()
+        if c in merged:
+            return True
+        return any(c == disc.locale_base(m) and c != m for m in merged)
+
     seen = set()
     for layer in layers:
         if layer.kind != "virtual":
             continue
         for vpath, origin in sorted(layer.origin_map.items()):
-            if origin != "language_source":
+            if origin == "language_source":
+                m = re.search(r"\.langtable\.monobehaviour\.(.+)\.json$", vpath)
+            elif origin == MB_LANG_ORIGIN:
+                # Chi liet ke cot MB khi game KHONG co nguon co cau truc
+                # (MB la nguon chinh); game co I2/ST thi ban ke giu
+                # nguyen nhu cu (khong them hang MB "filtered").
+                if has_structured:
+                    continue
+                m = re.search(r"\.monobehaviour\.(.+)\.json$", vpath)
+            else:
                 continue
-            m = re.search(r"\.langtable\.monobehaviour\.(.+)\.json$", vpath)
             if not m:
                 continue
             code = m.group(1)
@@ -1826,9 +1955,16 @@ def _build_language_columns(layers, result: ExtractionResult, locales) -> None:
             except Exception:
                 kv = {}
             empty = sum(1 for v in kv.values() if v == "")
-            if code.lower() in merged_locales:
+            if origin == MB_LANG_ORIGIN:
+                exported = _col_exported(code, mb_merged_locales)
+            else:
+                exported = _col_exported(code, merged_locales)
+            if exported:
                 status = "exported"
-            elif locales is not None and not disc.locale_in_wanted(code, locales):
+            elif (locales is not None
+                    and not disc.locale_in_wanted(code, locales)
+                    and not (origin == MB_LANG_ORIGIN
+                             and not has_structured)):
                 status = "filtered"
             else:
                 status = "not_exported"
@@ -1989,6 +2125,15 @@ def run_extraction(req: ExtractionRequest) -> ExtractionResult:
                                          progress_fn=_progress, skipped=result.skipped,
                                          split_mono_languages=split_mono)
     result.shared_index = dict(shared_index or {})
+    # MERGE-MB-GENERIC: game có nguồn ngôn ngữ có cấu trúc (I2/ST) trong
+    # lớp virtual thì MB-generic KHÔNG được miễn lọc mềm, KHÔNG được gộp
+    # (I2/ST thắng trước — giữ chuẩn 9K/PB3/EK2 byte-identical). Chỉ game
+    # không có nguồn có cấu trúc nào mới miễn lọc cho file MB tách ngôn
+    # ngữ, để merge gộp đủ mọi locale có dữ liệu (vd PvZ: vi/ro/fr/pt).
+    _has_structured_unity = any(
+        origin in STRUCTURED_ORIGINS
+        for layer in layers
+        for origin in (getattr(layer, "origin_map", None) or {}).values())
     records = [r for r in req.registry.active()
                if r.manifest is not None and r.manifest.kind in ("format", "extractor")]
     log("plugin định dạng: %d (%s)"
@@ -2215,6 +2360,16 @@ def run_extraction(req: ExtractionRequest) -> ExtractionResult:
         for item in probed:
             code, _conf, _ev = disc.detect_locale(item["full"], locale_table)
             if code is not None and not disc.locale_in_wanted(code, locales):
+                # MERGE-MB-GENERIC: file MB tách ngôn ngữ của game KHÔNG
+                # có nguồn có cấu trúc được MIỄN lọc mềm — locale của nó
+                # là dữ liệu của game (vd PvZ có sẵn cột vi trong MB),
+                # không phải lựa chọn của user; giữ lại để merge gộp đủ
+                # 1 file mỗi locale có dữ liệu. Game có I2/ST thì lọc
+                # như cũ (không miễn).
+                if (not _has_structured_unity
+                        and _is_mb_lang_file(item["full"], item.get("layer"))):
+                    kept_probed.append(item)
+                    continue
                 # Cùng đường dẫn có thể được probe bởi nhiều plugin: ghi
                 # skipped 1 lần cho 1 đường dẫn, khỏi trùng lặp.
                 if item["full"] not in _locale_skip_seen:
@@ -2365,7 +2520,15 @@ def run_extraction(req: ExtractionRequest) -> ExtractionResult:
                 # LẠI (lỗi 2026-11-16: trước đây `None not in {en,zh}`
                 # loại cả file không có ngôn ngữ, khiến IPA thật chỉ còn
                 # config thì ra 0 file + banner "Lỗi không rõ").
-                if locales is not None and loc_code is not None and not disc.locale_in_wanted(loc_code, locales):
+                # MERGE-MB-GENERIC: entry MB tách ngôn ngữ của game không
+                # có nguồn có cấu trúc được MIỄN lọc mềm (như ở bước
+                # probe) — lọc cứng req.locale ở dưới vẫn giữ nguyên.
+                _okind = _origin_kind_for(
+                    item["full"], item["layer"], rec.plugin_id)
+                if (locales is not None and loc_code is not None
+                        and not disc.locale_in_wanted(loc_code, locales)
+                        and not (_okind == MB_LANG_ORIGIN
+                                 and not _has_structured_unity)):
                     result.skipped.append({"path": item["full"],
                                            "reason": "locale %s không phải %s"
                                                      % (loc_code or "không xác định", wanted_txt)})
@@ -2376,8 +2539,7 @@ def run_extraction(req: ExtractionRequest) -> ExtractionResult:
                                       editable=bool(rec.manifest.can_write),
                                       source_kind="raw_scan" if rec.plugin_id == "generic_strings"
                                       else "verified",
-                                      origin_kind=_origin_kind_for(
-                                          item["full"], item["layer"], rec.plugin_id),
+                                      origin_kind=_okind,
                                       warnings=["dùng checkpoint, không parse lại"],
                                       sha256=file_sha,
                                       source=_source_of(item["full"]))
@@ -2415,7 +2577,16 @@ def run_extraction(req: ExtractionRequest) -> ExtractionResult:
             # ngôn ngữ không thể gọi là "không phải en/zh" (lỗi 2026-11-16:
             # trước đây lọc loại cả config, IPA thật chỉ còn config thì ra
             # 0 file + banner "Lỗi không rõ").
-            if locales is not None and loc is not None and not disc.locale_in_wanted(loc, locales):
+            # MERGE-MB-GENERIC: entry MB tách ngôn ngữ của game không có
+            # nguồn có cấu trúc được MIỄN lọc mềm (như ở bước probe);
+            # lọc cứng req.locale ở dưới vẫn giữ nguyên.
+            _okind = _origin_kind_for(
+                item["full"], item["layer"], rec.plugin_id,
+                flavor=(table.schema_hint or {}).get("flavor"))
+            if (locales is not None and loc is not None
+                    and not disc.locale_in_wanted(loc, locales)
+                    and not (_okind == MB_LANG_ORIGIN
+                             and not _has_structured_unity)):
                 result.skipped.append({"path": item["full"],
                                        "reason": "locale %s không phải %s"
                                                  % (loc or "không xác định", wanted_txt)})
@@ -2429,9 +2600,7 @@ def run_extraction(req: ExtractionRequest) -> ExtractionResult:
                 continue
             outcome = _outcome_for(table, rec, item["full"], loc, entries)
             outcome.sha256 = file_sha
-            outcome.origin_kind = _origin_kind_for(
-                item["full"], item["layer"], rec.plugin_id,
-                flavor=(table.schema_hint or {}).get("flavor"))
+            outcome.origin_kind = _okind
             result.files.append(outcome)
             result.total_entries += len(outcome.kv)
             result.generated_keys.extend(
@@ -2506,7 +2675,19 @@ def run_extraction(req: ExtractionRequest) -> ExtractionResult:
             _merge_targets = {str(req.locale).lower()}
         if _merge_targets:
             _present = {str(f.locale).lower() for f in result.files if f.locale}
-            _merge_targets = _expand_merge_targets(_merge_targets, _present)
+            # MERGE-MB-GENERIC: thêm mọi locale có trên outcome MB tách
+            # ngôn ngữ (đã miễn lọc mềm ở trên) — CHỈ khi game không có
+            # nguồn có cấu trúc nào; merge_language_outcomes kiểm tra
+            # lại quyền ưu tiên này một lần nữa trước khi gộp.
+            _mb_locales = {str(f.locale).lower() for f in result.files
+                           if f.origin_kind == MB_LANG_ORIGIN and f.locale and f.kv}
+            _has_structured_files = any(
+                f.origin_kind in STRUCTURED_ORIGINS and f.kv
+                for f in result.files)
+            _mb_arg = (_mb_locales if _mb_locales and not _has_structured_files
+                       else None)
+            _merge_targets = _expand_merge_targets(
+                _merge_targets, _present, _mb_arg)
         if _merge_targets:
             _apply_merge(result, _merge_targets)
             for _ms in result.merged_files:
@@ -2714,7 +2895,8 @@ def _origin_kind_for(full_path: str, layer, plugin_id: str,
     """origin_kind của một outcome (BUG#2).
 
     Ưu tiên bảng origin của lớp virtual (_build_layers đã gắn thẻ từng
-    file ảo: language_source / string_table / generic_flat / text_asset).
+    file ảo: language_source / string_table / generic_flat /
+    monobehaviour_lang / text_asset).
     File thường (không nằm trong lớp virtual): generic_strings là dò chuỗi
     thô -> generic_flat; plugin cấu hình (apple_plist) -> other; còn lại
     là file locale có cấu trúc -> text_asset.

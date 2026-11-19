@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Kiem tra tinh muc C7: sdk/patch_pack.py chi stdlib + Python 3.9;
-manifest (files.json 109, tests.json 191); sw.js precache co
-sdk/patch_pack.py va CACHE_VERSION v53-20261118; bridge co op patch_pack;
+manifest (files.json 109, tests.json 192); sw.js precache co
+sdk/patch_pack.py va CACHE_VERSION v54-20261118; bridge co op patch_pack;
 UI co 2 nut xuat pack; khong co chuoi cam theo luat iSH-only trong
 patch_pack.py (ca chuoi template cua script ap). In JSON {"fails": [...]}.
 """
@@ -88,8 +88,8 @@ if len(files) != 109:
 if "pb3/sdk/patch_pack.py" not in files:
     fails.append("files.json thieu pb3/sdk/patch_pack.py")
 tests = json.loads((SITE / "pb3" / "tests.json").read_text())["files"]
-if len(tests) != 191:
-    fails.append("tests.json co %d file, ky vong 191" % len(tests))
+if len(tests) != 192:
+    fails.append("tests.json co %d file, ky vong 192" % len(tests))
 if "pb3/tests/test_patch_pack.py" not in tests:
     fails.append("tests.json thieu pb3/tests/test_patch_pack.py")
 
@@ -97,8 +97,8 @@ if "pb3/tests/test_patch_pack.py" not in tests:
 sw = (SITE / "sw.js").read_text(encoding="utf-8")
 if '"pb3/sdk/patch_pack.py"' not in sw:
     fails.append("sw.js precache thieu pb3/sdk/patch_pack.py")
-if 'CACHE_VERSION = "v53-20261118"' not in sw:
-    fails.append("sw.js CACHE_VERSION khong phai v53-20261118")
+if 'CACHE_VERSION = "v54-20261118"' not in sw:
+    fails.append("sw.js CACHE_VERSION khong phai v54-20261118")
 
 # 6. bridge co op patch_pack + khong goi mang trong patch_pack.py.
 bridge = (SITE / "pb3" / "bridge.py").read_text(encoding="utf-8")
