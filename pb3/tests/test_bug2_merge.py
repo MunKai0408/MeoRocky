@@ -114,9 +114,55 @@ class VariantFallbackCase(unittest.TestCase):
                  origin="language_source"),
         ]
         merged, _stats = merge_language_outcomes(files, {"zh-tw"})
-        self.assertEqual(len(merged), 1)
-        self.assertEqual(merged[0].locale, "zh-TW")
-        self.assertEqual(merged[0].kv, {"T1": "你好（繁）"})
+        # Knightica (2026-11-19): bảng "zh" có cấu trúc (giản thể) KHÔNG
+        # còn bị lấp vào file phồn thể khi đích đã có bảng cùng họ nguồn —
+        # outcome "zh" đi qua nguyên vẹn (không thuộc target), file gộp
+        # zh-TW giữ đúng giá trị phồn thể.
+        by_merged = [f for f in merged if f.merged]
+        self.assertEqual(len(by_merged), 1)
+        self.assertEqual(by_merged[0].locale, "zh-TW")
+        self.assertEqual(by_merged[0].kv, {"T1": "你好（繁）"})
+        self.assertEqual([f.locale for f in merged if not f.merged], ["zh"])
+
+    def test_structured_zh_not_folded_into_same_family_traditional(self):
+        # Knightica (2026-11-19): bảng StringTable "zh" (giản thể) + bảng
+        # StringTable "zh-hant" (phồn thể) cùng họ nguồn — giản thể KHÔNG
+        # được lấp vào file phồn thể; xin zh ra 2 file riêng.
+        files = [
+            _out("u::st.zh.json", "zh",
+                 {"K1": "游戏", "K2": "开始"}, origin="string_table"),
+            _out("u::st.zh-hant.json", "zh-hant",
+                 {"K1": "遊戲", "K3": "設定"}, origin="string_table"),
+        ]
+        merged, stats = merge_language_outcomes(files, {"zh-cn", "zh-hant"})
+        by_locale = {f.locale: f for f in merged if f.merged}
+        self.assertEqual(set(by_locale), {"zh-CN", "zh-Hant"})
+        self.assertEqual(by_locale["zh-CN"].kv,
+                         {"K1": "游戏", "K2": "开始"})
+        self.assertEqual(by_locale["zh-Hant"].kv,
+                         {"K1": "遊戲", "K3": "設定"})
+        by_stat = {s["locale"]: s for s in stats}
+        self.assertEqual(by_stat["zh-CN"]["file"], "zh-CN.json")
+        self.assertEqual(by_stat["zh-Hant"]["file"], "zh-Hant.json")
+        self.assertEqual(by_stat["zh-CN"]["conflicts_total"], 0)
+        self.assertEqual(by_stat["zh-Hant"]["conflicts_total"], 0)
+
+    def test_structured_zh_single_traditional_target_stays_pure(self):
+        # Xin thẳng zh-hant khi game có ST zh + ST zh-hant: file phồn thể
+        # chỉ chứa dữ liệu phồn thể, không lấp key giản thể.
+        files = [
+            _out("u::st.zh.json", "zh",
+                 {"K1": "游戏", "K2": "开始"}, origin="string_table"),
+            _out("u::st.zh-hant.json", "zh-hant",
+                 {"K1": "遊戲", "K3": "設定"}, origin="string_table"),
+        ]
+        merged, _stats = merge_language_outcomes(files, {"zh-hant"})
+        by_merged = {f.locale: f for f in merged if f.merged}
+        self.assertEqual(set(by_merged), {"zh-Hant"})
+        self.assertEqual(by_merged["zh-Hant"].kv,
+                         {"K1": "遊戲", "K3": "設定"})
+        # Outcome "zh" (giản thể) đi qua nguyên vẹn, không lọt vào file gộp.
+        self.assertEqual([f.locale for f in merged if not f.merged], ["zh"])
 
     def test_prefer_non_empty_fills_empty(self):
         files = [
@@ -152,6 +198,26 @@ class ExpandMergeTargetsCase(unittest.TestCase):
     def test_explicit_variant_stays_variant(self):
         self.assertEqual(
             _expand_merge_targets({"zh-cn"}, {"zh-cn", "zh-tw"}), {"zh-cn"})
+
+    def test_base_and_variant_present_keeps_base_as_simplified(self):
+        # Knightica (2026-11-19): dữ liệu có cả bảng "zh" (giản thể) lẫn
+        # "zh-hant" (phồn thể) — xin zh ra cả 2 target, "zh" thành "zh-cn".
+        self.assertEqual(
+            _expand_merge_targets({"en", "zh"}, {"en", "zh", "zh-hant"}),
+            {"en", "zh-cn", "zh-hant"})
+
+    def test_explicit_simplified_variant_uses_base_zh(self):
+        # Xin thẳng zh-cn mà game chỉ có bảng "zh": bảng đó là giản thể.
+        self.assertEqual(
+            _expand_merge_targets({"zh-cn"}, {"en", "zh"}), {"zh-cn"})
+        self.assertEqual(
+            _expand_merge_targets({"zh-hans"}, {"en", "zh"}), {"zh-hans"})
+
+    def test_explicit_traditional_variant_not_fabricated_from_base_zh(self):
+        # Xin thẳng zh-tw mà game chỉ có bảng "zh" (giản thể): không bịa
+        # file phồn thể từ dữ liệu giản thể.
+        self.assertEqual(
+            _expand_merge_targets({"zh-tw"}, {"en", "zh"}), set())
 
 
 class ExportMergeModeCase(unittest.TestCase):

@@ -1804,6 +1804,10 @@ MERGE_ORIGINS = frozenset({"language_source", "string_table", "text_asset",
 # Nguồn ngôn ngữ CÓ CẤU TRÚC — sự hiện diện của chúng chặn MB-generic.
 STRUCTURED_ORIGINS = frozenset({"language_source", "string_table",
                                 "text_data_list"})
+# Biến thể phồn thể của tiếng Trung (mã chữ thường). Bảng "zh" có cấu trúc
+# là dữ liệu GIẢN THỂ, không phải fallback chung — xem vòng fallback trong
+# merge_language_outcomes (Knightica 2026-11-19).
+_ZH_TRADITIONAL_TARGETS = frozenset({"zh-tw", "zh-hant", "zh-hk", "zh-mo"})
 
 
 def _mb_admissible(origin_kind: str, has_structured: bool) -> bool:
@@ -1872,6 +1876,14 @@ def merge_language_outcomes(files: List[FileOutcome],
         GỐC ("zh") được gộp làm fallback SAU các outcome biến thể của cùng
         target (vd bảng StringTable chỉ có cột "zh" thì cả zh-CN lẫn zh-TW
         đều lấy giá trị đó); biến thể luôn thắng mã gốc khi trùng key.
+        Knightica (2026-11-19): NGOẠI LỆ — bảng "zh" CÓ CẤU TRÚC là dữ
+        liệu GIẢN THỂ, không phải fallback chung: khi target phồn thể
+        ("zh-TW"/"zh-Hant"...) đã có outcome đúng mã của nó từ CÙNG họ
+        nguồn (vd ST zh + ST zh-hant) thì outcome "zh" KHÔNG được lấp
+        vào target đó (kẻo trộn giản thể vào file phồn thể). MB "zh"
+        (không rõ biến thể) vẫn lấp cả 2 biến thể như cũ; "zh" khác họ
+        nguồn với bảng đích (ST zh lấp cho I2 zh-TW) vẫn lấp để không
+        mất key.
       - Trùng key, GIỐNG hệt giá trị: gộp 1 bản, đếm duplicates_identical
         (không mất chuỗi — giá trị giống hệt nhau từng byte).
       - Trùng key, bản giữ là "" (bản dịch thiếu, đã điền từ SharedTableData
@@ -1920,6 +1932,17 @@ def merge_language_outcomes(files: List[FileOutcome],
         for f in files:
             if (f.locale is not None and f.locale.lower() == base and f.kv
                     and _admissible(f)):
+                if (base == "zh" and target in _ZH_TRADITIONAL_TARGETS
+                        and f.origin_kind in STRUCTURED_ORIGINS
+                        and any(g.locale is not None
+                                and g.locale.lower() == target
+                                and g.origin_kind == f.origin_kind
+                                and g.kv and _admissible(g)
+                                for g in files)):
+                    # Knightica (2026-11-19): bảng "zh" có cấu trúc là
+                    # dữ liệu GIẢN THỂ — target phồn thể đã có bảng của
+                    # nó từ cùng họ nguồn thì không lấp giản thể vào.
+                    continue
                 by_lang.setdefault(target, []).append(f)
     if not by_lang:
         # Game không có locale gắn nhãn nào: gộp text chưa gắn locale
@@ -2043,6 +2066,16 @@ def _expand_merge_targets(requested, present_locales, mb_locales=None) -> set:
     "zh.json" nữa); chỉ khi dữ liệu không có biến thể nào thì target mới
     là chính mã gốc (vd game chỉ có bảng "zh" thì ra zh.json). Mã xin đã
     là biến thể ("zh-CN") thì chỉ target đúng mã đó.
+    Knightica (2026-11-19): dữ liệu có CẢ mã gốc lẫn biến thể (bảng
+    StringTable "zh" giản thể + "zh-hant" phồn thể) thì mã gốc là dữ
+    liệu thật của một biến thể, KHÔNG phải fallback chung — giữ nó làm
+    target riêng; riêng "zh" -> "zh-cn" (giản thể là biến thể mặc định
+    của zh khi đã có biến thể phồn thể; xem _LOCALE_NAME_OVERRIDES:
+    "Chinese (Simplified)" -> "zh"). Xin thẳng biến thể giản thể
+    ("zh-cn"/"zh-hans") mà game chỉ có bảng "zh" thì target biến thể
+    đó (bảng "zh" chính là dữ liệu giản thể); xin thẳng biến thể phồn
+    thể mà chỉ có bảng "zh" thì KHÔNG target (không bịa file phồn thể
+    từ dữ liệu giản thể). Xem merge_language_outcomes (vòng fallback).
     Ngoại lệ MB (merge-mb-generic): MB "zh" KHÔNG rõ biến thể nên ra CẢ
     zh-CN lẫn zh-TW (theo chuẩn của tool: xin zh thì ra cả 2 biến thể),
     không ra zh.json — outcome "zh" làm fallback cho cả 2 target như
@@ -2055,7 +2088,11 @@ def _expand_merge_targets(requested, present_locales, mb_locales=None) -> set:
                     if p != r and disc.locale_base(p) == r}
         if variants:
             targets.update(variants)
+            if r in present:
+                targets.add("zh-cn" if r == "zh" else r)
         elif r in present:
+            targets.add(r)
+        elif r in ("zh-cn", "zh-hans") and "zh" in present:
             targets.add(r)
     for m in sorted({str(x).lower() for x in (mb_locales or set())}):
         if m == "zh":
