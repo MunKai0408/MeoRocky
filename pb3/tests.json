@@ -147,6 +147,7 @@
   "pb3/tests/test_logging_limits.py",
   "pb3/tests/test_mb_write.py",
   "pb3/tests/test_mb_write_rest.py",
+  "pb3/tests/test_merge_mb_generic.py",
   "pb3/tests/test_merge_one_file.py",
   "pb3/tests/test_model.py",
   "pb3/tests/test_more_langs_glossary.py",
