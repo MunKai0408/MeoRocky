@@ -203,6 +203,25 @@ class ThreadedSuite(unittest.TestSuite):
     hợp tác trong tiến trình: không giả vờ kill, chỉ bỏ lại."""
     timeout = 180.0
 
+    def _timeout_for(self, test):
+        """Timeout cho 1 test (giây, đã nhân hệ số máy): `timeout_s`
+        trên phương thức test, rồi trên lớp test, mặc định là timeout
+        chung của suite. Test dài (vd round-trip PB3 ~16 phút) đặt
+        riêng thay vì nâng trần chung — trần chung vẫn bắt test treo."""
+        method = getattr(test, getattr(test, "_testMethodName", ""), None)
+        base = getattr(method, "timeout_s", None)
+        if base is None:
+            base = getattr(test.__class__, "timeout_s", None)
+        if base is None:
+            return self.timeout
+        try:
+            base = float(base)
+        except (TypeError, ValueError):
+            return self.timeout
+        if base <= 0:
+            return self.timeout
+        return base * T.timeout_scale()
+
     def run(self, result):
         for test in self:
             if result.shouldStop:
@@ -235,10 +254,11 @@ class ThreadedSuite(unittest.TestSuite):
             collector = _Collector()
             th = threading.Thread(target=test.run, args=(collector,), daemon=True)
             th.start()
-            th.join(self.timeout)
+            timeout = self._timeout_for(test)
+            th.join(timeout)
             if th.is_alive():
                 result.addError(test, (TimeoutError, TimeoutError(
-                    "test vượt %.0fs, bỏ qua (thread bị bỏ lại, không kill được)" % self.timeout), None))
+                    "test vượt %.0fs, bỏ qua (thread bị bỏ lại, không kill được)" % timeout), None))
                 result.timeouts = getattr(result, "timeouts", 0) + 1
             else:
                 for t2, err in collector.raw_errors:

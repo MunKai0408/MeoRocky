@@ -698,6 +698,33 @@ class TestTimeoutSubprocess(TmpCase):
         finally:
             shutil.rmtree(os.path.dirname(dest), ignore_errors=True)
 
+    def test_per_test_timeout_s_overrides_suite(self):
+        # timeout_s tren phuong thuc test (600s) nhan he so may (0.01)
+        # -> 6s: test ngu 2s van dat; test cung ngu 2s nhung khong co
+        # override thi dung tran chung (180s -> 1,8s) va timeout.
+        dest = _copy_repo()
+        try:
+            with open(os.path.join(dest, "tests", "test_timeout_tmp.py"), "w", encoding="utf-8") as f:
+                f.write("import threading\nimport unittest\n\n\n"
+                        "class TestSlowTmp(unittest.TestCase):\n"
+                        "    def test_slow_with_override(self):\n"
+                        "        threading.Event().wait(2)\n"
+                        "    test_slow_with_override.timeout_s = 600\n"
+                        "    def test_slow_without_override(self):\n"
+                        "        threading.Event().wait(2)\n")
+            env = dict(os.environ)
+            env["PB3_TEST_TIMEOUT_SCALE"] = "0.01"   # tran chung 180s -> 1,8s; override 600s -> 6s
+            r = subprocess.run([sys.executable, "run_tests.py", "tests/test_timeout_tmp.py"],
+                               cwd=dest, capture_output=True, text=True, timeout=subprocess_timeout(120), env=env)
+            self.assertEqual(r.returncode, 1, r.stdout[-2000:])
+            self.assertIn("Ran 2 tests", r.stdout)
+            self.assertIn("lỗi=1", r.stdout)
+            self.assertIn("Timeout", r.stdout)
+            self.assertIn("không lập mốc", r.stdout)
+            self.assertFalse(os.path.exists(os.path.join(dest, "reports", "test_baseline.json")))
+        finally:
+            shutil.rmtree(os.path.dirname(dest), ignore_errors=True)
+
 
 class TestCtrlC(TmpCase):
     def test_ctrl_c_saves_partial_and_reports_130(self):

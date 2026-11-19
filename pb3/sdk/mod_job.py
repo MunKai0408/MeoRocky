@@ -54,7 +54,10 @@ import base64
 import hashlib
 import json
 import os
-import resource
+try:
+    import resource  # khong co tren Pyodide -> peak_ram_mb = 0.0
+except ImportError:
+    resource = None
 import shutil
 import time
 import zipfile
@@ -405,7 +408,10 @@ def run_mod_job(*, ipa_path, original_path, translation_path, out_dir,
         summary["ok"] = status in ("done", "gate_only_pass")
         summary["note"] = note
         elapsed = time.monotonic() - t0
-        peak_mb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024.0
+        if resource is not None:
+            peak_mb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024.0
+        else:
+            peak_mb = 0.0
         summary["elapsed_seconds"] = round(elapsed, 1)
         summary["timings"] = dict(timings)
         summary["timings"]["total_seconds"] = round(elapsed, 1)

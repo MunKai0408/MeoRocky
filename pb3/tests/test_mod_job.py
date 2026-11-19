@@ -476,6 +476,7 @@ class TestModJobEngine(TmpCase):
                 game="x", engine="unreal")
 
 
+@slow
 class TestModJobRoundTripRealGames(TmpCase):
     """Round-trip tren game Unity that (chi chay khi IPA co san o
     ~/workspace/test-ipas — bo qua neu thieu). Ban dich [FIXTURE]:
@@ -483,6 +484,14 @@ class TestModJobRoundTripRealGames(TmpCase):
     key) — khong phai ban dich that cua user. EK2 khong round-trip
     duoc (bundle ma hoa) nen co test fail-closed rieng, khong dung
     _round_trip."""
+
+    # Tran timeout rieng cho runner (run_tests.py: mac dinh 180s):
+    # PB3 round-trip do that ~16 phut (cong 370s + ep 185s + repack
+    # 58s + kiem lai 370s, test ~25 phut); 9K ~230s — ca 2 deu vuot
+    # 180s. EK2 fail-closed nhanh (~46s) nhung o chung lop nen
+    # cung huong tran nay (tran la gioi han tren, khong phai muc
+    # tieu thoi gian).
+    timeout_s = 1800
 
     def _vi_fixture(self, en):
         return {k: ("[VI] " + v if v else "[VI]") for k, v in en.items()}
@@ -671,11 +680,14 @@ class TestNotebookModCell(TmpCase):
 
         job = _mod_job(translation_file_id=self.TRANS2_ID,
                        game_file_name="game.unity3d", repack=False)
+        work_dir = Path(self.tmp) / "work"
+        drive_dir = Path(self.tmp) / "drive"
         ns = {"REPO_DIR": str(ROOT.parent), "JOB": job,
               "IPA_PATH": str(bundle), "GAME_NAME": "test-game",
               "GAME_FILE_NAME": "game.unity3d",
+              "MOD_WORK_DIR": str(work_dir), "MOD_DRIVE_DIR": str(drive_dir),
               "download_by_file_id": _download}
-        mod_out = Path("/content/drive/MyDrive/MeoRocky-output/game-mod")
+        mod_out = drive_dir / "MeoRocky-output" / "game-mod"
         try:
             exec(compile(src, "<cell mod>", "exec"), ns)  # noqa: S102
             summary = ns["_summary"]
@@ -688,7 +700,7 @@ class TestNotebookModCell(TmpCase):
             self.assertFalse((mod_out / "rebuild.zip").exists())
         finally:
             shutil.rmtree(mod_out, ignore_errors=True)
-            for p in ("/content/original.json", "/content/translation.json"):
+            for p in (work_dir / "original.json", work_dir / "translation.json"):
                 try:
                     os.unlink(p)
                 except OSError:
