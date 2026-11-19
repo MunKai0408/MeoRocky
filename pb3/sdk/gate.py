@@ -374,7 +374,8 @@ def check_font_coverage(translations: Dict[str, str],
                         fonts: Optional[List[Dict[str, Any]]], *,
                         display_fonts: Any = (),
                         font_error: Optional[str] = None,
-                        target_lang: str = "vi"
+                        target_lang: str = "vi",
+                        font_check: Optional[Dict[str, Any]] = None
                         ) -> Dict[str, Any]:
     """(d) Moi ky tu DUNG trong ban dich phai nam trong vung
     phu cua font se hien thi (bo chu cua ngon ngu dich: vi = 142 muc
@@ -392,10 +393,18 @@ def check_font_coverage(translations: Dict[str, str],
       font game quet chi theo bo chu tieng Viet (142 muc) nen khong
       kiem duoc chu co dau cua dich khac (vd a/o/u cua tieng Duc);
       KHONG tu cho la dat. Hay chon font hien thi de kiem that.
-    - Font khong doc duoc bytes (font nhung Unity, TTC): liet ke ro
-      la "chua kiem duoc", dem vao canh bao, khong tu cho la dat hay
-      hong — gioi han doc cua sdk/font (xem font.py).
+    - Font khong doc duoc bytes (font nhung Unity khong trich duoc
+      TTF, TTC): liet ke ro la "chua kiem duoc", dem vao canh bao,
+      khong tu cho la dat hay hong. Font object trich duoc m_FontData
+      (sdk/font_check) thi doc duoc nhu font roi — ap luat "moi font
+      doc duoc phai phu het chu dang dung" nhu binh thuong.
     - Ban dich khong dung chu nao trong bo chu cua dich thi PASS (ghi ro).
+
+    Bao cao 3 tang (sdk/font_check.build_gate_report) nam o
+    font_check_3step trong ket qua: (1) font tim duoc, (2) atlas SDF,
+    (3) cmap TTF nguon + population mode + fallback. Chi thong tin —
+    KHONG doi verdict. font_check: bao cao da enrich san (bridge truyen
+    vao); trong thi tu xay tu danh sach font hien co (best-effort).
     """
     _validate_kv(translations, "translations")
     # vi dùng đúng bộ 142 mục gốc (sdk.font.REQUIRED_VIETNAMESE); đích
@@ -518,13 +527,24 @@ def check_font_coverage(translations: Dict[str, str],
             "supplied": ent["supplied"], "reason": ent["reason"],
             "num_glyphs": ent["num_glyphs"],
         })
+    # Bao cao 3 tang (chi thong tin, khong doi verdict): dung bao cao
+    # da enrich neu co, khong thi xay best-effort tu danh sach font.
+    if font_check is not None:
+        three_step = font_check
+    else:
+        try:
+            from sdk import font_check as _fc
+            three_step = _fc.build_gate_report(entries, target_lang)
+        except Exception:  # noqa: BLE001 - bao cao phu, loi thi bo
+            three_step = None
     return _check(
         CHECK_FONTS, "Font hiển thị", status, summary,
         failures, warnings,
         {"fonts": len(scanned), "readable": len(readable),
          "unreadable": len(unreadable), "display_fonts": len(supplied),
          "used_vietnamese": len(used), "target_lang": target_lang},
-        fonts=report_fonts, used_chars=[chr(cp) for cp in used])
+        fonts=report_fonts, used_chars=[chr(cp) for cp in used],
+        font_check_3step=three_step)
 
 
 # ------------------------------------------- (f) atlas SDF tai tao (TMP)
@@ -1164,14 +1184,16 @@ def run_gate(source_bytes: bytes, *, source_name: str,
              pressed_path: Optional[str] = None,
              allow_partial: bool = False,
              source_locale: str = "en",
-             target_lang: str = "vi") -> Dict[str, Any]:
+             target_lang: str = "vi",
+             font_check: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Chay cong kiem tra day du, tra 1 verdict duy nhat.
 
     Khong ghi file nao. Loi dau vao (translations/source/allowlist sai
     kieu, provenance khong nhan ra) thi raise ValueError nhu (E). Loi
     noi dung file (ma hoa, khong doc duoc don vi) thi tra verdict
     FAIL kem ly do, khong raise — cong luon tra verdict khi dau vao
-    hop le."""
+    hop le. font_check: bao cao font 3 buoc da enrich (sdk/font_check)
+    — chi thong tin trong font_check_3step, khong doi verdict."""
     _validate_kv(translations, "translations")
     if not translations:
         raise ValueError("translations phải là JSON object không rỗng "
@@ -1259,7 +1281,8 @@ def run_gate(source_bytes: bytes, *, source_name: str,
     check_d = check_font_coverage(translations, fonts,
                                   display_fonts=display_fonts,
                                   font_error=font_error,
-                                  target_lang=target_lang)
+                                  target_lang=target_lang,
+                                  font_check=font_check)
     _prog(5)
 
     # (c) diffverify.
@@ -1468,6 +1491,7 @@ def run_gate(source_bytes: bytes, *, source_name: str,
         },
         "partial": bool(allow_partial),
         "fonts": check_d.get("fonts", []),
+        "font_check_3step": check_d.get("font_check_3step"),
         "note": "Cổng kiểm tra trước khi giao (bước 6): FAIL thì chặn giao, không có đường giao khi cảnh báo. "
                 "Kết quả này chỉ đúng cho đúng file gốc + bản dịch + provenance đã kiểm (xem sha).",
     }

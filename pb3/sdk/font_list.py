@@ -27,9 +27,10 @@ gốc trong tab trình duyệt.
   KHÔNG gộp được (fail-closed).
 - Font TTC: đọc/gộp ĐƯỢC từng face bằng sdk/font.merge_vietnamese
   (chọn face_index); kế hoạch dùng chung 1 font chưa gộp TTC tự động.
-- Font nhúng trong SerializedFile (Font object, class 128): chỉ liệt
-  kê được tên/path_id, KHÔNG đọc được bytes font, KHÔNG sửa được
-  object — đường làm là thay bằng font đủ dấu trong Unity Editor.
+- Font nhúng trong SerializedFile (Font object, class 128): bytes TTF
+  trong m_FontData ĐỌC ĐƯỢC để kiểm cmap qua sdk/font_check (check
+  font 3 bước — Kusa 8/8 font trích OK); KHÔNG sửa được object — đường
+  làm là thay bằng font đủ dấu trong Unity Editor.
 - Đưa font đã gộp trở lại vào .assets/IPA: web KHÔNG đóng gói lại
   file gốc; người dùng thay trong Unity Editor hoặc dùng bản iSH.
 
@@ -77,9 +78,10 @@ LIMITS = [
     "font_merge (chọn face), chưa gộp tự động trong kế hoạch dùng "
     "chung 1 font — các loại không gộp được chỉ thay bằng Be Vietnam "
     "Pro rồi trỏ lại tham chiếu trong Unity Editor.",
-    "Font nhúng trong SerializedFile (Font object, class 128) chỉ liệt "
-    "kê được tên/path_id — không đọc được bytes font, không sửa được "
-    "object; thay bằng font đủ dấu trong Unity Editor.",
+    "Font nhúng trong SerializedFile (Font object, class 128): bytes "
+    "TTF trong m_FontData ĐỌC ĐƯỢC để kiểm cmap qua sdk/font_check "
+    "(check font 3 bước); KHÔNG sửa được object; thay bằng font đủ "
+    "dấu trong Unity Editor.",
     "Web KHÔNG đóng gói font đã gộp trở lại vào .assets/IPA gốc — "
     "người dùng thay trong Unity Editor (hoặc dùng bản iSH để ghi "
     "ngược vào file đã dựng lại).",
@@ -267,7 +269,8 @@ def _scan_serialized(sf, source: str, out: dict) -> None:
             "status": "unreadable",
             "reason": "Font nhúng trong SerializedFile (Font object, class "
                       "128): chỉ liệt kê được tên/path_id, không đọc được "
-                      "bytes font nên không kiểm được độ phủ.",
+                      "bytes font nên không kiểm được độ phủ (xem nút "
+                      "'Kiểm tra font 3 bước' để đọc cmap từ m_FontData).",
         })
 
 

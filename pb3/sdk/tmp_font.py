@@ -66,7 +66,9 @@ SCHEMA = "tmp_fonts/1"
 NOT_DONE = [
     "giải mã ảnh atlas (Texture2D) và kiểm glyph có hình",
     "liên kết TextMeshPro component -> TMP_FontAsset đang dùng thật",
-    "bảng kerning, fallback font, font weights, giá trị shader SDF trong material",
+    "bảng kerning, font weights, giá trị shader SDF trong material "
+    "(bang fallback font m_FallbackFontAssetTable DOC DUOC qua typetree "
+    "— xem sdk/font_check.read_tmp_asset_typetree)",
     "tạo TMP_FontAsset fallback trên web (mục C6 làm phần kế hoạch + script "
     "Editor; atlas SDF của fallback sinh bằng sdk/sdf.py)",
 ]

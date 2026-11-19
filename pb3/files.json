@@ -67,6 +67,7 @@
   "pb3/sdk/exporters.py",
   "pb3/sdk/extraction.py",
   "pb3/sdk/font.py",
+  "pb3/sdk/font_check.py",
   "pb3/sdk/font_list.py",
   "pb3/sdk/format_probe.py",
   "pb3/sdk/formats.py",

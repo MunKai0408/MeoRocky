@@ -8,6 +8,9 @@ Phạm vi đợt tổng cuối — nhóm font, chế độ (1)–(4):
   tính lại checksum — xử lý cả glyph đơn và glyph composite.
 - Liệt kê Font object nhúng trong SerializedFile (class 128) để quét
   font trong bundle Unity (chỉ liệt kê + cảnh báo, không sửa object).
+  Bytes TTF nhúng trong m_FontData ĐỌC ĐƯỢC để kiểm cmap
+  (sdk/font_check.extract_font_data + check_source_font — Kusa 8/8
+  font trích OK [ĐÃ ĐO THẬT]); vẫn KHÔNG sửa được bytes object.
 
 GIỚI HẠN TRUNG THỰC (xem handoff/final_font.md):
 - Gộp được font TrueType có outline glyf (sfnt 0x00010000/"true") VÀ
@@ -31,10 +34,12 @@ GIỚI HẠN TRUNG THỰC (xem handoff/final_font.md):
   chữ ký gốc). Bảng cmap dựng lại chỉ giữ 1 subtable (format 4 hoặc
   format 12 — chọn bản nhỏ hơn khi toàn bộ ký tự trong BMP, format 12
   khi có ký tự ngoài BMP).
-- Font nhúng trong SerializedFile (Font object, class 128): đợt này
-  chỉ liệt kê, KHÔNG sửa được bytes object (chưa có parser/writer
-  cho Font object); thay thế chỉ làm được với file .ttf rời hoặc
-  entry .ttf trong container ZIP/IPA.
+- Font nhúng trong SerializedFile (Font object, class 128): bytes TTF
+  trong m_FontData ĐỌC ĐƯỢC để kiểm cmap (sdk/font_check: quet sfnt
+  magic + validate table directory — Kusa 8/8 font trich OK, docstring
+  cu noi "khong doc duoc bytes" da sai); van KHONG sua duoc bytes
+  object (chua co parser/writer cho Font object); thay the chi lam
+  duoc voi file .ttf roi hoac entry .ttf trong container ZIP/IPA.
 """
 from __future__ import annotations
 
