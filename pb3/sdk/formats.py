@@ -119,13 +119,20 @@ def make_entries(pairs: List[Tuple], path: str, size: int,
     entries: List[LocEntry] = []
     conflicts: List[Dict[str, Any]] = []
     seen = set()
+    # SPEED-EXTRACT (2026-11-18): mọi entry trong 1 lần gọi đều chung nguồn
+    # (cùng path/size/encoding) nên chỉ dựng 1 SourceRef rồi dùng chung —
+    # trước đây dựng 1 SourceRef MỚI cho mỗi entry (9K: 161.100 SourceRef,
+    # 0,41 s tottime + 0,92 s cumulative trong __post_init__ [ĐÃ ĐO THẬT]
+    # bằng profile). SourceRef dùng chung KHÔNG được sửa sau khi tạo (không
+    # có code nào sửa entry.source — xem grep .source.*=); notes vẫn là list
+    # riêng từng entry vì _normalize_table có append vào e.notes.
+    src = SourceRef([path], path, None, size, encoding, {})
     for item in pairs:
         if len(item) == 5:
             key, value, status, notes, loc = item
         else:
             key, value, status, notes = item
             loc = locale
-        src = SourceRef([path], path, None, size, encoding, {})
         dup = (loc, key) in seen
         seen.add((loc, key))
         if dup:
@@ -222,6 +229,19 @@ class FormatPluginBase(Plugin):
     def probe(self, ctx: PluginContext, cand: Candidate) -> Dict[str, Any]:
         try:
             data = ctx.vfs.read(cand.path, max_bytes=ctx.limits.max_entry_bytes)
+            # SPEED-EXTRACT (2026-11-18): plugin nào có _probe_bytes (đếm
+            # nhẹ — chỉ trả số lượng, KHÔNG dựng LocEntry) thì dùng nó:
+            # probe toàn pipeline chỉ cần ok + entries>0 cho trọng tài
+            # (xem _contender), còn test test_probe_counts_entries khóa số
+            # entries CHÍNH XÁC nên _probe_bytes phải đếm đúng bằng _parse_bytes
+            # (kể cả key trùng) hoặc fallback về _parse_bytes đầy đủ.
+            hook = getattr(self, "_probe_bytes", None)
+            if callable(hook):
+                counts = hook(data, cand.path, ctx.locale.code)
+                return {"ok": True, "schema": self.FLAVOR,
+                        "entries": int(counts.get("entries", 0)),
+                        "warnings": int(counts.get("warnings", 0)),
+                        "conflicts": int(counts.get("conflicts", 0))}
             res = self._parse_bytes(data, cand.path, ctx.locale.code)
             return {"ok": True, "schema": self.FLAVOR, "entries": len(res["entries"]),
                     "warnings": len(res.get("warnings", [])),
