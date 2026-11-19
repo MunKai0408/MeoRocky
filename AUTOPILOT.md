@@ -758,3 +758,81 @@ diff -rq -x __pycache__ -x logs -x reports -x workspace -x .pytest_cache <pristi
 
 P0-4 (BỎ QUA, chờ Joseph — xem "Chờ Joseph" #5; quay lại khi có đủ ảnh) → P1-1 → P1-2 → P1-3 (I1) → P1-4 (I2) →
 P1-5 (I3) → P2-1 → P2-2 → P2-3 → P2-4 → P3. Tiêu chí XONG từng mục theo brief mục 7.
+
+## Text-data list (2026-11-19) — v61 (nhánh `feat/localization-text-data`)
+
+- Phương pháp trích xuất text 5 bước của anh Duy (game Nhiệt Huyết Sinh Tồn
+  v1.0.3, 14:00–14:01 +07 19/11): StringTable chỉ 2 key tên game (ngõ cụt);
+  quét 1.484 bundle tìm đúng 1 chỗ chứa text — MonoBehaviour
+  `LocalizationTextData`, `m_DataList` 2.279 entry (key + fileName nhóm +
+  15 cột ngôn ngữ); en.json = cột `en` trích riêng.
+- Cơ chế chung (`pb3/sdk/text_data.py`, mới): detector nhận diện bằng cấu trúc
+  (list entry có key chuỗi + ≥2 cột tên mã locale + trường nhóm tùy chọn),
+  không hardcode tên game/bundle/class/field; `zhs`→`zh-CN`, `zht`→`zh-TW`;
+  ≥10 entry, fail-closed về generic khi mơ hồ. `unity.py` thêm kind
+  `text_data_list`; `extraction.py` xuất file ảo riêng mỗi locale
+  (`.textdata.monobehaviour.<code>.json`), origin `text_data_list` vào
+  `MERGE_ORIGINS` + `STRUCTURED_ORIGINS`, assert 0 key trùng + 0 value rỗng
+  mọi cột (fail-closed `E_CORRUPT`).
+- Gate: `gate.py` + `exporters.py` đếm cả thẻ ĐÓNG `</...>` (trước đây chỉ thẻ
+  mở — bản dịch rớt `</move>` vẫn qua cổng); `plan.py` giữ nguyên.
+- Kiểm chứng [ĐÃ ĐO THẬT]: Kusa en/zh-CN/zh-TW đúng 2.279 key, 0 rỗng,
+  en md5 `677bbc91…`; main v55 cho Kusa ra 33.819 key (MB-generic soup) —
+  nhánh sửa thành 2.279 key sạch. 9K/EK2/PB3/Tom/PvZ byte-identical với main
+  v55; detector 0 lần kích hoạt trên 5 game cũ. Test mới 29/29 pass;
+  10 check tĩnh `fails: []`; smoke 59/59; harness 4/4.
+- Giới hạn đã biết: probe cap 400 có sẵn (Kusa 1.053 ứng viên, chỉ xét 400
+  đầu) cắt file `localization-*-tables-*.bundle` — không sửa trong PR này;
+  cột `frc` locale None nên không gộp; ScriptableObject class 117 thật chưa
+  hỗ trợ (Kusa dùng class 114).
+
+## Sửa gộp zh (Knightica, 2026-11-19) — v61 (cùng nhánh trên)
+
+- Lệch chuẩn [ĐÃ ĐO THẬT]: xin `zh` trên 斗阵骑士 v1.0.3 chỉ ra 1 file
+  `zh-Hant.json` (1.590 key, trộn giản+phồn) thay vì `zh-CN` + `zh-Hant`
+  riêng. Nguyên nhân 2 bước trong `extraction.py`: `_expand_merge_targets`
+  rớt target `zh` khi đã có biến thể; `merge_language_outcomes` gộp bảng
+  `zh` làm fallback vào nhóm `zh-hant` (86 trùng, 1.328 xung đột, 176 key
+  giản thể lấp vào file phồn thể). BUG, không phải hành vi cố ý — bundle
+  game đặt tên `中文(简体)`, và tool tự quy ước "Chinese (Simplified)"→"zh".
+- Sửa: xin mã gốc mà dữ liệu có cả mã gốc lẫn biến thể thì giữ mã gốc làm
+  target riêng (`zh`→`zh-cn`); xin thẳng `zh-cn`/`zh-hans` mà chỉ có bảng
+  `zh` thì target biến thể đó; xin thẳng biến thể phồn thể mà chỉ có bảng
+  `zh` thì KHÔNG target. Outcome gốc `zh` có cấu trúc KHÔNG lấp vào target
+  phồn thể khi đích đã có outcome đúng mã cùng họ nguồn. MB `zh` (không rõ
+  biến thể) vẫn lấp cả 2 biến thể; `zh` khác họ nguồn với bảng đích
+  (ST `zh` lấp cho I2 `zh-TW`) vẫn lấp để không mất key (test cũ khóa).
+- Thu hẹp (sau khi full suite bắt 1 fail): quy tắc giữ mã gốc làm target
+  riêng CHỈ áp dụng khi mã gốc có trên outcome CÓ CẤU TRÚC
+  (`_expand_merge_targets` nhận thêm `structured_locales` từ
+  `run_extraction`). Fixture `game1.zip` có cột CSV `zh` (text_asset, 2
+  key) + JSON `zh-Hans`: bản sửa đầu tạo thừa `zh-CN.json` (2 key) —
+  CSV `zh` chỉ là nội dung tiếng Trung chung, không phải bản giản thể
+  song sinh. Sau thu hẹp, fixture lại đúng `{en.json, zh-Hans.json}`.
+- Kiểm chứng [ĐÃ ĐO THẬT]: Knightica ra 3 file — en 1.431 key (md5 trùng
+  main v55 `7b630941…`), zh-CN 1.590 key giản thuần (539 value giản, 0 phồn),
+  zh-Hant 1.414 key phồn thuần (448 value phồn; 1 value chứa `游` là từ đúng
+  `游標`); mỗi file gộp từ đúng 1 nguồn, 0 trùng, 0 xung đột. 9K
+  byte-identical với main v55 (en/zh-CN/zh-TW md5 trùng). Tên file theo mã
+  locale của game (Knightica: `zh-Hant`; 9K: `zh-TW`) — không đổi tên
+  `zh-hant`→`zh-TW`.
+- Trade-off đã biết (9K, Dũng flag): 26 value `Policies/*` giản thể có mặt
+  nguyên văn trong cả `zh-CN.json` lẫn `zh-TW.json` — vì bảng ST `zh`
+  (bundle `chinese(simplified)(zh)`) là nguồn tiếng Trung DUY NHẤT cho các
+  key đó (game không có bảng Policies phồn thể; I2 2 cột có 0 key Policies).
+  Đây là fallback đã ghi trong docstring + khóa bằng test
+  (`test_base_zh_falls_back_after_variants`), KHÔNG phải bug Knightica:
+  bỏ fallback sẽ MẤT 26 chuỗi khỏi zh-TW. Giữ nguyên trong PR này; muốn file
+  thuần thứ chữ thì quyết định sản phẩm riêng cho PR sau.
+- Test: 6 test mới trong `test_bug2_merge.py` (expand 4 + merge 2);
+  1 test cũ cập nhật phần đếm (`test_variant_wins_over_base_fallback`:
+  outcome `zh` giờ đi qua nguyên vẹn, giá trị phồn thể giữ nguyên).
+- Full suite nhánh (code cuối, commit `b01bc7f`) vs baseline main v55 (cùng
+  môi trường, tuần tự): nhánh 2.602 test, 11 lỗi, 0 fail (886,0s); baseline
+  main 2.567 test, 12 lỗi, 0 fail (1.005,4s). Tập đỏ nhánh (10 lỗi fixture
+  `sqlite_loc/a.sqlite` thiếu trong repo + 1 timeout DST
+  `test_po_write_dst_real`) là tập con của baseline (thêm 1 timeout DST
+  `test_dst_extract_vi` — flaky theo lượt chạy) → **0 đỏ mới**. 35 test mới
+  (29 text-data + 6 merge zh) đều pass. Lần chạy nhánh trước (commit
+  `3931eab`, chưa thu hẹp) có thêm 1 fail `test_script_extracts_fixture` —
+  đã sửa bằng thu hẹp + chạy lại đủ bộ.
