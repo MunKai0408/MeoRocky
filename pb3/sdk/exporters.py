@@ -12,6 +12,7 @@ Chỉ thư viện chuẩn, Python >= 3.8.
 """
 from __future__ import annotations
 
+import io
 import json
 import re
 from typing import Any, Dict, List, Optional, Tuple
@@ -68,21 +69,37 @@ def check_mojibake(values: List[str]) -> List[str]:
 
 
 def export_key_value_json(kv: Dict[str, str]) -> bytes:
-    """JSON key-value cuối (UTF-8, chỉ key-value, giữ đúng thứ tự nguồn)."""
-    return (json.dumps(kv, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
+    """JSON key-value cuối (UTF-8, chỉ key-value, giữ đúng thứ tự nguồn).
+
+    SPEED-EXTRACT (2026-11-18): ghi streaming qua iterencode thay vì
+    `json.dumps(...) + "\\n"` rồi `.encode("utf-8")` — bản cũ giữ đồng thời
+    1 str + 1 bytes cỡ toàn bộ output trong RAM (đỉnh = ~2x output).
+    Byte-identical với dumps (dumps chính là "".join(iterencode)); test
+    test_export_key_value_json_streaming_matches_dumps khóa điều này.
+    """
+    buf = io.BytesIO()
+    enc = json.JSONEncoder(ensure_ascii=False, indent=2)
+    for chunk in enc.iterencode(kv):
+        buf.write(chunk.encode("utf-8"))
+    buf.write(b"\n")
+    return buf.getvalue()
 
 
 def verify_export_bytes(data: bytes, expected: Dict[str, str]) -> Dict[str, Any]:
     """Kiểm lại file JSON đã xuất (đặc tả 7.7): json.loads được, UTF-8,
     số entry khớp, placeholder giữ nguyên, không cắt Unicode.
 
-    Trả {"ok": bool, "problems": [...]}. Lỗi giải mã -> E_CORRUPT."""
+    Trả {"ok": bool, "problems": [...]}. Lỗi giải mã -> E_CORRUPT.
+
+    SPEED-EXTRACT (2026-11-18): json.loads trực tiếp trên bytes thay vì
+    `data.decode("utf-8")` rồi loads(str) — bỏ 1 bản copy str cỡ toàn bộ
+    file. Thông điệp lỗi giữ nguyên: UTF-8 hỏng -> UnicodeDecodeError (con
+    của ValueError) bắt riêng trước; JSON hỏng -> ValueError.
+    """
     try:
-        text = data.decode("utf-8")
+        doc = json.loads(data)
     except UnicodeDecodeError as exc:
         raise PB3Error("E_CORRUPT", "file xuất không phải UTF-8: %s" % str(exc)[:60])
-    try:
-        doc = json.loads(text)
     except ValueError as exc:
         raise PB3Error("E_CORRUPT", "file xuất JSON hỏng: %s" % str(exc)[:60])
     problems: List[str] = []
