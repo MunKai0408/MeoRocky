@@ -106,6 +106,27 @@ async function boot() {
   // KHÔNG được đưa vào đây: P0 2026-11-18, colab_handoff.js 404 do
   // cache deploy đã giết toàn bộ boot. File shell như vậy ở trong
   // sw.js precache + tự xử lý lỗi nạp ở chỗ dùng nó.
+
+  // LZ4 qua lz4js (tốc độ, mục C1): bộ giải nén LZ4 block thuần JS,
+  // vendored cùng nguồn ở lz4js/index.mjs (npm lz4js 0.2.0, ISC,
+  // bundle ESM bằng esbuild + wrapper PB3 pb3DecompressBlock có kiểm
+  // tra input hỏng). Python (sdk/unity.py) gọi hàm này qua module
+  // `js` — ĐÚNG tiền lệ fzstd ở trên: phải gán vào globalThis thật.
+  // Dùng dynamic import + try/catch để boot KHÔNG chết nếu file lz4js
+  // thiếu/lỗi: khi đó globalThis.pb3_lz4_decompress = null và Python
+  // rơi về binding lz4 (nếu có) hoặc lz4pure như trước.
+  status("Đang tải bộ giải nén LZ4 (lz4js)…");
+  try {
+    const lz4js = await import("./lz4js/index.mjs");
+    globalThis.pb3_lz4_decompress = (data, expectedSize) => {
+      const input = data instanceof Uint8Array ? data : new Uint8Array(data);
+      return lz4js.pb3DecompressBlock(input, expectedSize);
+    };
+  } catch (e) {
+    globalThis.pb3_lz4_decompress = null;
+    status("Không tải được lz4js — LZ4 dùng binding lz4 hoặc lz4pure như trước.");
+  }
+
   status("Đang tải mã PB3…");
   const man = await (await fetch("pb3/files.json")).json();
   const files = man.files;

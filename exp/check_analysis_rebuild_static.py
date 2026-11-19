@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Kiem tra tinh muc (E) rebuild [P0-1]: sdk/rebuild.py chi stdlib +
 Python 3.9, khong UnityPy/lz4, khong expose rebuild_zip; manifest
-(files.json 110, tests.json 194); sw.js precache 137 muc co
-sdk/rebuild.py, khong wheel chet, CACHE_VERSION v59-20261119; bridge co
+(files.json 110, tests.json 195); sw.js precache 138 muc co
+sdk/rebuild.py, khong wheel chet, CACHE_VERSION v60-20261120; bridge co
 op rebuild_apply; plan.py co progress_fn; unity.py co
 rebuild_bundle_streaming + khoa REBUILD_ALL con nguyen; UI du id (E);
 2 cho innerHTML f.source da duoc esc + code (E) moi esc du lieu game.
@@ -76,24 +76,24 @@ if len(files) != 110:
 if "pb3/sdk/rebuild.py" not in files:
     fails.append("files.json thieu pb3/sdk/rebuild.py")
 tests = json.loads((SITE / "pb3" / "tests.json").read_text())["files"]
-if len(tests) != 194:
-    fails.append("tests.json co %d file, ky vong 194" % len(tests))
+if len(tests) != 195:
+    fails.append("tests.json co %d file, ky vong 195" % len(tests))
 if "pb3/tests/test_rebuild.py" not in tests:
     fails.append("tests.json thieu pb3/tests/test_rebuild.py")
 
-# 4. sw.js: precache 137 muc, co sdk/rebuild.py, khong wheel chet, v20.
+# 4. sw.js: precache 138 muc, co sdk/rebuild.py, khong wheel chet, v20.
 sw = (SITE / "sw.js").read_text(encoding="utf-8")
 if '"pb3/sdk/rebuild.py"' not in sw:
     fails.append("sw.js precache thieu pb3/sdk/rebuild.py")
-if 'CACHE_VERSION = "v59-20261119"' not in sw:
-    fails.append("sw.js CACHE_VERSION khong phai v59-20261119")
+if 'CACHE_VERSION = "v60-20261120"' not in sw:
+    fails.append("sw.js CACHE_VERSION khong phai v60-20261120")
 m = re.search(r"const PRECACHE_URLS = \[(.*?)\];", sw, re.S)
 if not m:
     fails.append("sw.js khong tim thay PRECACHE_URLS")
 else:
     listed = re.findall(r'"([^"]+)"', m.group(1))
-    if len(listed) != 137:
-        fails.append("sw.js precache co %d muc, ky vong 137" % len(listed))
+    if len(listed) != 138:
+        fails.append("sw.js precache co %d muc, ky vong 138" % len(listed))
     dead = [u for u in listed if u != "./"
             and not (SITE / u).exists()]
     if dead:
