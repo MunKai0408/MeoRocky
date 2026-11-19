@@ -3,48 +3,48 @@
   "results": {
     "static_checks": {
       "ok": true,
-      "detail": "all_appjs_ids_present=true · file_input_no_accept=true · batch_files_no_accept=true · translate_json_kept=true · kb_import_kept=true · share_btn_markup=true · blob_btn_markup=true · no_5s_revoke=true · revoke_10min=true · pagehide_revoke=true · css_no_global_breakall=true · css_nowrap=true · css_firstcol_break=true · css_table_scroll=true · kb_ui_kept=true · no_muc1_left=true · binary_note_ge4=true · translate_proxy_kept=true · limit_2gb_text=true · no_external_url=true · no_img_tag=true · no_fake_sample_file=true · no_coi=true · views_present=true · home_default_visible=true · bottomnav_present=true · cards_present=true · theme_present=true · recent_present=true · download_bar_close=true · mascot_inline_svg=true · mod_ops_honest=true · node_check=true | app.js dùng 126 id, thiếu 0",
-      "seconds": 0.2
+      "detail": "all_appjs_ids_present=true · file_input_no_accept=true · batch_files_no_accept=true · translate_json_kept=true · kb_import_kept=true · share_btn_markup=true · blob_btn_markup=true · no_5s_revoke=true · revoke_10min=true · pagehide_revoke=true · css_no_global_breakall=true · css_nowrap=true · css_firstcol_break=true · css_table_scroll=true · kb_ui_kept=true · no_muc1_left=true · binary_note_ge4=true · translate_proxy_kept=true · limit_2gb_text=true · no_external_url=true · no_img_tag=true · no_fake_sample_file=true · no_coi=true · views_present=true · home_default_visible=true · bottomnav_present=true · cards_present=true · no_theme=true · save_history_present=true · bear_pastel=true · credit_locked=true · recent_present=true · download_bar_close=true · bear_icon_img=true · mod_ops_honest=true · node_check=true | app.js dùng 296 id, thiếu 0",
+      "seconds": 0.3
     },
     "fake_dom_new_ui": {
       "ok": true,
-      "detail": "nav chuyển view đúng; theme light/dark đổi localStorage; recent render + metadata localStorage (không nội dung file); tắt lưu lịch sử xóa metadata",
+      "detail": "nav chuyển view đúng; không còn theme, spinner tiến độ bật/tắt đúng; recent render + metadata localStorage (không nội dung file); tắt lưu lịch sử xóa metadata",
       "seconds": 0
     },
     "browser_boot_home_390": {
       "ok": true,
-      "detail": "boot Sẵn sàng; home scrollWidth=390 (không tràn); mascot + 6 thẻ + 5 nút nav; hero: Công cụ xử lý game Unity mạnh mẽ ngay trên trình d…",
-      "seconds": 6.4
+      "detail": "boot Sẵn sàng; home scrollWidth=390 (không tràn); logo gấu <img> + 6 thẻ + 5 nút nav; hero: Công cụ xử lý game Unity mạnh mẽ ngay trên trình d…",
+      "seconds": 13
     },
     "browser_dropzone_recent": {
       "ok": true,
       "detail": "bấm dropzone mở khung chọn file; chọn game1.zip -> file-info hiện; recent có game1.zip + nút Tải lại",
-      "seconds": 0
+      "seconds": 0.1
     },
     "browser_list_table_390": {
       "ok": true,
       "detail": "390px: tiêu đề/Loại/Kích thước đúng 1 dòng; bảng block+overflow-x:auto; không tràn ngang (sw=390)",
-      "seconds": 0.2
+      "seconds": 0.9
     },
     "browser_unity_info_card": {
       "ok": true,
       "detail": "inspect bundle trong ZIP xong; thẻ Thông tin Unity: File: unity_container.zipUnity Version: 2019.4.40f1 · file .assets độc lập3 object · 2 TextAssetĐã sẵn sàng An toàn & Riêng tưXử lý 100% trê…",
-      "seconds": 1.2
+      "seconds": 2.4
     },
     "browser_extract_download_bar": {
       "ok": true,
       "detail": "extract.zip tải về (extract.zip); thanh Lưu file hiện; kết quả nhắc đúng tên file",
-      "seconds": 0.6
+      "seconds": 2.8
     },
     "browser_other_views_390": {
       "ok": true,
       "detail": "#btn-card-translate sw=390 · #btn-card-mod sw=390 · #btn-card-batch sw=390 · #btn-nav-kb sw=390 · #btn-nav-settings sw=390 · #btn-nav-about sw=390 | KB status: KB: 0 game · 88.5 KB · tự lưu vào IndexedDB sau mỗi thay đổi… | Mod: Thay Text thật + 5 op disabled",
-      "seconds": 3.2
+      "seconds": 5.3
     },
-    "browser_theme_light_real": {
+    "browser_pastel_real": {
       "ok": true,
-      "detail": "toggle sáng: data-theme=light + localStorage=light + checkbox Cài đặt đồng bộ; reload vẫn sáng; toggle lại về tối",
-      "seconds": 5.5
+      "detail": "không nút theme, logo <img> icons/icon-192.png, nền body rgb(220, 235, 248), có ghi chú credit luôn gắn",
+      "seconds": 0.4
     },
     "browser_no_pageerrors": {
       "ok": true,

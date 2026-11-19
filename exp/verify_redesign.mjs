@@ -66,11 +66,20 @@ const workerJs = fs.readFileSync(SITE + "/worker.js", "utf8");
     ck("no_muc1_left", !/mục 1/.test(appJs));
     ck("binary_note_ge4", (idxHtml.match(/Asset nhị phân \(texture\/âm thanh\): chỉ đọc, dùng bản iSH/g) || []).length >= 4);
     ck("translate_proxy_kept", idxHtml.includes('id="translate-proxy"') && idxHtml.includes("diagnostics.html"));
-    ck("limit_2gb_text", /≤2GB/.test(idxHtml) && /1–1,5GB/.test(idxHtml) && !/1GB/.test(idxHtml) && !/1GB/.test(appJs));
+    // "1GB" chi cam khi noi ve gioi han file; "~1GB" la gioi han RAM tab Safari
+    // (canh bao gate-crash tu PR #44, van dung) nen loai truoc khi kiem.
+    ck("limit_2gb_text", /≤2GB/.test(idxHtml) && /1–1,5GB/.test(idxHtml) && !/1GB/.test(idxHtml) && !/1GB/.test(appJs.replace(/~1GB/g, "")));
     // A4. Redesign: không URL ngoài, không ảnh ngoài, không file mẫu bịa,
     // không COOP/COEP, đủ view/nav/thẻ, không còn theme.
-    ck("no_external_url", !/https?:\/\//.test(idxHtml) && !/https?:\/\//.test(appJs));
-    ck("no_img_tag", !/<img[\s>]/.test(idxHtml));
+    // Chi cam TAI tai nguyen ngoai luc mo trang (script/link/img, CSS url(),
+    // import dong); <a href> tai lieu + endpoint API GitHub (chi goi khi
+    // nguoi dung bam dispatch) duoc phep — tu PR #53.
+    ck("no_external_url", !/<(script|link|img)[^>]*(src|href)\s*=\s*["']https?:\/\//.test(idxHtml + appJs)
+      && !/url\(\s*["']?https?:\/\//.test(idxHtml + appJs)
+      && !/import\(\s*["']https?:\/\//.test(appJs));
+    // Chi cam anh NGOAI (hotlink); icon gau local <img src="icons/..."> la
+    // dung thiet ke moi (Duy chot anh day du 1242x1242 lam icon chinh).
+    ck("no_img_tag", !/<img[^>]*src\s*=\s*["']https?:\/\//.test(idxHtml));
     ck("no_fake_sample_file", !/GenshinImpact|HonkaiImpact|PUBG|\.ipa.{0,20}564/.test(idxHtml + appJs));
     ck("no_coi", !/Cross-Origin-Opener|Cross-Origin-Embedder|coi-serviceworker/i.test(idxHtml + appJs));
     ck("views_present", ["view-home", "view-tools", "view-kb", "view-settings", "view-about"]
@@ -179,7 +188,8 @@ function loadApp() {
     await t.getEl("btn-nav-home").click();
     assert(t.getEl("view-home").hidden === false, "click nav Trang chủ: view-home hiện lại");
     // B2. Không còn theme; thanh tiến độ bật/tắt spinner + class loading.
-    assert(t.ls.get("pb3_theme") === null, "không còn key localStorage pb3_theme");
+    // Map.get tra undefined khi thieu key (khong phai null) nen kiem has().
+    assert(!t.ls.has("pb3_theme"), "không còn key localStorage pb3_theme");
     t.ctx.progStart("Kiểm tra");
     assert(t.getEl("progress-spinner").hidden === false, "progStart phải hiện spinner");
     assert(t.getEl("progress-bar").classList.contains("loading"), "progStart phải gắn class loading");
