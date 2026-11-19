@@ -268,6 +268,51 @@ class TestMBClassification(unittest.TestCase):
         reasons = {m["key"]: m["reason"] for m in res["unmatched"]}
         self.assertEqual(reasons.get(key), "monobehaviour")
 
+    def test_mb_values_all_equal_is_unchanged(self):
+        # 106-key 9K: key MB ma MOI gia tri goc da biet deu == ban dich
+        # thi unchanged (khong can ep), khong phai monobehaviour.
+        unmatched, unchanged = rb._classify_unmatched(
+            ["MyMB.s1"], {"MyMB.s1": "Hello MB World"},
+            {}, {"MyMB.s1"},
+            mb_values={"MyMB.s1": {"Hello MB World"}}, mb_index={})
+        self.assertEqual(unmatched, [])
+        self.assertEqual(unchanged, 1)
+
+    def test_mb_values_one_differs_stays_monobehaviour(self):
+        # Fail-closed: chi 1 gia tri goc khac ban dich thi van unmatched
+        # (khong duoc dem unchanged) — cong van FAIL nhu cu.
+        unmatched, unchanged = rb._classify_unmatched(
+            ["MyMB.s1"], {"MyMB.s1": "[VI] MyMB.s1"},
+            {}, {"MyMB.s1"},
+            mb_values={"MyMB.s1": {"Press start", "Tôi yêu"}},
+            mb_index={})
+        self.assertEqual([(m["key"], m["reason"]) for m in unmatched],
+                         [("MyMB.s1", "monobehaviour")])
+        self.assertEqual(unchanged, 0)
+
+    def test_st_other_unit_empty_translation_is_unchanged(self):
+        # 9K: Spells/Cemetery_Desc + Spells/Rebirth_Desc — co trong
+        # SharedTableData nhung khong co entry trong bang ST en, ban
+        # dich "" == gia tri goc hieu dung ("") -> unchanged, khong
+        # phai string_table_other_unit.
+        unmatched, unchanged = rb._classify_unmatched(
+            ["Spells/Cemetery_Desc"], {"Spells/Cemetery_Desc": ""},
+            {}, set(), mb_values=None,
+            mb_index={"Spells": {"Cemetery_Desc": 7}})
+        self.assertEqual(unmatched, [])
+        self.assertEqual(unchanged, 1)
+
+    def test_st_other_unit_nonempty_translation_stays_unmatched(self):
+        # Ban dich khac "" thi van other_unit (can chen entry — plan
+        # xu ly o don vi cua bang), khong duoc dem unchanged.
+        unmatched, unchanged = rb._classify_unmatched(
+            ["Spells/X"], {"Spells/X": "dịch"},
+            {}, set(), mb_values=None,
+            mb_index={"Spells": {"X": 7}})
+        self.assertEqual([(m["key"], m["reason"]) for m in unmatched],
+                         [("Spells/X", "string_table_other_unit")])
+        self.assertEqual(unchanged, 0)
+
     def test_mb_generic_key_now_pressable(self):
         # mb-write-rest: key generic KHONG mo ho gio ep duoc qua
         # scan-path -> co unit thay doi, khong con unmatched.

@@ -524,10 +524,13 @@ def _mb_index_from_9k_ipa(ipa_bytes):
 
 class TestRealBuild68Classification(unittest.TestCase):
     @slow
-    def test_dryrun_1985_101_102(self):
+    def test_dryrun_1985_103_100(self):
         # [ĐÃ ĐO THẬT] Build 68 resources.assets + translated.vi.json
-        # (2188 key) + mb_index that tu IPA 9K: 1985 doi / 101 giu
-        # nguyen (vi==en) / 102 StringTable o don vi khac — 0 refused.
+        # (2188 key) + mb_index that tu IPA 9K: 1985 doi / 103 giu
+        # nguyen (vi==en) / 100 StringTable o don vi khac — 0 refused.
+        # (Truoc fix 106-key: 1985/101/102 — 2 key ST rong
+        # Spells/Cemetery_Desc + Spells/Rebirth_Desc gio dem unchanged
+        # vi ban dich "" == gia tri goc hieu dung "", khong phai loi.)
         assets_path = _build68_assets()
         ipa_path = _nine_kings_ipa()
         if not assets_path.exists():
@@ -544,8 +547,8 @@ class TestRealBuild68Classification(unittest.TestCase):
             translations=tr, mb_index=mb_index)
         tot = res["totals"]
         self.assertEqual(tot["changed"], 1985, str(tot))
-        self.assertEqual(tot["unchanged"], 101, str(tot))
-        self.assertEqual(tot["unmatched"], 102, str(tot))
+        self.assertEqual(tot["unchanged"], 103, str(tot))
+        self.assertEqual(tot["unmatched"], 100, str(tot))
         self.assertEqual(tot["refused"], 0)
         reasons = {x["reason"] for x in res["unmatched"]}
         self.assertEqual(reasons, {"string_table_other_unit"})
@@ -553,7 +556,10 @@ class TestRealBuild68Classification(unittest.TestCase):
     @slow
     def test_dryrun_fixed_file(self):
         # [ĐÃ ĐO THẬT] Ban fixed: TerrainPopup_Mulligan sua thanh
-        # 'Mulligan!' (= goc) nen chuyen sang unchanged: 1984/102/102.
+        # 'Mulligan!' (= goc) nen chuyen sang unchanged: 1984/104/100.
+        # (Truoc fix 106-key: 1984/102/102 — 2 key ST rong
+        # Spells/Cemetery_Desc + Spells/Rebirth_Desc gio dem unchanged
+        # vi ban dich "" == gia tri goc hieu dung "".)
         assets_path = _build68_assets()
         ipa_path = _nine_kings_ipa()
         if not assets_path.exists():
@@ -570,8 +576,8 @@ class TestRealBuild68Classification(unittest.TestCase):
             translations=tr, mb_index=mb_index)
         tot = res["totals"]
         self.assertEqual(tot["changed"], 1984, str(tot))
-        self.assertEqual(tot["unchanged"], 102, str(tot))
-        self.assertEqual(tot["unmatched"], 102, str(tot))
+        self.assertEqual(tot["unchanged"], 104, str(tot))
+        self.assertEqual(tot["unmatched"], 100, str(tot))
 
 
 class TestRealNineKingsMbIndex(unittest.TestCase):
