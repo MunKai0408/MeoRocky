@@ -3,30 +3,24 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#101418">
+<meta name="theme-color" content="#dcebf8">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="BearTea">
 <link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" type="image/png" href="icons/icon-192.png">
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 <title>BearTea — PB3 bản web</title>
-<script>try{var __bt=localStorage.getItem("pb3_theme");if(__bt==="light")document.documentElement.setAttribute("data-theme","light");}catch(__e){}</script>
 <style>
+  /* Màu duy nhất: xanh dương bầu trời pastel + hồng nhẹ (không còn dark/light). */
   :root {
-    --bg: #101418; --card: #1a2129; --border: #2a343f; --text: #e8ecf0; --sub: #9aa7b4;
-    --input-bg: #0d1117; --accent: #2f81f7; --accent-text: #fff; --orange: #f0883e;
-    --green: #7ee2a8; --warn: #f0b429; --error-bg: #5a1f1f; --error-border: #8c2f2f;
-    --error-text: #ffd7d7; --tab-bg: #232c36; --btn-sec-bg: #303a45;
-    --hero-bg1: #0b1e3a; --hero-bg2: #101418; --hero-mtn1: #16283f; --hero-mtn2: #1b3250;
-    --chip-bg: #232c36;
-  }
-  [data-theme="light"] {
-    --bg: #f2efe8; --card: #ffffff; --border: #d9d2c2; --text: #1d2530; --sub: #5b6673;
-    --input-bg: #f8f6f0; --accent: #2f6fd0; --accent-text: #fff; --orange: #d96f1e;
+    --bg: #dcebf8; --card: #ffffff; --border: #c8dcef; --text: #1d2530; --sub: #5b6673;
+    --input-bg: #f2f8fd; --accent: #2f6fd0; --accent-text: #fff;
+    --pink: #e0789a; --pink-text: #c24e77;
     --green: #1e7a45; --warn: #8a6100; --error-bg: #fde8e8; --error-border: #e0a0a0;
-    --error-text: #7a1f1f; --tab-bg: #e8e2d4; --btn-sec-bg: #e3ddd0;
-    --hero-bg1: #274b73; --hero-bg2: #f2efe8; --hero-mtn1: #1d3a5c; --hero-mtn2: #2a4d75;
-    --chip-bg: #ece7da;
+    --error-text: #7a1f1f; --tab-bg: #eaf3fb; --btn-sec-bg: #ffffff;
+    --hero-bg1: #bcdcf5; --hero-bg2: #eaf3fb; --hero-mtn1: #9cc8ec; --hero-mtn2: #7fb8e8;
+    --chip-bg: #eaf3fb;
   }
   * { box-sizing: border-box; }
   body { font-family: -apple-system, "Segoe UI", Roboto, sans-serif; margin: 0;
@@ -38,10 +32,13 @@
   p, li { font-size: 14px; }
   .sub { color: var(--sub); font-size: 13px; margin: 0 0 10px; }
   .card { background: var(--card); border: 1px solid var(--border); border-radius: 10px;
-    padding: 12px; margin: 10px 0; }
+    padding: 12px; margin: 10px 0; animation: fade-in .25s ease both; }
   button { background: var(--accent); color: var(--accent-text); border: 0; border-radius: 8px;
-    padding: 10px 14px; font-size: 15px; margin: 4px 4px 4px 0; cursor: pointer; }
-  button.secondary { background: var(--btn-sec-bg); color: var(--text); }
+    padding: 10px 14px; font-size: 15px; margin: 4px 4px 4px 0; cursor: pointer;
+    transition: transform .12s ease, opacity .12s ease; }
+  button:active { transform: scale(.97); }
+  button.secondary { background: var(--btn-sec-bg); color: var(--pink-text);
+    border: 1px solid var(--pink); }
   button:disabled { opacity: .5; }
   input[type=file] { font-size: 14px; max-width: 100%; }
   textarea, select, input[type=text] { width: 100%; background: var(--input-bg);
@@ -87,17 +84,20 @@
     justify-content: space-between; gap: 8px; padding: 8px 12px;
     background: var(--bg); border-bottom: 1px solid var(--border); }
   .brand { display: flex; align-items: center; gap: 8px; min-width: 0; }
-  .logo-bear { width: 40px; height: 40px; flex: none; }
+  .logo-bear { width: 40px; height: 40px; flex: none; border-radius: 10px;
+    object-fit: cover; animation: bear-bob 3s ease-in-out infinite; }
+  .logo-bear:active { animation: none; transform: scale(.92); }
   .brand-text { display: flex; flex-direction: column; line-height: 1.15; }
   .brand-name { font-size: 22px; font-weight: 800; letter-spacing: .2px; }
   .brand-name .bear { color: var(--text); }
-  .brand-name .tea { color: var(--orange); }
+  .brand-name .tea { color: var(--pink-text); }
   .brand-sub { font-size: 11px; color: var(--sub); letter-spacing: 1px; }
   .top-actions { display: flex; gap: 6px; flex: none; }
-  .icon-btn { background: var(--tab-bg); color: var(--text); padding: 8px 10px; margin: 0; font-size: 17px; }
+  .icon-btn { background: #fff; color: var(--pink-text); border: 1px solid var(--pink);
+    padding: 8px 10px; margin: 0; font-size: 17px; }
   .menu-dropdown { position: absolute; top: 54px; right: 10px; z-index: 70;
     background: var(--card); border: 1px solid var(--border); border-radius: 10px;
-    padding: 6px; min-width: 220px; box-shadow: 0 8px 24px rgba(0,0,0,.35); }
+    padding: 6px; min-width: 220px; box-shadow: 0 8px 24px rgba(29,37,48,.18); }
   .menu-dropdown button, .menu-dropdown a { display: block; width: 100%; text-align: left;
     background: transparent; color: var(--text); padding: 10px 12px; margin: 0;
     font-size: 15px; text-decoration: none; border-radius: 8px; box-sizing: border-box; }
@@ -105,23 +105,25 @@
 
   /* ---- Hero ---- */
   .hero { position: relative; overflow: hidden; border-radius: 14px; margin: 12px 0 4px;
-    padding: 18px 14px 8px; color: #eef3f8;
+    padding: 18px 14px 8px; color: #1d2530;
     background: linear-gradient(180deg, var(--hero-bg1) 0%, var(--hero-bg2) 78%); }
-  .hero h2 { font-size: 21px; line-height: 1.3; margin: 0 0 6px; color: #fff; }
-  .hero h2 .u-orange { color: #f0883e; }
-  .hero p { margin: 0 0 8px; color: #c7d3e0; font-size: 13px; }
+  .hero h2 { font-size: 21px; line-height: 1.3; margin: 0 0 6px; color: #1d2530; }
+  .hero h2 .u-pink { color: var(--pink-text); }
+  .hero p { margin: 0 0 8px; color: #5b6673; font-size: 13px; }
   .hero-mountains { display: block; width: 100%; height: 64px; margin: 6px -14px -8px; }
   .hero-bear { display: flex; align-items: flex-end; gap: 10px; }
-  .hero-bear svg { width: 84px; height: 84px; flex: none; }
+  .hero-bear img { width: 84px; height: 84px; flex: none; border-radius: 18px;
+    object-fit: cover; animation: bear-bob 3s ease-in-out infinite; }
   .bubble { position: relative; background: #fff; color: #1d2530; border-radius: 12px;
     padding: 8px 10px; font-size: 13px; line-height: 1.35; margin-bottom: 14px; }
   .bubble::before { content: ""; position: absolute; left: -6px; bottom: 14px;
     border: 7px solid transparent; border-right-color: #fff; border-left: 0; }
   .view-head { display: flex; align-items: center; gap: 10px; margin: 12px 0 2px; }
-  .view-head svg { width: 56px; height: 56px; flex: none; }
+  .view-head img { width: 56px; height: 56px; flex: none; border-radius: 14px;
+    object-fit: cover; }
 
   /* ---- Khung thả file ---- */
-  .dropzone { border: 2px dashed var(--orange); border-radius: 12px; padding: 16px 12px;
+  .dropzone { border: 2px dashed var(--accent); border-radius: 12px; padding: 16px 12px;
     text-align: center; cursor: pointer; }
   .dropzone.drag { background: var(--tab-bg); }
   .dropzone p { margin: 4px 0; }
@@ -151,7 +153,7 @@
   .op-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 10px 0; }
   .op-card { background: var(--card); border: 1px solid var(--border); color: var(--text);
     border-radius: 10px; padding: 10px; margin: 0; text-align: left; }
-  .op-card.real { border-color: var(--orange); }
+  .op-card.real { border-color: var(--pink); }
   .op-card b { display: block; font-size: 14px; }
   .op-card span { display: block; font-size: 12px; color: var(--sub); margin-top: 2px; line-height: 1.35; }
   .batch-file-row { display: inline-flex; align-items: center; gap: 6px; }
@@ -159,17 +161,17 @@
 
   /* ---- Thanh Lưu file (hiện khi có file xuất) ---- */
   .download-bar { position: fixed; left: 12px; right: 12px; bottom: 68px; z-index: 45;
-    background: var(--card); border: 1px solid var(--orange); border-radius: 12px;
-    padding: 10px 12px; box-shadow: 0 8px 24px rgba(0,0,0,.35); }
+    background: var(--card); border: 1px solid var(--pink); border-radius: 12px;
+    padding: 10px 12px; box-shadow: 0 8px 24px rgba(29,37,48,.18); }
 
   /* ---- Hộp thoại cảnh báo file lớn (Mục C4) ---- */
   /* .modal đặt display:flex nên phải ghi đè [hidden] tường minh — nếu
      không, hộp thoại đã ẩn vẫn phủ màn hình và chặn mọi cú bấm. */
   .modal[hidden] { display: none; }
-  .modal { position: fixed; inset: 0; z-index: 80; background: rgba(0,0,0,.55);
+  .modal { position: fixed; inset: 0; z-index: 80; background: rgba(29,37,48,.35);
     display: flex; align-items: center; justify-content: center; padding: 16px; }
-  .modal-card { background: var(--card); border: 1px solid var(--orange); border-radius: 12px;
-    padding: 16px; max-width: 420px; width: 100%; box-shadow: 0 8px 24px rgba(0,0,0,.4); }
+  .modal-card { background: var(--card); border: 1px solid var(--pink); border-radius: 12px;
+    padding: 16px; max-width: 420px; width: 100%; box-shadow: 0 8px 24px rgba(29,37,48,.18); }
   .modal-card h3 { margin: 0 0 8px; }
   .modal-card p { white-space: pre-line; line-height: 1.5; margin: 0 0 12px; }
   .modal-card .row { display: flex; gap: 8px; justify-content: flex-end; }
@@ -182,40 +184,36 @@
     padding: 6px 2px; font-size: 11px; border-radius: 8px;
     display: flex; flex-direction: column; align-items: center; gap: 2px; }
   .bottomnav button .nav-icon { font-size: 19px; line-height: 1; }
-  .bottomnav button.active { color: var(--orange); font-weight: 700; }
+  .bottomnav button.active { color: var(--accent); font-weight: 700; }
   details summary { cursor: pointer; font-size: 14px; font-weight: 600; padding: 6px 0; }
+  /* ---- Hoạt ảnh nhẹ (chỉ transform/opacity; không đụng layout) ---- */
+  @keyframes bear-bob { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-4px); } }
+  @keyframes fade-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @keyframes pulse-soft { 0%, 100% { opacity: 1; } 50% { opacity: .55; } }
+  #progress-bar.loading { animation: pulse-soft 1.2s ease-in-out infinite; }
+  .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid var(--border);
+    border-top-color: var(--accent); border-radius: 50%;
+    animation: spin .8s linear infinite; vertical-align: -2px; }
+  .spinner[hidden] { display: none; }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation: none !important; transition: none !important; }
+  }
 </style>
 </head>
 <body>
-<!-- Mascot gấu uống trà sữa — MỘT SVG nội tuyến duy nhất, tái dùng mọi màn
-     qua <use href="#bear-mascot"> (đổi bong bóng thoại + icon phụ theo màn).
-     Không tải ảnh ngoài, không dùng ảnh có bản quyền. -->
-<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs><symbol id="bear-mascot" viewBox="0 0 120 120">
-  <circle cx="32" cy="30" r="13" fill="#a06a2c"/><circle cx="32" cy="30" r="6.5" fill="#e8b98a"/>
-  <circle cx="88" cy="30" r="13" fill="#a06a2c"/><circle cx="88" cy="30" r="6.5" fill="#e8b98a"/>
-  <circle cx="60" cy="64" r="38" fill="#c98f4e"/>
-  <ellipse cx="60" cy="78" rx="19" ry="13" fill="#f2d3a0"/>
-  <circle cx="46" cy="58" r="4.2" fill="#2b1c10"/><circle cx="74" cy="58" r="4.2" fill="#2b1c10"/>
-  <circle cx="47.5" cy="56.5" r="1.3" fill="#fff"/><circle cx="75.5" cy="56.5" r="1.3" fill="#fff"/>
-  <ellipse cx="60" cy="72" rx="6.5" ry="4.5" fill="#2b1c10"/>
-  <path d="M60 77 Q60 83 54 83 M60 77 Q60 83 66 83" stroke="#2b1c10" stroke-width="2" fill="none" stroke-linecap="round"/>
-  <circle cx="38" cy="70" r="5" fill="#e88a7a" opacity=".45"/><circle cx="82" cy="70" r="5" fill="#e88a7a" opacity=".45"/>
-  <line x1="100" y1="80" x2="108" y2="58" stroke="#e2574c" stroke-width="4" stroke-linecap="round"/>
-  <rect x="84" y="82" width="28" height="30" rx="5" fill="#e8a04c" stroke="#b5772e" stroke-width="1.5"/>
-  <rect x="82" y="78" width="32" height="7" rx="3" fill="#f7ead2" stroke="#d8c9a8"/>
-  <circle cx="92" cy="104" r="2.5" fill="#3a2415"/><circle cx="100" cy="106" r="2.5" fill="#3a2415"/><circle cx="108" cy="103" r="2.5" fill="#3a2415"/>
-</symbol></defs></svg>
+<!-- Logo gấu: ảnh icon chính của BearTea (icons/icon-192.png), dùng chung
+     cho header, hero và các màn qua <img>. -->
 
 <header class="topbar">
   <div class="brand">
-    <svg class="logo-bear" aria-hidden="true"><use href="#bear-mascot"/></svg>
+    <img class="logo-bear" src="icons/icon-192.png" alt="BearTea">
     <div class="brand-text">
       <span class="brand-name"><span class="bear">Bear</span><span class="tea">Tea</span></span>
       <span class="brand-sub">PB3 · UNITY TOOL</span>
     </div>
   </div>
   <div class="top-actions">
-    <button id="btn-theme" class="icon-btn" aria-label="Đổi chế độ sáng/tối">🌙</button>
     <button id="btn-menu" class="icon-btn" aria-label="Mở menu">☰</button>
   </div>
   <nav id="menu-dropdown" class="menu-dropdown" hidden>
@@ -239,27 +237,27 @@
 
 <div id="progress-wrap" hidden>
   <div id="progress-track"><div id="progress-bar"></div></div>
-  <div><span id="progress-pct">0%</span> · <span id="progress-detail"></span></div>
+  <div><span class="spinner" id="progress-spinner" hidden></span> <span id="progress-pct">0%</span> · <span id="progress-detail"></span></div>
 </div>
 <div id="error" hidden></div>
 
 <!-- ============ TRANG CHỦ ============ -->
 <section id="view-home">
   <div class="hero">
-    <h2>Công cụ xử lý game <span class="u-orange">Unity</span> mạnh mẽ ngay trên trình duyệt!</h2>
+    <h2>Công cụ xử lý game <span class="u-pink">Unity</span> mạnh mẽ ngay trên trình duyệt!</h2>
     <p>Mở • Phân tích • Trích xuất • Dịch • Mod • Xuất file</p>
     <div class="hero-bear">
-      <svg aria-hidden="true"><use href="#bear-mascot"/></svg>
+      <img src="icons/icon-192.png" alt="">
       <span class="bubble">Uống trà sữa rồi xử lý game nào! 🧋</span>
     </div>
     <svg class="hero-mountains" viewBox="0 0 390 64" preserveAspectRatio="none" aria-hidden="true">
-      <circle cx="330" cy="16" r="12" fill="#f5e6b8" opacity=".9"/>
+      <circle cx="330" cy="16" r="12" fill="#fff7cc" opacity=".9"/>
       <circle cx="40" cy="10" r="1.6" fill="#fff" opacity=".8"/><circle cx="90" cy="18" r="1.2" fill="#fff" opacity=".7"/>
       <circle cx="180" cy="8" r="1.6" fill="#fff" opacity=".8"/><circle cx="250" cy="16" r="1.2" fill="#fff" opacity=".7"/>
-      <polygon points="0,64 70,22 140,64" fill="#16283f"/>
-      <polygon points="90,64 180,10 280,64" fill="#1b3250"/>
-      <polygon points="210,64 300,28 390,64" fill="#14273d"/>
-      <polygon points="0,64 0,52 120,40 240,54 390,44 390,64" fill="#0e1a28"/>
+      <polygon points="0,64 70,22 140,64" fill="#9cc8ec"/>
+      <polygon points="90,64 180,10 280,64" fill="#7fb8e8"/>
+      <polygon points="210,64 300,28 390,64" fill="#a8d0f0"/>
+      <polygon points="0,64 0,52 120,40 240,54 390,44 390,64" fill="#8fbdea"/>
     </svg>
   </div>
 
@@ -340,7 +338,7 @@
 <!-- ============ CHỨC NĂNG ============ -->
 <section id="view-tools" hidden>
   <div class="view-head">
-    <svg aria-hidden="true"><use href="#bear-mascot"/></svg>
+    <img src="icons/icon-192.png" alt="">
     <span class="bubble">Chọn 1 công cụ bên dưới nhé! 🧰</span>
   </div>
 
@@ -690,7 +688,7 @@
         </select>
       </label>
       <label><input type="checkbox" id="translate-google" checked> Dùng Google Translate (cần mạng)</label>
-      <label><input type="checkbox" id="translate-credit" checked> Gắn credit “Việt Hoá Bởi Bear”</label>
+      <p class="note">Credit “Việt Hoá Bởi Bear” luôn được gắn vào bản dịch.</p>
     </div>
     <details id="glossary-box" open>
       <summary>Từ điển riêng theo game (ưu tiên cao nhất)</summary>
@@ -1345,7 +1343,7 @@
 <!-- ============ KHO KB ============ -->
 <section id="view-kb" hidden>
   <div class="view-head">
-    <svg aria-hidden="true"><use href="#bear-mascot"/></svg>
+    <img src="icons/icon-192.png" alt="">
     <span class="bubble">Tài liệu &amp; hướng dẫn hữu ích tại đây! 📚</span>
   </div>
 
@@ -1410,7 +1408,7 @@
 <!-- ============ CÀI ĐẶT ============ -->
 <section id="view-settings" hidden>
   <div class="view-head">
-    <svg aria-hidden="true"><use href="#bear-mascot"/></svg>
+    <img src="icons/icon-192.png" alt="">
     <span class="bubble">Chỉnh BearTea theo ý bạn nhé! ⚙️</span>
   </div>
 
@@ -1423,9 +1421,6 @@
 
   <div class="card">
     <h2>Tùy chọn giao diện</h2>
-    <div class="row">
-      <label><input type="checkbox" id="setting-theme"> Chế độ sáng</label>
-    </div>
     <div class="row">
       <label>Ngôn ngữ:
         <select id="setting-lang" style="width:auto">
@@ -1447,8 +1442,9 @@
 
   <div class="card">
     <h2>Dịch</h2>
-    <p class="note">Tùy chọn dịch (URL proxy Cloudflare, bật/tắt Google Translate, gắn
-    credit) nằm ở Chức năng → Dịch, ngay chỗ dùng — bấm nút dưới để mở.</p>
+    <p class="note">Tùy chọn dịch (URL proxy Cloudflare, bật/tắt Google Translate)
+    nằm ở Chức năng → Dịch, ngay chỗ dùng — bấm nút dưới để mở. Credit
+    “Việt Hoá Bởi Bear” luôn được gắn vào bản dịch.</p>
     <button id="btn-settings-open-translate" class="secondary">Mở cài đặt dịch</button>
   </div>
 
@@ -1470,7 +1466,7 @@
 <!-- ============ BEARTEA ============ -->
 <section id="view-about" hidden>
   <div class="view-head">
-    <svg aria-hidden="true"><use href="#bear-mascot"/></svg>
+    <img src="icons/icon-192.png" alt="">
     <span class="bubble">Chào bạn, mình là BearTea! 🐻🧋</span>
   </div>
   <div class="card">
@@ -1481,8 +1477,8 @@
     (trừ khi bạn bật dịch Google ở tab Dịch).</p>
     <p><b>PB3 v3.1.0</b> · 20 plugin · UnityFS v6–v9, SerializedFile v23 ·
     parser thuần (không dùng UnityPy trên web).</p>
-    <p class="note">Việt Hoá Bởi Bear 🐻 — credit “Việt Hoá Bởi Bear” được gắn vào
-    bản dịch khi bạn tick “Gắn credit” ở tab Dịch.</p>
+    <p class="note">Việt Hoá Bởi Bear 🐻 — credit “Việt Hoá Bởi Bear” luôn được gắn
+    vào mọi bản dịch.</p>
     <ul>
       <li><a href="README.md">README bản web</a></li>
       <li><a href="pb3/docs/HUONG_DAN.md">Hướng dẫn sử dụng PB3</a></li>

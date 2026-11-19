@@ -135,34 +135,6 @@ function showError(text) {
 }
 function clearError() { $("error").hidden = true; $("error").textContent = ""; }
 
-// ---- Chế độ sáng/tối (redesign) ----
-// Theme được áp sớm bằng script inline trong <head> của index.html (đọc
-// localStorage trước khi vẽ, tránh nháy); ở đây chỉ đồng bộ nút bấm +
-// checkbox Cài đặt và đổi theme khi user bấm. document.documentElement
-// được guard vì một số harness nạp app.js trong DOM giả không có nó.
-const THEME_KEY = "pb3_theme";
-function currentTheme() {
-  try { return localStorage.getItem(THEME_KEY) === "light" ? "light" : "dark"; } catch (e) { return "dark"; }
-}
-function syncThemeUI() {
-  const mode = currentTheme();
-  const b = $("btn-theme");
-  if (b) b.textContent = mode === "light" ? "☀️" : "🌙";
-  const c = $("setting-theme");
-  if (c) c.checked = (mode === "light");
-}
-function setTheme(mode) {
-  try { localStorage.setItem(THEME_KEY, mode); } catch (e) { /* localStorage không có */ }
-  if (typeof document !== "undefined" && document.documentElement) {
-    if (mode === "light") document.documentElement.setAttribute("data-theme", "light");
-    else document.documentElement.removeAttribute("data-theme");
-  }
-  syncThemeUI();
-}
-$("btn-theme").addEventListener("click", () => setTheme(currentTheme() === "light" ? "dark" : "light"));
-$("setting-theme").addEventListener("change", (ev) => setTheme(ev.target.checked ? "light" : "dark"));
-syncThemeUI();
-
 // ---- Thanh tiến độ ----
 let progT0 = 0, progLastPct = -1, progLabel = "";
 function progStart(label) {
@@ -170,6 +142,8 @@ function progStart(label) {
   progLastPct = -1;
   progLabel = label;
   $("progress-wrap").hidden = false;
+  $("progress-spinner").hidden = false;
+  $("progress-bar").classList.add("loading");
   progSet(0, 0, -1);
 }
 function progSet(pct, done, total) {
@@ -192,6 +166,8 @@ function progSet(pct, done, total) {
 function progDone(label) {
   progSet(100, 1, 1);
   $("progress-detail").textContent = label + " · xong";
+  $("progress-spinner").hidden = true;
+  $("progress-bar").classList.remove("loading");
   setTimeout(() => { $("progress-wrap").hidden = true; }, 1200);
 }
 
@@ -2998,8 +2974,8 @@ function renderTranslateOutput(job) {
   $("translate-output").value = JSON.stringify(out, null, 2);
 }
 // Chạy 1 job dịch Google: chia chunk 500 key, mỗi chunk 1 lần gọi worker
-// (credit=false — gắn credit 1 lần ở cuối), lưu job sau mỗi chunk.
-async function runTranslateGoogleJob(job, to, credit) {
+// (chunk credit=false — credit luôn gắn 1 lần ở cuối), lưu job sau mỗi chunk.
+async function runTranslateGoogleJob(job, to) {
   const btn = $("btn-translate-run");
   const cancelBtn = $("btn-translate-cancel");
   btn.disabled = true;
@@ -3105,8 +3081,8 @@ async function runTranslateGoogleJob(job, to, credit) {
     }
     job.status = cancelled ? "cancelled" : (job.items.length ? "cancelled" : "done");
     await saveTranslateJob(job);
-    if (job.status === "done" && credit) {
-      // Gắn credit 1 lần duy nhất (các chunk đều credit=false).
+    if (job.status === "done") {
+      // Credit luôn gắn 1 lần duy nhất (các chunk đều credit=false).
       try {
         const r = await runOp("Gắn credit", "apply_credit_only",
           [JSON.stringify(job.results)]);
@@ -3223,8 +3199,7 @@ $("btn-translate-resume").addEventListener("click", async () => {
   }
   $("translate-resume-bar").hidden = true;
   const to = $("translate-to").value;
-  const credit = $("translate-credit").checked;
-  await runTranslateGoogleJob(job, to, credit);
+  await runTranslateGoogleJob(job, to);
 });
 $("btn-translate-discard").addEventListener("click", async () => {
   const job = state.translateResumeJob;
@@ -3238,7 +3213,6 @@ $("btn-translate-run").addEventListener("click", async () => {
   const text = $("translate-input").value.trim();
   if (!text) { showError("Hãy dán JSON key-value vào ô, hoặc tải file JSON lên."); return; }
   const to = $("translate-to").value;
-  const credit = $("translate-credit").checked;
   const useGoogle = $("translate-google").checked;
   const from = ($("translate-from") && $("translate-from").value) || "en";
   if (!useGoogle) {
@@ -3248,7 +3222,8 @@ $("btn-translate-run").addEventListener("click", async () => {
     try {
       const glossary = loadGameGlossaryFor(from, to);
       const glossaryJson = glossary ? JSON.stringify(glossary) : null;
-      const { parsed } = await runOp("Dịch offline", "translate_json", [text, to, credit, from, glossaryJson]);
+      // Credit luôn bật: đường offline truyền credit=true.
+      const { parsed } = await runOp("Dịch offline", "translate_json", [text, to, true, from, glossaryJson]);
       $("translate-output").value = JSON.stringify(parsed.translated, null, 2);
       const srcLabel = langName(from);
       const missing = (parsed.self_check && parsed.self_check.missing_keys) || [];
@@ -3307,7 +3282,7 @@ $("btn-translate-run").addEventListener("click", async () => {
   }
   const job = await startTranslateJob(text, to, from);
   if (!job) return;
-  await runTranslateGoogleJob(job, to, credit);
+  await runTranslateGoogleJob(job, to);
 });
 $("btn-translate-cancel").addEventListener("click", () => {
   // Worker đang chạy dịch async vẫn nhận được message này giữa các batch;
