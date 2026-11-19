@@ -39,7 +39,7 @@ class _Resp(object):
 def _find_cell_source():
     nb = json.loads(NB.read_text(encoding="utf-8"))
     codes = [c for c in nb["cells"] if c["cell_type"] == "code"]
-    assert len(codes) == 6, len(codes)
+    assert len(codes) == 7, len(codes)
     src = "".join(codes[3]["source"])
     assert "GAME_FILE_NAME" in src and "find_ipa_by_name" in src
     return src
@@ -48,9 +48,12 @@ def _find_cell_source():
 def _cell_source():
     nb = json.loads(NB.read_text(encoding="utf-8"))
     codes = [c for c in nb["cells"] if c["cell_type"] == "code"]
-    assert len(codes) == 6, len(codes)
-    src = "".join(codes[-1]["source"])
-    assert "WorkerProvider" in src, "cell dich thieu WorkerProvider"
+    assert len(codes) == 7, len(codes)
+    # Cell dich khong con la cell code cuoi (cell Mod dung sau no).
+    found = ["".join(c["source"]) for c in codes
+             if "WorkerProvider" in "".join(c["source"])]
+    assert len(found) == 1, "phai co dung 1 cell dich (WorkerProvider)"
+    src = found[0]
     assert "TRANSLATE_AFTER_EXTRACT" in src
     return src
 
@@ -66,17 +69,25 @@ def _fake_gtx_urlopen(req, timeout=None):
 class TestNotebookStructure(TmpCase):
     def test_cells(self):
         nb = json.loads(NB.read_text(encoding="utf-8"))
-        self.assertEqual(len(nb["cells"]), 11)
+        self.assertEqual(len(nb["cells"]), 13)
         kinds = [c["cell_type"] for c in nb["cells"]]
         self.assertEqual(kinds, ["markdown", "code", "code", "code",
                                  "markdown", "code", "markdown", "code",
-                                 "markdown", "code", "markdown"])
+                                 "markdown", "code", "markdown", "code",
+                                 "markdown"])
         step3 = "".join(nb["cells"][8]["source"])
         self.assertIn("Bước 3", step3)
         code = "".join(nb["cells"][9]["source"])
         self.assertIn("WorkerProvider", code)
         self.assertIn("translated.%s.json", code)
         self.assertIn("translate_json_file", code)
+        # Buoc 4 Mod (PR mod-colab-actions): markdown + code dung sau
+        # cell dich, truoc cell ket thuc.
+        step4 = "".join(nb["cells"][10]["source"])
+        self.assertIn("Bước 4", step4)
+        mod_code = "".join(nb["cells"][11]["source"])
+        self.assertIn("run_mod_job", mod_code)
+        self.assertIn("MOD_GATE_ONLY", mod_code)
 
 
 class TestFindCell(TmpCase):

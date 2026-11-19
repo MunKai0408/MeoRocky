@@ -149,6 +149,7 @@ const PRECACHE_URLS = [
   "pb3/sdk/langdetect.py",
   "pb3/sdk/lz4pure.py",
   "pb3/sdk/manifest.py",
+  "pb3/sdk/mod_job.py",
   "pb3/sdk/patch_pack.py",
   "pb3/sdk/plan.py",
   "pb3/sdk/po_write.py",
