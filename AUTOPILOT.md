@@ -836,3 +836,50 @@ P1-5 (I3) → P2-1 → P2-2 → P2-3 → P2-4 → P3. Tiêu chí XONG từng m�
   (29 text-data + 6 merge zh) đều pass. Lần chạy nhánh trước (commit
   `3931eab`, chưa thu hẹp) có thêm 1 fail `test_script_extracts_fixture` —
   đã sửa bằng thu hẹp + chạy lại đủ bộ.
+
+## Nhận diện engine game ở tab Tổng quan (2026-11-20) — v65 (nhánh `feat/engine-detect-overview`)
+
+- Yêu cầu của anh Duy (12:47 +07 20/11, gọi thoại): khi mở file IPA, tab
+  Tổng quan phải hiện game thuộc engine nào — Unity IL2CPP, Unity Mono
+  (Unity 3D), Native iOS, hay Unreal Engine — chuẩn xác nhất.
+- Hiện trạng cũ: `sdk/discovery.py` đã có `detect_engine()` gợi ý 6 engine
+  cho pipeline (magic UnityFS/GDPC/LOCRES/FORM+GEN8 + tên entry) nhưng
+  KHÔNG phân biệt IL2CPP vs Mono, KHÔNG có Native iOS, KHÔNG kiểm magic
+  global-metadata.dat, KHÔNG kiểm footer .pak. Tab Tổng quan KHÔNG có
+  trường engine nào (chỉ thẻ "Thông tin Unity" hiện sau inspect thật).
+- Cơ chế mới (`sdk/discovery.detect_game_engine`, `bridge.detect_game_engine`,
+  thẻ `#engine-info-card` ở Home): đa tín hiệu, liệt kê bằng chứng từng
+  tín hiệu, phân biệt 4 loại; không đủ tín hiệu -> Unknown kèm lý do
+  (fail-closed). Mỗi tín hiệu chỉ tính 1 lần; thắng khi điểm >= 0.50 và
+  hơn engine thứ 2 >= 0.20; mức >= 0.80 CHẮC CHẮN, >= 0.50 CÓ KHẢ NĂNG.
+  IL2CPP bắt buộc có dấu global-metadata.dat (magic 0xFAB11BAF 1.0 / tên
+  0.5); Mono bắt buộc có dấu DLL Data/Managed/libmono và KHÔNG có dấu
+  IL2CPP; Unreal = magic .locres/footer .pak 0x5A6F12E1, .uproject/.locmeta/
+  .utoc/.ucas; Native = Info.plist + Mach-O + storyboard KHÔNG phải
+  LaunchScreen. `.pak` riêng lẻ KHÔNG chứng minh Unreal (Heaps cũng dùng
+  .pak — đầu file Heaps có magic "PAK" ở offset 0/64, loại bằng chứng tên
+  .pak). Native KHÔNG dùng Assets.car/.lproj/.strings/LaunchScreen (đo
+  thật: cả 7 game Unity đều có). Cây data/ lớn trong .app (DST 8.449
+  entry, phân biệt hoa/thường với Data/ của Unity) chặn mức Native yếu.
+  Bridge đọc lười qua zipfile (central directory + vài byte đầu/cuối
+  entry ứng viên), không giải nén.
+- Kiểm chứng [ĐÃ ĐO THẬT] qua bridge: 7 game Unity -> IL2CPP CHẮC CHẮN
+  1.0 (magic IL2CPP + UnityFramework); DST/Carrion/Fortune Mill/Balatro/
+  Dead Cells (tên ghi 17/11) -> Unknown, không nhầm Unity/Unreal.
+  Không có IPA Unity Mono / Unreal / Native iOS thật local nên 3 loại đó
+  chỉ kiểm bằng fixture tổng hợp — ghi rõ trong test + PR.
+- Test mới 39/39 pass (26 fixture + 13 game thật local, skip khi thiếu
+  IPA); 10 check tĩnh `fails: []`; smoke 59/59; `node --check` app.js OK;
+  Python 3.9 (không match/X|Y, chỉ thêm import stdlib).
+- Full suite nhánh (commit `c5db964`) vs baseline main v62 (cùng môi
+  trường, tuần tự): nhánh 2.762 test, 2.747 đạt, 12 lỗi, 0 fail
+  (2.745,4s); baseline 2.723 test, 2.709 đạt, 11 lỗi, 0 fail (2.643,3s).
+  Tập lỗi nhánh = tập lỗi baseline (10 lỗi fixture `sqlite_loc/a.sqlite`
+  thiếu + 1 timeout `test_po_write_dst_real`) + 1 timeout
+  `test_round_trip_pb3` (vượt 1800s trong full suite); test này chạy
+  riêng trên nhánh PASS trong 1.570,55s, và PASS trên baseline — biến
+  động tốc độ VM (test này vốn ~1.724s, sát mức 1.800s), không phải lỗi
+  code -> **0 đỏ mới**. Lần chạy baseline đầu bị VM restart giết ở 54%
+  (test_round_trip_pb3 1.566s) — chạy lại từ đầu, đủ bộ.
+- Dance pin/count v65: `tests.json` 199->200, precache đo lại 17.533.126 B
+  / 140 mục, `CACHE_VERSION` v65-20261120.
