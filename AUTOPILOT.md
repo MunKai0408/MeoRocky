@@ -884,3 +884,74 @@ P1-5 (I3) → P2-1 → P2-2 → P2-3 → P2-4 → P3. Tiêu chí XONG từng m�
   chạy lại từ đầu, đủ bộ -> **0 đỏ mới** (+39 test mới, +38 đạt).
 - Dance pin/count v65: `tests.json` 199->200, precache đo lại 17.533.126 B
   / 140 mục, `CACHE_VERSION` v65-20261120.
+
+## Nhận diện thêm engine Heaps/Godot/MonoGame/LÖVE/Cocos2d-x ở tab Tổng quan (2026-11-20) — v67 (nhánh `feat/engine-detect-more`, CHƯA dance, CHƯA mở PR)
+
+- Yêu cầu của anh Duy (18:12 +07 20/11, chọn trong báo cáo v65): nhận diện
+  THÊM engine khác ngoài 4 engine đã có ở v65. Thứ tự ưu tiên: Heaps,
+  Godot, MonoGame, LÖVE, Cocos2d-x (chỉ thêm nếu có tín hiệu phân biệt
+  chắc chắn). Giữ nguyên hành vi 4 engine cũ + Unknown fail-closed.
+- Cơ chế (`sdk/discovery.detect_game_engine`, `bridge.detect_game_engine`,
+  thẻ `#engine-info-card` không đổi — `app.js` `engineInfoHtml` đã generic
+  hoàn toàn theo label/level/confidence/evidence/candidates nên KHÔNG sửa
+  JS). Mỗi tín hiệu chỉ tính 1 lần; thắng khi điểm >= 0.50 và hơn engine
+  thứ 2 >= 0.20; >= 0.80 CHẮC CHẮN, >= 0.50 CÓ KHẢ NĂNG (giống v65).
+  Tín hiệu từng engine mới:
+  - Heaps: `.pak` magic Heaps 1.0; `data.cdb` (CastleDB) 0.5. Magic Heaps
+    chặn điểm tên `.pak` của Unreal (quy tắc đã có ở v65). `_is_heaps_pak_head`
+    viết lại cho đầu file cắt ngắn 128 byte — KHÔNG đòi `data_size` vừa
+    trong đầu file (bản cũ, chung với `sdk.heaps._header_at`, loại sai pak
+    Heaps thật vì data_size tính bằng MB): chỉ cần magic "PAK" + version
+    <= 16 + header_size >= 12 và <= 64 MiB, ở offset 0 hoặc 64 (sau 64 ký
+    tự hex ASCII).
+  - Godot: `.pck` magic GDPC 1.0; `project.godot` 0.7; chuỗi "godot" trong
+    tên 0.5; tên `.pck` không magic 0.3; `.tscn`/`.tres`/`.gd` 0.15 mỗi cái.
+  - MonoGame: `MonoGame.Framework.dll` 0.7; `.xnb` magic ("XNB" + version
+    5) 0.6; tên `.xnb` không magic 0.3 (magic và tên loại trừ nhau).
+  - LÖVE: `game.love` 0.7 + magic PK-zip 0.3 (= 1.0); `main.lua` 0.5.
+  - Cocos2d-x: chuỗi `libcocos2d` 0.7; `.ccb` 0.5; combo `project.json` +
+    `main.js` 0.6 (loại trừ với `project.json` một mình 0.4); `main.js`
+    một mình 0 điểm (quá chung). Không có magic -> chỉ nhận diện bằng tên;
+    1 tín hiệu tên mạnh tối đa CÓ KHẢ NĂNG, nhiều tên cộng lại mới lên
+    CHẮC CHẮN (cùng quy tắc Unreal `.utoc`+`.ucas` ở v65).
+  - `native_blocked` giờ = cây data/ lớn HOẶC bất kỳ engine mới nào có
+    điểm > 0 (thay kiểm tiền tố `other_hints` cũ); 4 chuỗi gợi ý cũ
+    (Godot/Heaps/MonoGame/LÖVE) bỏ khỏi `other_hints` vì các engine đó giờ
+    là ứng viên. Bridge đọc thêm đầu file `.xnb` đầu tiên (6 byte) và
+    `game.love` đầu tiên (4 byte); đầu `.pak` (128 B, 3 file đầu) và đầu
+    `.pck` (4 B) đã đọc từ trước. Chế độ 1 file (đầu 16 byte) vẫn đủ cho
+    mọi magic mới.
+  - `.hxd` BỎ làm tín hiệu: không có bằng chứng nào trong repo hay file
+    thật cho định dạng file Heaps `.hxd`.
+- Kiểm chứng [ĐÃ ĐO THẬT] qua bridge: Fortune Mill -> Godot CHẮC CHẮN
+  (đầu `FortuneMill.pck` = `GDPC\x03\x00\x00\x00` + framework Godot);
+  Carrion -> MonoGame CHẮC CHẮN (`MonoGame.Framework.dll` + 132 file
+  `.xnb`, đầu `.xnb` đầu = `XNBi\x05`); Balatro -> LÖVE CHẮC CHẮN
+  (`game.love` đầu = `PK\x03\x04` ZIP); DST -> Unknown (0 tín hiệu cho
+  mọi engine mới). Dead Cells KHÔNG có IPA local (chỉ còn file
+  `.tmp` 0 byte) — Heaps chỉ kiểm bằng tên đã ghi + đầu file tổng hợp.
+  Afterimage không phải file zip (BadZipFile) -> bridge unknown,
+  fail-closed, ngoài phạm vi.
+- Test mới 17/17 pass (tổng `test_engine_detect_overview.py` 56/56, gồm
+  39 cũ + 17 mới: 5 fixture cũ đổi từ unknown sang engine mới + 3 test
+  game thật đổi + 17 fixture mới, trong đó có Heaps-vs-Unreal xung đột
+  `.pak`); 10 check tĩnh `fails: []`; smoke 59/59; `node --check` app.js
+  OK; `py_compile` discovery.py + bridge.py OK. Không thêm file mới nên
+  `files.json` giữ 112, `tests.json` giữ 200, CACHE giữ v65.
+- Full suite nhánh (head `a7ff850`) vs baseline main v65 (`8461fa3d`),
+  cùng môi trường, chạy nối tiếp theo từng tầng (không chạy 1 lệnh
+  `--tier full` vì VM restart 3 lần giết các lần chạy ~50 phút + 1 lần
+  OOM do 2 suite chạy song song; mỗi tầng 1 log riêng, hợp các tầng lại
+  đủ 2.806 test): nhánh fast 2.575 (2.562 đạt, 10 lỗi, 0 fail, 3 bỏ qua,
+  89,8s) / ish 11/11 / slow 159 (158 đạt, 1 lỗi, 2 timeout, 2.468s) /
+  meta 65/65 / smoke 59/59; baseline fast 2.558 (2.545 đạt, 10 lỗi,
+  0 fail, 3 bỏ qua) / ish 11/11 / slow 155 (154 đạt, 1 lỗi, 2 timeout) /
+  meta 65/65 / smoke 59/59. **Tập lỗi GIỐNG HỆT nhau ở cả 5 tầng: 10 lỗi
+  fixture `sqlite_loc/a.sqlite` thiếu + 1 lỗi `test_po_write_dst_real`
+  (caps-po), đều có sẵn trên main — 0 đỏ mới.** Nhánh fast +17 test =
+  đúng 17 test mới, đều pass; nhánh slow +4 test = 4 test cũ được hồ sơ
+  thời gian chuyển sang tầng chậm ("MỚI CHẶM": inspect_deep_apple_strings
+  ek2/tom, scan_target_macho, merge_cff_face_refused_real_ttc), đều pass.
+  0 lỗi EPERM trong cả 10 log.
+- CHƯA dance pin (giữ CACHE v65), CHƯA mở PR: PR #60 (v66, sửa 2 bug
+  .bundle + fixture) gộp trước, nhánh này re-dance lấy v67 sau.
