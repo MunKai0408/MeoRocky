@@ -1,0 +1,18 @@
+[package]
+name = "meorocky-wasm"
+version = "0.1.0"
+edition = "2021"
+description = "Rust/WASM hotspots cho tool web MeoRocky: LZ4, phat hien ngon ngu, doc typetree"
+license = "MIT OR Apache-2.0"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+wasm-bindgen = "0.2"
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+
+[profile.release]
+opt-level = 3
+panic = "abort"
