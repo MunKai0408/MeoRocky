@@ -97,7 +97,7 @@ function sizeWarningFor(size) {
 // (quirk UTI của picker iOS), nên 2 input chính (#file-input, #batch-files)
 // KHÔNG dùng accept mà kiểm tra đuôi bằng JS sau khi chọn (không phân biệt
 // hoa/thường). File khác đuôi thì báo lỗi thân thiện, không im lặng.
-const GAME_EXTS = [".ipa", ".zip", ".unity3d", ".assets", ".ttf", ".json", ".tar.xz"];
+const GAME_EXTS = [".ipa", ".zip", ".unity3d", ".bundle", ".assets", ".ttf", ".json", ".tar.xz"];
 // Mục 5: file .gz đơn lẻ cũng chọn được (để tải bản đã giải nén bằng
 // DecompressionStream ở tab Danh sách). Giữ riêng ngoài GAME_EXTS vì
 // harness phase1_ci kiểm tra đúng từng ký tự mảng GAME_EXTS (fix picker

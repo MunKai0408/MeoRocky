@@ -206,7 +206,7 @@ globalThis.fetch = async (input, init) => {
     batch_files_no_accept: !/accept=/.test(tag("batch-files")),
     translate_json_kept: /accept="\.json"/.test(tag("translate-json-file")),
     kb_import_kept: /\.sqlite/.test(tag("kb-import-file")),
-    js_ext_check: /GAME_EXTS = \["\.ipa", "\.zip", "\.unity3d", "\.assets", "\.ttf", "\.json", "\.tar\.xz"\]/.test(appjs)
+    js_ext_check: /GAME_EXTS = \["\.ipa", "\.zip", "\.unity3d", "\.bundle", "\.assets", "\.ttf", "\.json", "\.tar\.xz"\]/.test(appjs)
       && /gameExtOk\(f\.name\)/.test(appjs) && /gameExtError\(f\.name\)/.test(appjs),
   };
   const bad = Object.entries(checks).filter(([, v]) => !v).map(([k]) => k);
