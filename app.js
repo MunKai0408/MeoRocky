@@ -1311,6 +1311,7 @@ function setCurrentGameFile(obj) {
   clearError();
   addRecent(state.file);
   syncFileChips();
+  refreshEngineInfo();
   return state.file;
 }
 async function handleChosenFile(f) {
@@ -1382,6 +1383,9 @@ function clearFile() {
   if (inp) inp.value = "";
   $("file-info").hidden = true;
   $("btn-clear-file").hidden = true;
+  { const ei = $("engine-info"); if (ei) ei.innerHTML = "<p class=\"note\">Chưa có dữ liệu — chọn 1 file IPA/ZIP, engine sẽ tự nhận diện và hiện tại đây (Unity IL2CPP / Unity Mono / Unreal Engine / Native iOS, kèm độ tin cậy và bằng chứng từng tín hiệu).</p>"; }
+  { const eb = $("btn-engine-refresh"); if (eb) eb.hidden = true; }
+  engineDetectToken++;
   syncFileChips();
   renderRecent();
 }
@@ -1614,6 +1618,58 @@ function updateHomeUnityInfo(parsed) {
     "<p><span class=\"badge\">Đã sẵn sàng</span> <span class=\"badge\">An toàn &amp; Riêng tư</span></p>" +
     "<p class=\"note\">Xử lý 100% trên thiết bị của bạn — file không được upload đi đâu.</p>";
 }
+
+// ---- Nhận diện engine game ở tab Tổng quan (v64) ----
+// Khi chọn file IPA/ZIP thì tự chạy bridge.detect_game_engine (chỉ đọc
+// central directory + vài byte đầu/cuối entry ứng viên, không giải nén)
+// rồi hiện engine + độ tin cậy + bằng chứng ở thẻ #engine-info. Token
+// chống kết quả cũ đè lên file mới chọn sau; lỗi thì hiện lý do, không
+// chặn các thao tác khác.
+let engineDetectToken = 0;
+function engineInfoHtml(e) {
+  let html = "<p><b>Engine:</b> " + esc(e.label) + " — <b>" + esc(e.level) + "</b>" +
+    " (độ tin cậy " + e.confidence + ")</p>";
+  html += "<p class=note>" + esc(e.reason || "") + "</p>";
+  if (e.evidence && e.evidence.length) {
+    html += "<h3>Bằng chứng</h3><ul>";
+    for (const ev of e.evidence) html += "<li>" + esc(ev.reason) + " (trọng số " + ev.weight + ")</li>";
+    html += "</ul>";
+  }
+  const others = (e.candidates || []).filter((c) => c.evidence && c.evidence.length);
+  if (others.length) {
+    html += "<h3>Ứng viên khác</h3><ul>";
+    for (const c of others) html += "<li>" + esc(c.label) + ": " + esc(c.level) +
+      " (độ tin cậy " + c.confidence + ") — " + esc(c.evidence.join("; ")) + "</li>";
+    html += "</ul>";
+  }
+  if (e.other_hints && e.other_hints.length) {
+    html += "<p class=note>Ghi chú: " + esc(e.other_hints.join("; ")) + ".</p>";
+  }
+  if (e.total_entries) html += "<p class=note>Đã xét " + e.total_entries + " entry trong file.</p>";
+  return html;
+}
+async function refreshEngineInfo() {
+  const el = $("engine-info");
+  const btn = $("btn-engine-refresh");
+  if (!el || !state.file) return;
+  const myToken = ++engineDetectToken;
+  if (btn) btn.hidden = false;
+  el.innerHTML = "<p class=note>Đang nhận diện engine…</p>";
+  try {
+    const { parsed } = await runOp("Nhận diện engine", "detect_game_engine", [inputPath()], inputFileArgs());
+    if (myToken !== engineDetectToken) return; // file đã đổi, bỏ kết quả cũ
+    const e = (parsed && parsed.engine) || null;
+    if (!e) { el.innerHTML = "<p class=warn>Không nhận được kết quả nhận diện engine.</p>"; return; }
+    el.innerHTML = engineInfoHtml(e);
+    if (parsed && parsed.notes && parsed.notes.length) {
+      el.innerHTML += "<p class=note>" + esc(parsed.notes.join("; ")) + "</p>";
+    }
+  } catch (err) {
+    if (myToken !== engineDetectToken) return;
+    el.innerHTML = "<p class=warn>Chưa nhận diện được engine: " + esc(err && err.message ? err.message : String(err)) + "</p>";
+  }
+}
+$("btn-engine-refresh").addEventListener("click", () => { refreshEngineInfo(); });
 $("btn-unity-run").addEventListener("click", async () => {
   try {
     const { parsed } = await runOp("Inspect Unity", "unity_inspect", [inputPath()], inputFileArgs());
