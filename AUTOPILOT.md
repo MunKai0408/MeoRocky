@@ -885,7 +885,7 @@ P1-5 (I3) → P2-1 → P2-2 → P2-3 → P2-4 → P3. Tiêu chí XONG từng m�
 - Dance pin/count v65: `tests.json` 199->200, precache đo lại 17.533.126 B
   / 140 mục, `CACHE_VERSION` v65-20261120.
 
-## Nhận diện thêm engine Heaps/Godot/MonoGame/LÖVE/Cocos2d-x ở tab Tổng quan (2026-11-20) — v67 (nhánh `feat/engine-detect-more`, CHƯA dance, CHƯA mở PR)
+## Nhận diện thêm engine Heaps/Godot/MonoGame/LÖVE/Cocos2d-x ở tab Tổng quan (2026-11-20) — v67 (nhánh `feat/engine-detect-more`, đã dance pin v67, đang mở PR)
 
 - Yêu cầu của anh Duy (18:12 +07 20/11, chọn trong báo cáo v65): nhận diện
   THÊM engine khác ngoài 4 engine đã có ở v65. Thứ tự ưu tiên: Heaps,
@@ -953,5 +953,34 @@ P1-5 (I3) → P2-1 → P2-2 → P2-3 → P2-4 → P3. Tiêu chí XONG từng m�
   thời gian chuyển sang tầng chậm ("MỚI CHẶM": inspect_deep_apple_strings
   ek2/tom, scan_target_macho, merge_cff_face_refused_real_ttc), đều pass.
   0 lỗi EPERM trong cả 10 log.
-- CHƯA dance pin (giữ CACHE v65), CHƯA mở PR: PR #60 (v66, sửa 2 bug
-  .bundle + fixture) gộp trước, nhánh này re-dance lấy v67 sau.
+- Re-dance lấy v67 (agent re-dance, 21/11): rebase lên main v66 `f14a2115`
+  (PR #60 đã gộp) — 0 conflict, 0 file trùng (v66 đổi 17 file, nhánh đổi
+  4 file khác nhau). Dance pin v67 (commit `4fcf315`): CACHE v66-20261120
+  -> **v67-20261121** trong sw.js + 9 file `exp/check_*_static.py` +
+  `test_ui_bear_pastel.py`; `tests.json` giữ 201 file (nhánh không thêm
+  file test mới); precache đo lại từ đĩa **17.541.666 B / 140 mục**
+  (PB3 2.730.138 B, tăng 8.529 B do discovery.py + bridge.py).
+- Full suite nhánh rebase (head `4fcf315`) vs baseline main v66
+  (`f14a2115`), cùng môi trường, chạy nối tiếp theo từng tầng, mỗi tầng
+  1 log riêng (`full-branch-v67-rebased-<tier>.log`,
+  `full-baseline-v66-<tier>.log`): nhánh fast 2.574 (2.561 đạt, 10 lỗi,
+  0 fail, 3 bỏ qua, 72,0s) / ish 11/11 / slow 163 (162 đạt, 1 lỗi,
+  2 timeout, 2.496,0s) / meta 65/65 / smoke 59/59; baseline fast 2.561
+  (2.548 đạt, 10 lỗi, 0 fail, 3 bỏ qua, 90,4s) / ish 11/11 / slow 155
+  (154 đạt, 1 lỗi, 2 timeout, 2.455,3s) / meta 65/65 / smoke 59/59.
+  **Tổng nhánh 2.809 test vs baseline 2.792 (+17 test mới, đều pass);
+  tập lỗi GIỐNG HỆT nhau ở cả 5 tầng: 10 lỗi fixture
+  `sqlite_loc/a.sqlite` thiếu + 1 lỗi `test_po_write_dst_real`
+  (caps-po), đều có sẵn trên main — 0 đỏ mới.** Nhánh slow +8 test so
+  với baseline slow = 4 test mới ở tầng chậm + 4 test cũ được hồ sơ thời
+  gian chuyển sang tầng chậm (\"MỚI CHẶM\"), đều pass.
+- Sự cố khi chạy suite (đều đã xử lý, không ảnh hưởng kết quả): (1) VM
+  restart giết tầng slow nhánh lần 1 lúc ~22 phút (đang ở
+  test_round_trip_pb3) — chạy lại từ đầu, lần 2 xong 2.496,0s. (2) Sóng
+  EPERM bật giữa tầng slow baseline lần 1: 155 test chỉ chạy 385,0s,
+  144 lỗi + 15 fail (lỗi setUpClass hàng loạt + PermissionError EPERM
+  trong logging) — kết quả HỎNG, bỏ, không đối chiếu; sóng kéo dài
+  ~1 giờ (01:24–02:31 +07) rồi tắt sau 1 lần VM restart nữa (probe
+  WAVE_OFF 2 lần liên tiếp) — chạy lại tầng slow baseline từ đầu, lần 2
+  xong 2.455,3s, tập lỗi khớp nhánh.
+- Đã dance pin v67, đang mở PR lấy v67 (không tự gộp — chờ Chí).
