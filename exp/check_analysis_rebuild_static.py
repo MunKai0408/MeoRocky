@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Kiem tra tinh muc (E) rebuild [P0-1]: sdk/rebuild.py chi stdlib +
 Python 3.9, khong UnityPy/lz4, khong expose rebuild_zip; manifest
-(files.json 112, tests.json 197); sw.js precache 140 muc co
+(files.json 112, tests.json 198); sw.js precache 140 muc co
 sdk/rebuild.py, khong wheel chet, CACHE_VERSION v62-20261120; bridge co
 op rebuild_apply; plan.py co progress_fn; unity.py co
 rebuild_bundle_streaming + khoa REBUILD_ALL con nguyen; UI du id (E);
@@ -76,8 +76,8 @@ if len(files) != 112:
 if "pb3/sdk/rebuild.py" not in files:
     fails.append("files.json thieu pb3/sdk/rebuild.py")
 tests = json.loads((SITE / "pb3" / "tests.json").read_text())["files"]
-if len(tests) != 197:
-    fails.append("tests.json co %d file, ky vong 197" % len(tests))
+if len(tests) != 198:
+    fails.append("tests.json co %d file, ky vong 198" % len(tests))
 if "pb3/tests/test_rebuild.py" not in tests:
     fails.append("tests.json thieu pb3/tests/test_rebuild.py")
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Kiem tra tinh muc C8: sdk/format_probe.py chi stdlib + core/sdk,
 Python 3.9 (khong match, khong X|Y, khong eval/exec, khong goi mang);
-manifest (files.json 112, tests.json 197); sw.js precache co
+manifest (files.json 112, tests.json 198); sw.js precache co
 sdk/format_probe.py va CACHE_VERSION v62-20261120; bridge co op
 format_probe; UI co nut probe + input file rieng + nut tai JSON;
 bang ENGINE_SUPPORT trung thuc (moi engine deu co unsupported khong
@@ -79,8 +79,8 @@ if len(files) != 112:
 if "pb3/sdk/format_probe.py" not in files:
     fails.append("files.json thieu pb3/sdk/format_probe.py")
 tests = json.loads((SITE / "pb3" / "tests.json").read_text())["files"]
-if len(tests) != 197:
-    fails.append("tests.json co %d file, ky vong 197" % len(tests))
+if len(tests) != 198:
+    fails.append("tests.json co %d file, ky vong 198" % len(tests))
 if "pb3/tests/test_format_probe.py" not in tests:
     fails.append("tests.json thieu pb3/tests/test_format_probe.py")
 

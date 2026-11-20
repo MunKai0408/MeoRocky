@@ -7,7 +7,7 @@
 - bridge.py: co op font_list + font_unify + cache _LAST_FONT_SCAN.
 - index.html + app.js: nut btn-font-list + btn-font-unify, handler goi
   dung op, hien tmp_candidates + font_unified.zip.
-- Manifest: files.json 112 (co pb3/sdk/font_list.py), tests.json 197
+- Manifest: files.json 112 (co pb3/sdk/font_list.py), tests.json 198
   (co pb3/tests/test_font_unify.py); sw.js CACHE_VERSION v62-20261120
   + precache co pb3/sdk/font_list.py.
 - Tieng Viet moi du dau.
@@ -80,8 +80,8 @@ if len(files) != 112:
 if "pb3/sdk/font_list.py" not in files:
     fails.append("files.json thieu pb3/sdk/font_list.py")
 tests = json.loads((SITE / "pb3" / "tests.json").read_text())["files"]
-if len(tests) != 197:
-    fails.append("tests.json co %d file, ky vong 197" % len(tests))
+if len(tests) != 198:
+    fails.append("tests.json co %d file, ky vong 198" % len(tests))
 if "pb3/tests/test_font_unify.py" not in tests:
     fails.append("tests.json thieu pb3/tests/test_font_unify.py")
 if 'CACHE_VERSION = "v62-20261120"' not in sw:

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Kiem tra tinh cong kiem tra truoc khi giao (P0-2, buoc 6):
 sdk/gate.py chi stdlib + Python 3.9, khong UnityPy/lz4, khong ghi file;
-manifest (files.json 112, tests.json 197); sw.js precache 140 muc co
+manifest (files.json 112, tests.json 198); sw.js precache 140 muc co
 sdk/gate.py, khong muc chet, CACHE_VERSION v62-20261120; bridge co op
 delivery_gate + rebuild_apply bat verdict cong khi duoc truyen; UI du
 id cong + nut Ghi bi khoa boi verdict + render cong esc du lieu game.
@@ -77,8 +77,8 @@ if len(files) != 112:
 if "pb3/sdk/gate.py" not in files:
     fails.append("files.json thieu pb3/sdk/gate.py")
 tests = json.loads((SITE / "pb3" / "tests.json").read_text())["files"]
-if len(tests) != 197:
-    fails.append("tests.json co %d file, ky vong 197" % len(tests))
+if len(tests) != 198:
+    fails.append("tests.json co %d file, ky vong 198" % len(tests))
 if "pb3/tests/test_gate.py" not in tests:
     fails.append("tests.json thieu pb3/tests/test_gate.py")
 

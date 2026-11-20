@@ -14,7 +14,7 @@
 - sdk/gate.py: co check_tmp_sdf + CHECK_TMP_SDF (khong nam trong
   CHECK_IDS/run_gate — check rieng cho luong tmp_sdf_regen).
 - Manifest: files.json 112 (co pb3/sdk/sdf.py, pb3/sdk/tmp_sdf.py),
-  tests.json 197 (co pb3/tests/test_sdf_regen.py).
+  tests.json 198 (co pb3/tests/test_sdf_regen.py).
 - sw.js precache co 2 file SDK moi + CACHE_VERSION v62-20261120.
 - bridge.py: co op tmp_sdf_regen (dry-run, tra dest .raw + MAE).
 - UI: index.html co btn-font-tmp-sdf + inp-tmp-sdf-name +
@@ -138,8 +138,8 @@ for f in ("pb3/sdk/sdf.py", "pb3/sdk/tmp_sdf.py"):
     if f not in files:
         fails.append("files.json thieu %s" % f)
 tests = json.loads((SITE / "pb3" / "tests.json").read_text())["files"]
-if len(tests) != 197:
-    fails.append("tests.json co %d file, ky vong 197" % len(tests))
+if len(tests) != 198:
+    fails.append("tests.json co %d file, ky vong 198" % len(tests))
 if "pb3/tests/test_sdf_regen.py" not in tests:
     fails.append("tests.json thieu pb3/tests/test_sdf_regen.py")
 

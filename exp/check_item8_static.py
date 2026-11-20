@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Kiem tra tinh muc 8: sdk/plan.py chi stdlib + Python 3.9; manifest
-(files.json 112, tests.json 197); sw.js precache co sdk/plan.py va
+(files.json 112, tests.json 198); sw.js precache co sdk/plan.py va
 CACHE_VERSION v62-20261120 (C3 them fixtures/selftest.zip); bridge co 3 op plan_*. In JSON {"fails": [...]}.
 """
 import ast
@@ -41,8 +41,8 @@ if len(files) != 112:
 if "pb3/sdk/plan.py" not in files:
     fails.append("files.json thieu pb3/sdk/plan.py")
 tests = json.loads((SITE / "pb3" / "tests.json").read_text())["files"]
-if len(tests) != 197:
-    fails.append("tests.json co %d file, ky vong 197" % len(tests))
+if len(tests) != 198:
+    fails.append("tests.json co %d file, ky vong 198" % len(tests))
 if "pb3/tests/test_plan.py" not in tests:
     fails.append("tests.json thieu pb3/tests/test_plan.py")
 

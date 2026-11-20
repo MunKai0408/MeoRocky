@@ -140,8 +140,8 @@ chk(len(files_json["files"]) == 112,
 tests_json = json.load(open(os.path.join(PB3, "tests.json"), encoding="utf-8"))
 chk("pb3/tests/test_tmp_fallback.py" in tests_json["files"],
     "tests.json thieu pb3/tests/test_tmp_fallback.py")
-chk(len(tests_json["files"]) == 197,
-    "tests.json %d file != 197" % len(tests_json["files"]))
+chk(len(tests_json["files"]) == 198,
+    "tests.json %d file != 198" % len(tests_json["files"]))
 
 print(json.dumps({"fails": FAILS}, ensure_ascii=False, indent=1))
 sys.exit(1 if FAILS else 0)

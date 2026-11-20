@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Kiem tra tinh muc C7: sdk/patch_pack.py chi stdlib + Python 3.9;
-manifest (files.json 112, tests.json 197); sw.js precache co
+manifest (files.json 112, tests.json 198); sw.js precache co
 sdk/patch_pack.py va CACHE_VERSION v62-20261120; bridge co op patch_pack;
 UI co 2 nut xuat pack; khong co chuoi cam theo luat iSH-only trong
 patch_pack.py (ca chuoi template cua script ap). In JSON {"fails": [...]}.
@@ -88,8 +88,8 @@ if len(files) != 112:
 if "pb3/sdk/patch_pack.py" not in files:
     fails.append("files.json thieu pb3/sdk/patch_pack.py")
 tests = json.loads((SITE / "pb3" / "tests.json").read_text())["files"]
-if len(tests) != 197:
-    fails.append("tests.json co %d file, ky vong 197" % len(tests))
+if len(tests) != 198:
+    fails.append("tests.json co %d file, ky vong 198" % len(tests))
 if "pb3/tests/test_patch_pack.py" not in tests:
     fails.append("tests.json thieu pb3/tests/test_patch_pack.py")
 
