@@ -2447,10 +2447,11 @@ def _pak_tail_bytes(zf, info, tail_n=4096):
 
 
 def detect_game_engine(path):
-    """Nhận diện engine game cho tab Tổng quan (v64): mở file IPA/ZIP,
-    liệt kê tên entry (chỉ đọc central directory, không giải nén) rồi
-    đọc lười vài byte đầu của entry ứng viên (global-metadata.dat,
-    .locres, .pak, .pck, file thực thi .app) + byte cuối của .pak để
+    """Nhận diện engine game cho tab Tổng quan (v65, mở rộng v67): mở
+    file IPA/ZIP, liệt kê tên entry (chỉ đọc central directory, không
+    giải nén) rồi đọc lười vài byte đầu của entry ứng viên
+    (global-metadata.dat, .locres, .pak, .pck, .xnb, game.love, file
+    thực thi .app) + byte cuối của .pak để
     sdk.discovery.detect_game_engine chấm đa tín hiệu.
 
     Không đủ tín hiệu thì engine "unknown" kèm lý do (ok True) — chỉ
@@ -2499,6 +2500,10 @@ def detect_game_engine(path):
             _read_head(locres, 16)
             pck = _first(lambda n: n.endswith(".pck"))
             _read_head(pck, 4)
+            xnb = _first(lambda n: n.endswith(".xnb"))
+            _read_head(xnb, 6)
+            love = _first(lambda n: n.endswith("game.love"))
+            _read_head(love, 4)
             paks = [n for n in names if n.lower().endswith(".pak")][:3]
             for pak in paks:
                 _read_head(pak, 128)

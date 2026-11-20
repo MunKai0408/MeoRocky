@@ -969,13 +969,14 @@ def open_source_vfs(source, limits):
     return MemoryVFS({os.path.basename(path): data}, limits=limits)
 
 
-# ------------------------------------------------- nhận diện engine game (v64)
+# ------------------------------------------------- nhận diện engine game (v65, mở rộng v67)
 # Tab Tổng quan: khi mở 1 file IPA phải hiện game thuộc engine nào, chuẩn
 # xác nhất. Khác với detect_engine() ở trên (gợi ý 6 engine cho pipeline
-# trích xuất, evidence kiểu Evidence): hàm này phân biệt rõ 4 loại Duy
-# cần — Unity IL2CPP, Unity Mono (Unity 3D), Unreal Engine, Native iOS —
-# bằng ĐA TÍN HIỆU có liệt kê bằng chứng từng tín hiệu (file/marker nào),
-# và trả Unknown kèm lý do khi không đủ tín hiệu (fail-closed, KHÔNG đoán).
+# trích xuất, evidence kiểu Evidence): hàm này phân biệt rõ 9 loại —
+# Unity IL2CPP, Unity Mono (Unity 3D), Unreal Engine, Native iOS (v65)
+# + Heaps, Godot, MonoGame, LÖVE, Cocos2d-x (v67) — bằng ĐA TÍN HIỆU có
+# liệt kê bằng chứng từng tín hiệu (file/marker nào), và trả Unknown kèm
+# lý do khi không đủ tín hiệu (fail-closed, KHÔNG đoán).
 #
 # Nguyên tắc chấm (đo trên 7 game Unity + DST/Dead Cells/Carrion/Fortune
 # Mill/Balatro local, xem pb3/tests/test_engine_detect_overview.py):
@@ -1007,6 +1008,11 @@ ENGINE_LABELS = {
     "unity-mono": "Unity Mono (Unity 3D)",
     "unreal": "Unreal Engine",
     "native-ios": "Native iOS",
+    "heaps": "Heaps",
+    "godot": "Godot",
+    "monogame": "MonoGame",
+    "love": "LÖVE",
+    "cocos": "Cocos2d-x",
     "unknown": "Chưa xác định",
 }
 
@@ -1032,9 +1038,13 @@ def _game_level(score: float) -> str:
 
 
 def _is_heaps_pak_head(head: bytes) -> bool:
-    """Đầu file có phải Heaps PAK không (bản rút gọn của sdk.heaps:
-    magic "PAK" + version ≤ 16 + header_size/data_size hợp lệ, ở offset
-    0 hoặc offset 64 sau 64 ký tự hex ASCII — layout Dead Cells)."""
+    """Đầu file có phải Heaps PAK không — kiểm tra trên head CẮT NGẮN
+    (bridge chỉ đọc 128 byte đầu .pak, không có cả file nên KHÔNG thể
+    kiểm data_size vừa hết file như sdk.heaps._header_at): magic "PAK"
+    + version ≤ 16 + header_size ≥ 12 (và ≤ 64 MiB cho hợp lý), ở offset
+    0 hoặc offset 64 sau 64 ký tự hex ASCII (layout Dead Cells).
+    Chỉ dùng để nhận diện engine, không thay parse đầy đủ của sdk.heaps
+    (parse đầy đủ vẫn kiểm header_size + data_size vừa hết file)."""
     if not head:
         return False
     for start in (0, 64):
@@ -1045,13 +1055,19 @@ def _is_heaps_pak_head(head: bytes) -> bool:
         if head[start + 3] > 16:
             continue
         header_size = struct.unpack_from("<I", head, start + 4)[0]
-        data_size = struct.unpack_from("<I", head, start + 8)[0]
-        if header_size < 12 or header_size > len(head):
-            continue
-        if start + header_size + data_size > len(head):
+        if header_size < 12 or header_size > 64 * 1024 * 1024:
             continue
         return True
     return False
+
+
+def _is_xnb_head(head: bytes) -> bool:
+    """Đầu file có phải XNB (XNA/MonoGame) không: magic "XNB" + version
+    5 (XNA 4.0 / MonoGame). Chỉ kiểm 5 byte đầu — byte target platform
+    (thứ 4) không kiểm vì mỗi nền tảng một ký tự, không liệt kê hết
+    được; magic + version 5 đã đủ phân biệt. Nội dung nén hay không
+    không quan trọng với nhận diện engine."""
+    return len(head) >= 5 and head[:3] == b"XNB" and head[4] == 5
 
 
 def detect_game_engine(names, heads=None, footers=None):
@@ -1060,9 +1076,10 @@ def detect_game_engine(names, heads=None, footers=None):
     names: danh sách tên entry (vd namelist của IPA). heads: {tên entry:
     byte đầu} — dùng để kiểm magic (global-metadata.dat 4 byte,
     .locres 16 byte, file thực thi 4 byte, .pak ≥ 76 byte để thấy Heaps
-    ở offset 64, .pck 4 byte). footers: {tên entry .pak: byte cuối}
-    — dùng để tìm magic footer Unreal 0x5A6F12E1. Thiếu heads/footers
-    thì chỉ chấm bằng tên (yếu hơn, fail-closed).
+    ở offset 64, .pck 4 byte, .xnb 6 byte, game.love 4 byte). footers:
+    {tên entry .pak: byte cuối} — dùng để tìm magic footer Unreal
+    0x5A6F12E1. Thiếu heads/footers thì chỉ chấm bằng tên (yếu hơn,
+    fail-closed).
 
     Trả dict JSON-được: {engine, label, level, confidence, evidence
     [{kind, value, weight, reason}], candidates [{engine, label, level,
@@ -1088,12 +1105,6 @@ def detect_game_engine(names, heads=None, footers=None):
     def _count(pred):
         return sum(1 for n in lower if pred(n))
 
-    def _head_of(pred):
-        for k, v in heads_low.items():
-            if pred(k):
-                return v
-        return None
-
     # --- bằng chứng (khử trùng theo (kind, value)) ---
     seen = set()
     all_ev = []  # mọi bằng chứng tìm thấy, theo thứ tự phát hiện
@@ -1109,25 +1120,9 @@ def detect_game_engine(names, heads=None, footers=None):
         return ev
 
     # --- dấu hiệu engine khác (chỉ để ghi chú / chặn, không phải ứng viên) ---
+    # Godot/Heaps/MonoGame/LÖVE/Cocos nay là ứng viên chính (chấm ở dưới),
+    # không còn chỉ là ghi chú. Chỉ còn cây data/ lớn là ghi chú chặn Native.
     other_hints = []
-    pck_head = _head_of(lambda k: k.endswith(".pck"))
-    if pck_head is not None and pck_head[:4] == GODOT_PCK_MAGIC:
-        other_hints.append("Godot (.pck có magic GDPC)")
-    elif _has(lambda n: n.endswith(".pck")):
-        other_hints.append("có file .pck (nghi Godot, chưa đọc được magic)")
-    pak_heads = {k: v for k, v in heads_low.items() if k.endswith(".pak")}
-    heaps_pak = None
-    for k, v in pak_heads.items():
-        if _is_heaps_pak_head(v):
-            heaps_pak = k
-            break
-    if heaps_pak is not None:
-        other_hints.append("Heaps (file .pak có magic PAK ở đầu, không "
-                           "phải Unreal)")
-    if _has(lambda n: "monogame.framework.dll" in n):
-        other_hints.append("MonoGame (MonoGame.Framework.dll)")
-    if _has(lambda n: n.endswith("game.love")):
-        other_hints.append("LÖVE (game.love)")
 
     # cây data/ lớn trong .app (DST: 8.449 entry) — dấu hiệu game dùng
     # engine riêng, chặn mức Native yếu. Đếm PHÂN BIỆT hoa/thường:
@@ -1216,6 +1211,34 @@ def detect_game_engine(names, heads=None, footers=None):
                                                and gmd_ev is None) else 0.0
     il2cpp_ev = ([gmd_ev] if gmd_ev is not None else []) + unity_ev
 
+    # --- Heaps ---
+    # Dead Cells dùng .pak Heaps (không phải Unreal): magic "PAK" ở đầu
+    # file (offset 0 hoặc 64 sau 64 ký tự hex). data.cdb là CastleDB
+    # của Heaps (trong res4.pak của Dead Cells). .pak có magic Heaps thì
+    # Unreal không được tính điểm tên .pak (xem khối Unreal dưới).
+    heaps_ev = []
+
+    def _h(kind, value, weight, reason):
+        ev = _ev(kind, value, weight, reason)
+        if ev is not None:
+            heaps_ev.append(ev)
+        return ev
+
+    pak_heads = {k: v for k, v in heads_low.items() if k.endswith(".pak")}
+    heaps_pak = None
+    for k, v in pak_heads.items():
+        if _is_heaps_pak_head(v):
+            heaps_pak = k
+            break
+    if heaps_pak is not None:
+        _h("magic", "heaps-pak", 1.0,
+           "file .pak có magic Heaps PAK ở đầu (%s)" % heaps_pak)
+    if _has(lambda n: n.rsplit("/", 1)[-1] == "data.cdb"):
+        _h("marker", "data.cdb", 0.5,
+           "có file data.cdb (CastleDB của Heaps) (%s)"
+           % _find(lambda n: n.rsplit("/", 1)[-1] == "data.cdb"))
+    heaps_score = sum(e["weight"] for e in heaps_ev)
+
     # --- Unreal ---
     unreal_ev = []
 
@@ -1257,6 +1280,122 @@ def detect_game_engine(names, heads=None, footers=None):
         _r("name", ".pak", 0.3, "có file .pak")
     unreal_score = sum(e["weight"] for e in unreal_ev)
 
+    # --- Godot ---
+    # .pck có magic GDPC là bằng chứng mạnh nhất; project.godot là file
+    # dự án Godot (chỉ Godot mới có); tên framework chứa "godot"
+    # (GodotIap/SwiftGodotRuntime) cũng đặc trưng. .pck chỉ tên thì yếu.
+    godot_ev = []
+
+    def _g(kind, value, weight, reason):
+        ev = _ev(kind, value, weight, reason)
+        if ev is not None:
+            godot_ev.append(ev)
+        return ev
+
+    pck_path = _find(lambda n: n.endswith(".pck"))
+    pck_head = heads_low.get(pck_path.lower()) if pck_path else None
+    if pck_path is not None and pck_head is not None \
+            and pck_head[:4] == GODOT_PCK_MAGIC:
+        _g("magic", "godot-pck", 1.0,
+           "file .pck có magic Godot GDPC (%s)" % pck_path)
+    elif pck_path is not None:
+        _g("name", ".pck", 0.3, "có file .pck (%s)" % pck_path)
+    if _has(lambda n: n.rsplit("/", 1)[-1] == "project.godot"):
+        _g("marker", "project.godot", 0.7,
+           "có file project.godot (%s)"
+           % _find(lambda n: n.rsplit("/", 1)[-1] == "project.godot"))
+    if _has(lambda n: "godot" in n):
+        _g("name", "godot", 0.5,
+           "tên entry chứa 'godot' (%s)" % _find(lambda n: "godot" in n))
+    for _ext in (".tscn", ".tres", ".gd"):
+        if _has(lambda n, e=_ext: n.endswith(e)):
+            _g("name", _ext, 0.15, "có file %s" % _ext)
+    godot_score = sum(e["weight"] for e in godot_ev)
+
+    # --- MonoGame ---
+    # MonoGame.Framework.dll là thư viện runtime MonoGame; .xnb là định
+    # dạng content XNA/MonoGame (magic "XNB" + version 5). DLL + magic
+    # XNB cùng có thì chắc chắn; chỉ một trong hai thì có khả năng.
+    monogame_ev = []
+
+    def _m(kind, value, weight, reason):
+        ev = _ev(kind, value, weight, reason)
+        if ev is not None:
+            monogame_ev.append(ev)
+        return ev
+
+    if _has(lambda n: "monogame.framework.dll" in n):
+        _m("marker", "MonoGame.Framework.dll", 0.7,
+           "có MonoGame.Framework.dll (%s)"
+           % _find(lambda n: "monogame.framework.dll" in n))
+    xnb_path = _find(lambda n: n.endswith(".xnb"))
+    xnb_head = heads_low.get(xnb_path.lower()) if xnb_path else None
+    if xnb_path is not None and xnb_head is not None \
+            and _is_xnb_head(xnb_head):
+        _m("magic", "xnb", 0.6,
+           "file .xnb có magic XNB version 5 (%s)" % xnb_path)
+    elif xnb_path is not None:
+        _m("name", ".xnb", 0.3, "có file .xnb (%s)" % xnb_path)
+    monogame_score = sum(e["weight"] for e in monogame_ev)
+
+    # --- LÖVE ---
+    # game.love là gói game LÖVE (bản chất là ZIP); tên + magic PK thì
+    # chắc chắn. main.lua rời ở gốc cũng là điểm vào của LÖVE.
+    love_ev = []
+
+    def _l(kind, value, weight, reason):
+        ev = _ev(kind, value, weight, reason)
+        if ev is not None:
+            love_ev.append(ev)
+        return ev
+
+    love_path = _find(lambda n: n.rsplit("/", 1)[-1] == "game.love")
+    love_head = heads_low.get(love_path.lower()) if love_path else None
+    if love_path is not None:
+        _l("marker", "game.love", 0.7, "có file game.love (%s)" % love_path)
+        if love_head is not None and love_head[:4] == b"PK\x03\x04":
+            _l("magic", "love-zip", 0.3,
+               "file game.love là ZIP hợp lệ (%s)" % love_path)
+    if _has(lambda n: n.rsplit("/", 1)[-1] == "main.lua"):
+        _l("marker", "main.lua", 0.5,
+           "có file main.lua (%s)"
+           % _find(lambda n: n.rsplit("/", 1)[-1] == "main.lua"))
+    love_score = sum(e["weight"] for e in love_ev)
+
+    # --- Cocos2d-x ---
+    # KHÔNG có magic đầu file đã xác minh -> chỉ nhận bằng tên. Một dấu
+    # tên mạnh thì tối đa CÓ KHẢ NĂNG; nhiều dấu tên cộng lại mới CHẮC
+    # CHẮN (cùng quy tắc với Unreal .utoc+.ucas ở v65). Tín hiệu phân
+    # biệt: libcocos2d (thư viện runtime), .ccb (CocosBuilder), cặp
+    # project.json + main.js (Cocos2d-JS). main.js một mình KHÔNG tính
+    # (quá chung); project.json một mình chỉ 0.4 (chưa đủ).
+    cocos_ev = []
+
+    def _c(kind, value, weight, reason):
+        ev = _ev(kind, value, weight, reason)
+        if ev is not None:
+            cocos_ev.append(ev)
+        return ev
+
+    if _has(lambda n: "libcocos2d" in n):
+        _c("name", "libcocos2d", 0.7,
+           "tên entry chứa 'libcocos2d' (%s)"
+           % _find(lambda n: "libcocos2d" in n))
+    if _has(lambda n: n.endswith(".ccb")):
+        _c("name", ".ccb", 0.5,
+           "có file .ccb (CocosBuilder) (%s)"
+           % _find(lambda n: n.endswith(".ccb")))
+    has_proj = _has(lambda n: n.rsplit("/", 1)[-1] == "project.json")
+    has_mainjs = _has(lambda n: n.rsplit("/", 1)[-1] == "main.js")
+    if has_proj and has_mainjs:
+        _c("marker", "project.json+main.js", 0.6,
+           "có cặp project.json + main.js (Cocos2d-JS)")
+    elif has_proj:
+        _c("marker", "project.json", 0.4,
+           "có file project.json (%s)"
+           % _find(lambda n: n.rsplit("/", 1)[-1] == "project.json"))
+    cocos_score = sum(e["weight"] for e in cocos_ev)
+
     # --- Native iOS ---
     native_ev = []
     info_path = None
@@ -1289,9 +1428,9 @@ def detect_game_engine(names, heads=None, footers=None):
                  % storyboard)
         if ev is not None:
             native_ev.append(ev)
-    native_blocked = (data_tree >= _DATA_TREE_MIN) or bool(
-        [h for h in other_hints if h.startswith(("Godot", "Heaps",
-                                                 "MonoGame", "LÖVE"))])
+    native_blocked = (data_tree >= _DATA_TREE_MIN) or any(
+        s > 0 for s in (heaps_score, godot_score, monogame_score,
+                        love_score, cocos_score))
     native_score = 0.0
     if has_info and not native_blocked \
             and il2cpp_score < 0.5 and mono_score < 0.5 \
@@ -1303,6 +1442,11 @@ def detect_game_engine(names, heads=None, footers=None):
         "unity-mono": (mono_score, unity_ev + mono_ev),
         "unreal": (unreal_score, unreal_ev),
         "native-ios": (native_score, native_ev),
+        "heaps": (heaps_score, heaps_ev),
+        "godot": (godot_score, godot_ev),
+        "monogame": (monogame_score, monogame_ev),
+        "love": (love_score, love_ev),
+        "cocos": (cocos_score, cocos_ev),
     }
     ranked = sorted(scores.items(), key=lambda kv: -kv[1][0])
     top_eng, (top_score, top_ev) = ranked[0]
@@ -1329,6 +1473,36 @@ def detect_game_engine(names, heads=None, footers=None):
                       % ("magic .locres/footer .pak"
                          if any(e["kind"] == "magic" for e in top_ev)
                          else "tên file .uproject/.locmeta/.utoc/.ucas"))
+        elif top_eng == "heaps":
+            reason = ("Tìm thấy dấu Heaps (%s)."
+                      % ("magic PAK ở đầu file .pak"
+                         if any(e["kind"] == "magic" for e in top_ev)
+                         else "file data.cdb (CastleDB)"))
+        elif top_eng == "godot":
+            reason = ("Tìm thấy dấu Godot (%s)."
+                      % ("magic GDPC trong file .pck"
+                         if any(e["kind"] == "magic" for e in top_ev)
+                         else "file project.godot / tên framework Godot"))
+        elif top_eng == "monogame":
+            reason = ("Tìm thấy dấu MonoGame (%s)."
+                      % ("MonoGame.Framework.dll + magic XNB"
+                         if any(e["kind"] == "magic" for e in top_ev)
+                         and any(e["value"] == "MonoGame.Framework.dll"
+                                 for e in top_ev)
+                         else ("magic XNB trong file .xnb"
+                              if any(e["kind"] == "magic" for e in top_ev)
+                              else "MonoGame.Framework.dll")))
+        elif top_eng == "love":
+            reason = ("Tìm thấy dấu LÖVE (%s)."
+                      % ("file game.love là ZIP hợp lệ"
+                         if any(e["kind"] == "magic" for e in top_ev)
+                         else ("file game.love"
+                              if any(e["value"] == "game.love"
+                                     for e in top_ev)
+                              else "file main.lua")))
+        elif top_eng == "cocos":
+            reason = ("Tìm thấy dấu Cocos2d-x (chỉ bằng tên file, chưa "
+                      "có magic — chỉ ở mức có khả năng).")
         else:
             strong = any(e["value"] == "main-storyboardc" for e in top_ev)
             reason = ("Có cấu trúc .app + file thực thi Mach-O, không có "
