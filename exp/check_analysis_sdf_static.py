@@ -15,7 +15,7 @@
   CHECK_IDS/run_gate — check rieng cho luong tmp_sdf_regen).
 - Manifest: files.json 112 (co pb3/sdk/sdf.py, pb3/sdk/tmp_sdf.py),
   tests.json 201 (co pb3/tests/test_sdf_regen.py).
-- sw.js precache co 2 file SDK moi + CACHE_VERSION v67-20261121.
+- sw.js precache co 2 file SDK moi + CACHE_VERSION v68-20261121.
 - bridge.py: co op tmp_sdf_regen (dry-run, tra dest .raw + MAE).
 - UI: index.html co btn-font-tmp-sdf + inp-tmp-sdf-name +
   inp-tmp-sdf-extra; app.js co handler tmp_sdf_regen hien MAE + ĐẠT.
@@ -148,8 +148,8 @@ sw = (SITE / "sw.js").read_text(encoding="utf-8")
 for f in ('"pb3/sdk/sdf.py"', '"pb3/sdk/tmp_sdf.py"'):
     if f not in sw:
         fails.append("sw.js precache thieu %s" % f)
-if 'CACHE_VERSION = "v67-20261121"' not in sw:
-    fails.append("sw.js CACHE_VERSION khong phai v67-20261121")
+if 'CACHE_VERSION = "v68-20261121"' not in sw:
+    fails.append("sw.js CACHE_VERSION khong phai v68-20261121")
 
 # 7. bridge co op tmp_sdf_regen (dry-run).
 bridge = (SITE / "pb3" / "bridge.py").read_text(encoding="utf-8")
