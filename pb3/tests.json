@@ -110,6 +110,7 @@
   "pb3/tests/test_deep_extract.py",
   "pb3/tests/test_detect_followup.py",
   "pb3/tests/test_engine_detect.py",
+  "pb3/tests/test_engine_detect_overview.py",
   "pb3/tests/test_errors.py",
   "pb3/tests/test_extraction.py",
   "pb3/tests/test_final_optimize.py",

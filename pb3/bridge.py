@@ -39,7 +39,10 @@ import hashlib
 import io
 import json
 import os
+import plistlib
+import re
 import shutil
+import struct
 import sys
 import time
 import zipfile
@@ -2412,6 +2415,125 @@ def format_probe(path):
         report = fp.probe_data(data, os.path.basename(path),
                                active_plugins=active)
         return json.dumps({"ok": True, "report": report}, ensure_ascii=False)
+    except Exception as e:  # noqa: BLE001
+        return _err(e)
+
+
+def _pak_tail_bytes(zf, info, tail_n=4096):
+    """Byte cuối của 1 entry .pak trong ZIP (để tìm magic footer Unreal).
+
+    Entry nhỏ (≤8MB): đọc hết rồi cắt đuôi. Entry lớn chỉ đọc đuôi khi
+    lưu thô (stored) — tính vị trí data qua local header; entry nén lớn
+    thì trả b"" (không đọc cả entry chỉ để lấy đuôi).
+    """
+    try:
+        if info.file_size <= 8 * 1024 * 1024:
+            with zf.open(info) as fh:
+                return fh.read()[-tail_n:]
+        if info.compress_type != zipfile.ZIP_STORED:
+            return b""
+        with open(zf.filename, "rb") as fh:
+            fh.seek(info.header_offset)
+            lh = fh.read(30)
+            if len(lh) < 30 or lh[:4] != b"PK\x03\x04":
+                return b""
+            nlen, elen = struct.unpack_from("<HH", lh, 26)
+            data_start = info.header_offset + 30 + nlen + elen
+            data_end = data_start + info.compress_size
+            fh.seek(max(data_start, data_end - tail_n))
+            return fh.read(tail_n)
+    except (OSError, KeyError, struct.error, ValueError):
+        return b""
+
+
+def detect_game_engine(path):
+    """Nhận diện engine game cho tab Tổng quan (v64): mở file IPA/ZIP,
+    liệt kê tên entry (chỉ đọc central directory, không giải nén) rồi
+    đọc lười vài byte đầu của entry ứng viên (global-metadata.dat,
+    .locres, .pak, .pck, file thực thi .app) + byte cuối của .pak để
+    sdk.discovery.detect_game_engine chấm đa tín hiệu.
+
+    Không đủ tín hiệu thì engine "unknown" kèm lý do (ok True) — chỉ
+    lỗi đọc file / lỗi hệ thống mới trả ok False.
+    """
+    try:
+        from sdk import discovery as disc
+
+        _check_size(path)
+        notes = []
+        try:
+            zf = zipfile.ZipFile(path)
+        except zipfile.BadZipFile:
+            # File đơn lẻ (.assets/.unity3d/...): chỉ có tên + byte đầu
+            with open(path, "rb") as fh:
+                head = fh.read(16)
+            result = disc.detect_game_engine(
+                [os.path.basename(path)],
+                {os.path.basename(path): head})
+            return json.dumps({"ok": True, "engine": result, "notes": notes},
+                              ensure_ascii=False)
+        with zf:
+            names = zf.namelist()
+            lower = [n.lower() for n in names]
+            heads = {}
+            footers = {}
+
+            def _first(pred):
+                for i, n in enumerate(lower):
+                    if pred(n):
+                        return names[i]
+                return None
+
+            def _read_head(name, nbytes):
+                if name is None:
+                    return
+                try:
+                    with zf.open(name) as fh:
+                        heads[name] = fh.read(nbytes)
+                except (KeyError, OSError, RuntimeError):
+                    pass
+
+            gmd = _first(lambda n: n.endswith("global-metadata.dat"))
+            _read_head(gmd, 4)
+            locres = _first(lambda n: n.endswith(".locres"))
+            _read_head(locres, 16)
+            pck = _first(lambda n: n.endswith(".pck"))
+            _read_head(pck, 4)
+            paks = [n for n in names if n.lower().endswith(".pak")][:3]
+            for pak in paks:
+                _read_head(pak, 128)
+                try:
+                    info = zf.getinfo(pak)
+                except KeyError:
+                    continue
+                tail = _pak_tail_bytes(zf, info)
+                if tail:
+                    footers[pak] = tail
+                elif info.file_size > 8 * 1024 * 1024:
+                    notes.append("không đọc được footer .pak %s (entry "
+                                 "nén, quá lớn)" % pak)
+            # File thực thi .app: tên lấy từ Info.plist, fallback = tên .app
+            app_prefix = None
+            for n in names:
+                m = re.match(r"^(payload/[^/]+\.app/|[^/]+\.app/)", n, re.I)
+                if m:
+                    app_prefix = m.group(1)
+                    break
+            if app_prefix:
+                exe = None
+                try:
+                    pl = plistlib.loads(zf.read(app_prefix + "Info.plist"))
+                    exe = pl.get("CFBundleExecutable")
+                except Exception:
+                    exe = None
+                if not exe:
+                    exe = app_prefix.rstrip("/").split("/")[-1][:-4]
+                exe_path = app_prefix + exe
+                if exe_path in names:
+                    _read_head(exe_path, 4)
+            result = disc.detect_game_engine(names, heads, footers)
+        return json.dumps({"ok": True, "engine": result, "notes": notes},
+                          ensure_ascii=False)
     except Exception as e:  # noqa: BLE001
         return _err(e)
 

@@ -21,12 +21,14 @@ import io
 import json
 import os
 import re
+import struct
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from core.errors import PB3Error
 from core.model import Evidence, confidence as _confidence
-from sdk.containers import GODOT_PCK_MAGIC, detect_container_kind, open_vfs
+from sdk.containers import (GODOT_PCK_MAGIC, UNREAL_PAK_MAGIC,
+                            detect_container_kind, open_vfs)
 from sdk.types import Evidence as _Ev  # noqa: F401  (xuất lại cho pipeline)
 from sdk.vfs import VFS, VStat, check_vpath, read_policy
 
@@ -965,3 +967,400 @@ def open_source_vfs(source, limits):
     with open(path, "rb") as fh:
         data = fh.read()
     return MemoryVFS({os.path.basename(path): data}, limits=limits)
+
+
+# ------------------------------------------------- nhận diện engine game (v64)
+# Tab Tổng quan: khi mở 1 file IPA phải hiện game thuộc engine nào, chuẩn
+# xác nhất. Khác với detect_engine() ở trên (gợi ý 6 engine cho pipeline
+# trích xuất, evidence kiểu Evidence): hàm này phân biệt rõ 4 loại Duy
+# cần — Unity IL2CPP, Unity Mono (Unity 3D), Unreal Engine, Native iOS —
+# bằng ĐA TÍN HIỆU có liệt kê bằng chứng từng tín hiệu (file/marker nào),
+# và trả Unknown kèm lý do khi không đủ tín hiệu (fail-closed, KHÔNG đoán).
+#
+# Nguyên tắc chấm (đo trên 7 game Unity + DST/Dead Cells/Carrion/Fortune
+# Mill/Balatro local, xem pb3/tests/test_engine_detect_overview.py):
+# - Mỗi tín hiệu chỉ tính 1 lần dù lặp lại nhiều file (vd 5 file .pak của
+#   Dead Cells chỉ cho 0.30 một lần, không cộng dồn).
+# - Magic là bằng chứng mạnh nhất (1.00): IL2CPP = magic 0xFAB11BAF đầu
+#   global-metadata.dat; Unreal = magic .locres 16 byte hoặc magic footer
+#   .pak 0x5A6F12E1; Mach-O = 4 byte đầu file thực thi .app.
+# - Unity IL2CPP BẮT BUỘC có dấu IL2CPP (magic hoặc tên global-metadata.dat);
+#   Unity Mono BẮT BUỘC có dấu Mono (DLL trong Data/Managed / libmono /
+#   Assembly-CSharp.dll) và KHÔNG có dấu IL2CPP.
+# - .pak riêng lẻ KHÔNG chứng minh Unreal: Dead Cells (Heaps) cũng dùng
+#   .pak — đầu file Heaps có magic "PAK" (+ version ≤ 16) ở offset 0 hoặc
+#   64 (sau 64 ký tự hex), xem sdk/heaps.py _header_at; khi phát hiện
+#   Heaps thì bằng chứng tên .pak bị loại và Unreal không được chấm.
+# - Native iOS KHÔNG dùng Assets.car/.lproj/.strings/.storyboardc
+#   LaunchScreen/.nib làm bằng chứng: đo thật thấy CẢ 7 game Unity đều
+#   có đủ các thứ đó (chỉ là mẫu Xcode). Native CHẮC CHẮN cần 1 storyboard
+#   KHÔNG phải LaunchScreen (vd Main.storyboardc) + cấu trúc .app +
+#   Mach-O + không dấu Unity/Unreal; mức CÓ KHẢ NĂNG chỉ khi có cấu trúc
+#   .app + Mach-O + không dấu Unity/Unreal + không có cây data/ game
+#   lớn (DST có data/ 8.449 entry + 1.352 file .tex → chặn mức này).
+# - Thắng khi điểm ≥ 0.50 và hơn engine thứ 2 ít nhất 0.20 (hoặc engine
+#   thứ 2 < 0.50); 2 engine cùng ≥ 0.50 và chênh < 0.20 → Unknown (mâu
+#   thuẫn). Mức: ≥ 0.80 CHẮC CHẮN, ≥ 0.50 CÓ KHẢ NĂNG.
+
+ENGINE_LABELS = {
+    "unity-il2cpp": "Unity IL2CPP",
+    "unity-mono": "Unity Mono (Unity 3D)",
+    "unreal": "Unreal Engine",
+    "native-ios": "Native iOS",
+    "unknown": "Chưa xác định",
+}
+
+_IL2CPP_MAGIC = bytes.fromhex("af1bb1fa")  # 0xFAB11BAF little-endian
+_LOCRES_MAGIC = LOCRES_MAGIC  # 16 byte đầu file .locres (Compact+)
+_MACHO_MAGICS = (
+    bytes.fromhex("cffaedfe"),  # MH_MAGIC_64 LE
+    bytes.fromhex("feedface"),  # MH_MAGIC LE
+    bytes.fromhex("feedfacf"),  # MH_MAGIC_64 BE
+    bytes.fromhex("cafebabe"),  # FAT_MAGIC BE
+    bytes.fromhex("cafebabf"),  # FAT_MAGIC LE
+)
+_HEX_BYTES = frozenset(b"0123456789abcdefABCDEF")
+_DATA_TREE_MIN = 100  # số entry tối thiểu dưới <app>/data/ để coi là cây game
+
+
+def _game_level(score: float) -> str:
+    if score >= 0.8:
+        return "CHẮC CHẮN"
+    if score >= 0.5:
+        return "CÓ KHẢ NĂNG"
+    return "CHƯA ĐỦ BẰNG CHỨNG"
+
+
+def _is_heaps_pak_head(head: bytes) -> bool:
+    """Đầu file có phải Heaps PAK không (bản rút gọn của sdk.heaps:
+    magic "PAK" + version ≤ 16 + header_size/data_size hợp lệ, ở offset
+    0 hoặc offset 64 sau 64 ký tự hex ASCII — layout Dead Cells)."""
+    if not head:
+        return False
+    for start in (0, 64):
+        if len(head) < start + 12 or head[start:start + 3] != b"PAK":
+            continue
+        if start == 64 and not all(b in _HEX_BYTES for b in head[:64]):
+            continue
+        if head[start + 3] > 16:
+            continue
+        header_size = struct.unpack_from("<I", head, start + 4)[0]
+        data_size = struct.unpack_from("<I", head, start + 8)[0]
+        if header_size < 12 or header_size > len(head):
+            continue
+        if start + header_size + data_size > len(head):
+            continue
+        return True
+    return False
+
+
+def detect_game_engine(names, heads=None, footers=None):
+    """Nhận diện engine game từ tên entry + byte đầu/cuối một số entry.
+
+    names: danh sách tên entry (vd namelist của IPA). heads: {tên entry:
+    byte đầu} — dùng để kiểm magic (global-metadata.dat 4 byte,
+    .locres 16 byte, file thực thi 4 byte, .pak ≥ 76 byte để thấy Heaps
+    ở offset 64, .pck 4 byte). footers: {tên entry .pak: byte cuối}
+    — dùng để tìm magic footer Unreal 0x5A6F12E1. Thiếu heads/footers
+    thì chỉ chấm bằng tên (yếu hơn, fail-closed).
+
+    Trả dict JSON-được: {engine, label, level, confidence, evidence
+    [{kind, value, weight, reason}], candidates [{engine, label, level,
+    confidence, evidence [reason]}], reason, other_hints [str],
+    total_entries}. evidence chỉ tính mỗi tín hiệu 1 lần.
+    """
+    names = [str(n) for n in (names or [])]
+    lower = [n.lower() for n in names]
+    heads = heads or {}
+    footers = footers or {}
+    heads_low = {str(k).lower(): v for k, v in heads.items()}
+    footers_low = {str(k).lower(): v for k, v in footers.items()}
+
+    def _find(pred):
+        for i, n in enumerate(lower):
+            if pred(n):
+                return names[i]
+        return None
+
+    def _has(pred):
+        return _find(pred) is not None
+
+    def _count(pred):
+        return sum(1 for n in lower if pred(n))
+
+    def _head_of(pred):
+        for k, v in heads_low.items():
+            if pred(k):
+                return v
+        return None
+
+    # --- bằng chứng (khử trùng theo (kind, value)) ---
+    seen = set()
+    all_ev = []  # mọi bằng chứng tìm thấy, theo thứ tự phát hiện
+
+    def _ev(kind, value, weight, reason):
+        key = (kind, value)
+        if key in seen:
+            return None
+        seen.add(key)
+        ev = {"kind": kind, "value": value, "weight": float(weight),
+              "reason": reason}
+        all_ev.append(ev)
+        return ev
+
+    # --- dấu hiệu engine khác (chỉ để ghi chú / chặn, không phải ứng viên) ---
+    other_hints = []
+    pck_head = _head_of(lambda k: k.endswith(".pck"))
+    if pck_head is not None and pck_head[:4] == GODOT_PCK_MAGIC:
+        other_hints.append("Godot (.pck có magic GDPC)")
+    elif _has(lambda n: n.endswith(".pck")):
+        other_hints.append("có file .pck (nghi Godot, chưa đọc được magic)")
+    pak_heads = {k: v for k, v in heads_low.items() if k.endswith(".pak")}
+    heaps_pak = None
+    for k, v in pak_heads.items():
+        if _is_heaps_pak_head(v):
+            heaps_pak = k
+            break
+    if heaps_pak is not None:
+        other_hints.append("Heaps (file .pak có magic PAK ở đầu, không "
+                           "phải Unreal)")
+    if _has(lambda n: "monogame.framework.dll" in n):
+        other_hints.append("MonoGame (MonoGame.Framework.dll)")
+    if _has(lambda n: n.endswith("game.love")):
+        other_hints.append("LÖVE (game.love)")
+
+    # cây data/ lớn trong .app (DST: 8.449 entry) — dấu hiệu game dùng
+    # engine riêng, chặn mức Native yếu. Đếm PHÂN BIỆT hoa/thường:
+    # thư mục Data/ (hoa D) là của Unity, không tính; chỉ data/ (thường)
+    # kiểu Klei mới tính.
+    app_prefix = None
+    app_prefix_orig = None
+    for n in names:
+        m = re.match(r"^(payload/[^/]+\.app/|[^/]+\.app/)", n, re.I)
+        if m:
+            app_prefix = m.group(1).lower()
+            app_prefix_orig = m.group(1)
+            break
+    data_tree = 0
+    if app_prefix_orig:
+        data_tree = sum(1 for n in names
+                        if n.startswith(app_prefix_orig + "data/"))
+    if data_tree >= _DATA_TREE_MIN:
+        other_hints.append("engine khác (thư mục data/ có %d entry)" % data_tree)
+
+    # --- Unity ---
+    unity_ev = []
+
+    def _u(kind, value, weight, reason):
+        ev = _ev(kind, value, weight, reason)
+        if ev is not None:
+            unity_ev.append(ev)
+        return ev
+
+    gmd_path = _find(lambda n: n.endswith("global-metadata.dat"))
+    gmd_magic = False
+    gmd_ev = None
+    if gmd_path is not None:
+        head = heads_low.get(gmd_path.lower())
+        if head is not None and head[:4] == _IL2CPP_MAGIC:
+            gmd_magic = True
+            gmd_ev = _ev("magic", "il2cpp-metadata", 1.0,
+                         "global-metadata.dat có magic IL2CPP 0xFAB11BAF "
+                         "(%s)" % gmd_path)
+        else:
+            gmd_ev = _ev("marker", "global-metadata.dat", 0.5,
+                         "có file global-metadata.dat (metadata IL2CPP) "
+                         "(%s)" % gmd_path)
+    if _has(lambda n: "unityframework" in n):
+        _u("marker", "UnityFramework", 0.4,
+           "có UnityFramework (%s)"
+           % _find(lambda n: "unityframework" in n))
+    if _has(lambda n: "globalgamemanagers" in n):
+        _u("marker", "globalgamemanagers", 0.3,
+           "có file globalgamemanagers")
+    if _has(lambda n: n.endswith("resources.assets")):
+        _u("marker", "resources.assets", 0.3, "có file resources.assets")
+    if _has(lambda n: ".unity3d" in n):
+        _u("marker", ".unity3d", 0.2, "có bundle .unity3d")
+    if _has(lambda n: n.endswith(".assets")):
+        _u("name", ".assets", 0.15, "có file .assets")
+    if _has(lambda n: "sharedassets" in n):
+        _u("name", "sharedassets", 0.15, "có file sharedassets")
+    if _has(lambda n: "data/managed" in n):
+        _u("name", "Data/Managed", 0.2, "có thư mục Data/Managed")
+    mono_ev = []
+    if _has(lambda n: n.endswith("assembly-csharp.dll")):
+        ev = _ev("marker", "Assembly-CSharp.dll", 0.6,
+                 "có Assembly-CSharp.dll trong Data/Managed")
+        if ev is not None:
+            mono_ev.append(ev)
+    if _has(lambda n: "data/managed" in n and n.endswith(".dll")):
+        ev = _ev("marker", "managed-dll", 0.5,
+                 "có file .dll trong Data/Managed (%s)"
+                 % _find(lambda n: "data/managed" in n and n.endswith(".dll")))
+        if ev is not None:
+            mono_ev.append(ev)
+    if _has(lambda n: "libmono" in n):
+        ev = _ev("marker", "libmono", 0.3,
+                 "có libmono (%s)" % _find(lambda n: "libmono" in n))
+        if ev is not None:
+            mono_ev.append(ev)
+
+    unity_base = sum(e["weight"] for e in unity_ev)
+    mono_extra = sum(e["weight"] for e in mono_ev)
+    gmd_weight = gmd_ev["weight"] if gmd_ev is not None else 0.0
+    # IL2CPP = dấu Unity chung + dấu global-metadata.dat (tính 1 lần);
+    # Mono = dấu Unity chung + dấu Mono, chỉ khi KHÔNG có dấu IL2CPP.
+    il2cpp_score = (unity_base + gmd_weight) if gmd_ev is not None else 0.0
+    mono_score = (unity_base + mono_extra) if (mono_extra > 0
+                                               and gmd_ev is None) else 0.0
+    il2cpp_ev = ([gmd_ev] if gmd_ev is not None else []) + unity_ev
+
+    # --- Unreal ---
+    unreal_ev = []
+
+    def _r(kind, value, weight, reason):
+        ev = _ev(kind, value, weight, reason)
+        if ev is not None:
+            unreal_ev.append(ev)
+        return ev
+
+    locres_path = _find(lambda n: n.endswith(".locres"))
+    if locres_path is not None:
+        head = heads_low.get(locres_path.lower())
+        if head is not None and head[:16] == _LOCRES_MAGIC:
+            _r("magic", "locres", 1.0,
+               "file .locres có magic Unreal 16 byte (%s)" % locres_path)
+    pak_footer_path = None
+    for k, v in footers_low.items():
+        if k.endswith(".pak") and UNREAL_PAK_MAGIC in bytes(v):
+            pak_footer_path = k
+            break
+    if pak_footer_path is not None:
+        _r("magic", "pak-footer", 1.0,
+           "file .pak có magic footer Unreal 0x5A6F12E1 (%s)"
+           % pak_footer_path)
+    if _has(lambda n: n.endswith(".uproject")):
+        _r("marker", ".uproject", 0.7,
+           "có file .uproject (%s)" % _find(lambda n: n.endswith(".uproject")))
+    if _has(lambda n: n.endswith(".locmeta")):
+        _r("marker", ".locmeta", 0.5,
+           "có file .locmeta (%s)" % _find(lambda n: n.endswith(".locmeta")))
+    if _has(lambda n: n.endswith(".utoc")):
+        _r("marker", ".utoc", 0.6,
+           "có file .utoc (IoStore) (%s)" % _find(lambda n: n.endswith(".utoc")))
+    if _has(lambda n: n.endswith(".ucas")):
+        _r("marker", ".ucas", 0.6,
+           "có file .ucas (IoStore) (%s)" % _find(lambda n: n.endswith(".ucas")))
+    # Tên .pak chỉ tính khi KHÔNG phải Heaps (Heaps cũng dùng .pak)
+    if _has(lambda n: n.endswith(".pak")) and heaps_pak is None:
+        _r("name", ".pak", 0.3, "có file .pak")
+    unreal_score = sum(e["weight"] for e in unreal_ev)
+
+    # --- Native iOS ---
+    native_ev = []
+    info_path = None
+    if app_prefix:
+        info_path = _find(lambda n, p=app_prefix: n == p + "info.plist")
+    has_info = info_path is not None
+    if has_info:
+        ev = _ev("structure", "app-info-plist", 0.3,
+                 "có cấu trúc .app (Info.plist ở %s)" % info_path)
+        if ev is not None:
+            native_ev.append(ev)
+    macho_path = None
+    for k, v in heads_low.items():
+        if v[:4] in _MACHO_MAGICS and app_prefix \
+                and k.startswith(app_prefix) \
+                and "/" not in k[len(app_prefix):]:
+            macho_path = _find(lambda n, kk=k: n == kk)
+            break
+    if macho_path is not None:
+        ev = _ev("magic", "macho-exec", 0.4,
+                 "file thực thi .app có magic Mach-O (%s)" % macho_path)
+        if ev is not None:
+            native_ev.append(ev)
+    storyboard = _find(lambda n: ".storyboardc" in n
+                       and "launch" not in n.lower())
+    if storyboard is not None and app_prefix \
+            and storyboard.lower().startswith(app_prefix):
+        ev = _ev("marker", "main-storyboardc", 0.5,
+                 "có storyboard giao diện không phải LaunchScreen (%s)"
+                 % storyboard)
+        if ev is not None:
+            native_ev.append(ev)
+    native_blocked = (data_tree >= _DATA_TREE_MIN) or bool(
+        [h for h in other_hints if h.startswith(("Godot", "Heaps",
+                                                 "MonoGame", "LÖVE"))])
+    native_score = 0.0
+    if has_info and not native_blocked \
+            and il2cpp_score < 0.5 and mono_score < 0.5 \
+            and unreal_score < 0.5:
+        native_score = sum(e["weight"] for e in native_ev)
+
+    scores = {
+        "unity-il2cpp": (il2cpp_score, il2cpp_ev),
+        "unity-mono": (mono_score, unity_ev + mono_ev),
+        "unreal": (unreal_score, unreal_ev),
+        "native-ios": (native_score, native_ev),
+    }
+    ranked = sorted(scores.items(), key=lambda kv: -kv[1][0])
+    top_eng, (top_score, top_ev) = ranked[0]
+    second_score = ranked[1][1][0]
+
+    def _cand(eng):
+        sc, evs = scores[eng]
+        return {"engine": eng, "label": ENGINE_LABELS[eng],
+                "level": _game_level(sc), "confidence": round(min(1.0, sc), 2),
+                "evidence": [e["reason"] for e in evs]}
+
+    if top_score >= 0.5 and (second_score < 0.5
+                             or top_score - second_score >= 0.2):
+        level = _game_level(top_score)
+        if top_eng == "unity-il2cpp":
+            reason = ("Tìm thấy dấu IL2CPP (%s) + dấu Unity."
+                      % ("magic 0xFAB11BAF" if gmd_magic
+                         else "global-metadata.dat"))
+        elif top_eng == "unity-mono":
+            reason = ("Có dấu Unity + file DLL/libmono trong Data/Managed, "
+                      "không có global-metadata.dat (IL2CPP).")
+        elif top_eng == "unreal":
+            reason = ("Tìm thấy dấu Unreal (%s)."
+                      % ("magic .locres/footer .pak"
+                         if any(e["kind"] == "magic" for e in top_ev)
+                         else "tên file .uproject/.locmeta/.utoc/.ucas"))
+        else:
+            strong = any(e["value"] == "main-storyboardc" for e in top_ev)
+            reason = ("Có cấu trúc .app + file thực thi Mach-O, không có "
+                      "dấu Unity/Unreal" + (" + storyboard giao diện."
+                                            if strong else
+                                            " (chưa có bằng chứng Native "
+                                            "dương tính mạnh — chỉ ở mức "
+                                            "có khả năng)."))
+        return {"engine": top_eng, "label": ENGINE_LABELS[top_eng],
+                "level": level, "confidence": round(min(1.0, top_score), 2),
+                "evidence": top_ev,
+                "candidates": [_cand(e) for e, (s, _) in ranked[1:]
+                               if s > 0],
+                "reason": reason, "other_hints": other_hints,
+                "total_entries": len(names)}
+
+    # Unknown: không đủ tín hiệu, hoặc 2 engine mâu thuẫn
+    found = "; ".join(e["reason"] for e in all_ev[:6]) or \
+        "không tìm thấy dấu hiệu engine nào"
+    if top_score >= 0.5:
+        reason = ("Mâu thuẫn: vừa có dấu %s (%.2f) vừa có dấu %s (%.2f) "
+                  "— không dám kết luận."
+                  % (ENGINE_LABELS[top_eng], top_score,
+                     ENGINE_LABELS[ranked[1][0]], second_score))
+    else:
+        reason = ("Không đủ bằng chứng để kết luận engine. Đã tìm thấy: "
+                  "%s." % found)
+        if other_hints:
+            reason += " Ghi chú: %s." % "; ".join(other_hints)
+    return {"engine": "unknown", "label": ENGINE_LABELS["unknown"],
+            "level": "CHƯA ĐỦ BẰNG CHỨNG", "confidence": 0.0,
+            "evidence": all_ev,
+            "candidates": [_cand(e) for e, (s, _) in ranked if s > 0],
+            "reason": reason, "other_hints": other_hints,
+            "total_entries": len(names)}
