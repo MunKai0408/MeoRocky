@@ -19,7 +19,8 @@
 # gói đúng các file web root vào artifact rồi deploy-pages:
 #   index.html, app.js, worker.js, gt.js, kb-store.js, translate.js,
 #   file-reader.js, worker-pool.js, sw.js, register-sw.js, diagnostics.html,
-#   test.html, fonts/, pb3/, pyodide/, README.md, .nojekyll
+#   test.html, manifest.webmanifest, fonts/, icons/, pb3/, pyodide/,
+#   README.md, .nojekyll
 # Một số file trong danh sách (kb-store.js, translate.js, file-reader.js,
 # worker-pool.js, sw.js, register-sw.js, diagnostics.html) thuộc các phase
 # sau, chưa có trong repo lúc viết file này: bước staging chỉ copy file
@@ -226,10 +227,10 @@ jobs:
         run: |
           rm -rf _site && mkdir -p _site
           missing=""
-          for f in index.html app.js worker.js gt.js kb-store.js translate.js file-reader.js worker-pool.js sw.js register-sw.js diagnostics.html test.html README.md; do
+          for f in index.html app.js worker.js gt.js kb-store.js translate.js file-reader.js worker-pool.js sw.js register-sw.js diagnostics.html test.html manifest.webmanifest README.md; do
             if [ -f "$f" ]; then cp "$f" _site/; else missing="$missing $f"; fi
           done
-          for d in fonts pb3 pyodide; do
+          for d in fonts icons pb3 pyodide; do
             if [ -d "$d" ]; then cp -r "$d" _site/; else echo "THIEU THU MUC LOI: $d" && exit 1; fi
           done
           for f in index.html app.js worker.js; do
