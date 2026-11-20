@@ -7,6 +7,10 @@ vẫn nguyên).
 
 Khóa: bước staging chỉ copy đúng danh sách tường minh trong pages.yml —
 thêm file web root mới thì phải thêm vào allowlist ở đây VÀ vào test này.
+
+Bug 20/11 13:55 (v64): tab Chẩn đoán FAIL "Trích xuất thử (fixture) —
+HTTP 404" vì app.js fetch fixtures/selftest.zip nhưng pages.yml không
+deploy thư mục fixtures/ — cùng họ allowlist như bug icon gấu v63.
 """
 import json
 import re
@@ -25,7 +29,7 @@ REQUIRED_FILES = (
     "manifest.webmanifest",
     "README.md",
 )
-REQUIRED_DIRS = ("fonts", "icons", "pb3", "pyodide")
+REQUIRED_DIRS = ("fonts", "icons", "fixtures", "pb3", "pyodide")
 # File lõi: staging fail nếu thiếu (xem vòng lặp kiểm tra trong pages.yml).
 CORE_FILES = ("index.html", "app.js", "worker.js")
 REQUIRED_ICONS = (
@@ -111,6 +115,18 @@ class TestPagesDeploy(unittest.TestCase):
         for rel in REQUIRED_ICONS:
             self.assertIn(rel, srcs,
                           "manifest.webmanifest không liệt kê %s" % rel)
+
+    def test_selftest_fixture_exists(self):
+        # Tab Chẩn đoán fetch fixtures/selftest.zip (SELFTEST_FIXTURE trong
+        # app.js) — file phải có trên đĩa VÀ được staging (bug 20/11: thiếu
+        # khỏi allowlist nên live 404, Chẩn đoán FAIL).
+        p = ROOT / "fixtures" / "selftest.zip"
+        self.assertTrue(p.is_file(), "thiếu fixture tự kiểm tra: %s" % p)
+        self.assertGreater(p.stat().st_size, 0, "selftest.zip rỗng")
+        with open(p, "rb") as fh:
+            head = fh.read(2)
+        self.assertEqual(head, b"PK",
+                         "selftest.zip không phải file ZIP")
 
 
 if __name__ == "__main__":
