@@ -3,8 +3,8 @@
 tu dong 1 khi RAM thiet bi <= 4 GB, luu localStorage) + sua cau sai ve
 song song (pool chay song song THAT: moi worker 1 thread he dieu hanh
 that; chi ben trong 1 worker thi Python tuan tu vi Pyodide khong co
-pthreads). Manifest (files.json 111, tests.json 196) sau phan D; sw.js
-CACHE_VERSION v61-20261120; khong them file site nao.
+pthreads). Manifest (files.json 112, tests.json 197) sau phan D; sw.js
+CACHE_VERSION v62-20261120; khong them file site nao.
 In JSON {"fails": [...]}.
 """
 import json
@@ -95,15 +95,15 @@ for old in ("pool 2 worker song song",
 
 # 5. Manifest sau phan D (them sdk/font_list.py + tests/test_font_unify.py).
 files = json.loads((SITE / "pb3" / "files.json").read_text())["files"]
-if len(files) != 111:
-    fails.append("files.json co %d file, ky vong 111" % len(files))
+if len(files) != 112:
+    fails.append("files.json co %d file, ky vong 112" % len(files))
 tests = json.loads((SITE / "pb3" / "tests.json").read_text())["files"]
-if len(tests) != 196:
-    fails.append("tests.json co %d file, ky vong 196" % len(tests))
+if len(tests) != 197:
+    fails.append("tests.json co %d file, ky vong 197" % len(tests))
 
 # 6. sw.js CACHE_VERSION v19.
-if 'CACHE_VERSION = "v61-20261120"' not in sw:
-    fails.append("sw.js CACHE_VERSION khong phai v61-20261120")
+if 'CACHE_VERSION = "v62-20261120"' not in sw:
+    fails.append("sw.js CACHE_VERSION khong phai v62-20261120")
 if 'CACHE_VERSION = "v13-20261116"' in sw:
     fails.append("sw.js van con CACHE_VERSION v13")
 

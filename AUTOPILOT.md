@@ -759,7 +759,7 @@ diff -rq -x __pycache__ -x logs -x reports -x workspace -x .pytest_cache <pristi
 P0-4 (BỎ QUA, chờ Joseph — xem "Chờ Joseph" #5; quay lại khi có đủ ảnh) → P1-1 → P1-2 → P1-3 (I1) → P1-4 (I2) →
 P1-5 (I3) → P2-1 → P2-2 → P2-3 → P2-4 → P3. Tiêu chí XONG từng mục theo brief mục 7.
 
-## Text-data list (2026-11-19) — v61 (nhánh `feat/localization-text-data`)
+## Text-data list (2026-11-19) — v62 (nhánh `feat/localization-text-data`)
 
 - Phương pháp trích xuất text 5 bước của anh Duy (game Nhiệt Huyết Sinh Tồn
   v1.0.3, 14:00–14:01 +07 19/11): StringTable chỉ 2 key tên game (ngõ cụt);
@@ -786,7 +786,7 @@ P1-5 (I3) → P2-1 → P2-2 → P2-3 → P2-4 → P3. Tiêu chí XONG từng m�
   cột `frc` locale None nên không gộp; ScriptableObject class 117 thật chưa
   hỗ trợ (Kusa dùng class 114).
 
-## Sửa gộp zh (Knightica, 2026-11-19) — v61 (cùng nhánh trên)
+## Sửa gộp zh (Knightica, 2026-11-19) — v62 (cùng nhánh trên)
 
 - Lệch chuẩn [ĐÃ ĐO THẬT]: xin `zh` trên 斗阵骑士 v1.0.3 chỉ ra 1 file
   `zh-Hant.json` (1.590 key, trộn giản+phồn) thay vì `zh-CN` + `zh-Hant`

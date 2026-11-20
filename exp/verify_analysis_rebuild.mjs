@@ -103,7 +103,7 @@ fs.mkdirSync(TMP, { recursive: true });
     else detail = "rebuild.py stdlib-only + Python 3.9 + không UnityPy/lz4 + " +
       "không expose rebuild_zip + chốt dest!=source + files.json=105 / " +
       "tests.json=186 + sw.js precache 130 mục có sdk/rebuild.py, không " +
-      "wheel chết, CACHE_VERSION v61-20261120 + bridge rebuild_apply + " +
+      "wheel chết, CACHE_VERSION v62-20261120 + bridge rebuild_apply + " +
       "plan.py progress_fn + unity.py streaming + khóa REBUILD_ALL + UI " +
       "đủ id (E) + 2 chỗ innerHTML f.source đã esc + render (E) esc";
   } catch (e) { ok = false; detail = "không đọc được JSON: " + (r.stdout || "") + (r.stderr || ""); }
