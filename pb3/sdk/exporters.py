@@ -29,7 +29,7 @@ _PLACEHOLDER_RES = [
     re.compile(r"\{[^}]*\}"),                  # {0}, {name}, {foo-bar}, {}
     re.compile(r"%(\d+\$)?[sdif]"),            # %s, %d, %1$s
     re.compile(r"\$[A-Za-z_][A-Za-z0-9_]*"),    # $VAR
-    re.compile(r"<[A-Za-z][^>]*>"),            # <color>, <b>
+    re.compile(r"</?[A-Za-z][^>]*>"),           # <color>, <b>, </b> (ca the dong)
     re.compile(r"\\[nrt\\'\"]"),               # \n, \t, \\, \'
 ]
 
