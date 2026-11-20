@@ -189,6 +189,7 @@
   "pb3/tests/test_translate_cli.py",
   "pb3/tests/test_translate_source.py",
   "pb3/tests/test_translate_speed.py",
+  "pb3/tests/test_ui_bear_pastel.py",
   "pb3/tests/test_unity.py",
   "pb3/tests/test_unreal.py",
   "pb3/tests/test_unreal_locres.py",
