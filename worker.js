@@ -127,6 +127,63 @@ async function boot() {
     status("Không tải được lz4js — LZ4 dùng binding lz4 hoặc lz4pure như trước.");
   }
 
+  // Hotspot Rust/WASM (LZ4 + phát hiện ngôn ngữ + đọc typetree): mã
+  // native biên dịch từ rust/ bằng wasm-pack (--target web), vendored
+  // ở rust/pkg-web/. Python gọi qua module `js` như lz4js/fzstd ở trên.
+  // wasm-bindgen ném lỗi Rust (JsValue chuỗi) thẳng ra JS nên glue phân
+  // biệt: chuỗi = input hỏng thật -> ném Error có tiền tố RUST_*_CORRUPT
+  // để Python raise E_CORRUPT; Error object = lỗi khác -> ném nguyên để
+  // Python đánh dấu cầu nối hỏng và rơi về lz4js/lz4pure/Python.
+  // Boot KHÔNG chết nếu wasm thiếu/lỗi: mọi pb3_rust_* = null và Python
+  // dùng đường cũ như trước.
+  status("Đang tải hotspot Rust/WASM…");
+  try {
+    const wasm = await import("./rust/pkg-web/meorocky_wasm.js");
+    await wasm.default();
+    const rustCorrupt = (e, prefix) => {
+      if (typeof e === "string") return new Error(prefix + ": " + e);
+      throw e;
+    };
+    globalThis.pb3_rust_lz4_decompress = (data, expectedSize) => {
+      const input = data instanceof Uint8Array ? data : new Uint8Array(data);
+      try {
+        return wasm.rust_lz4_decompress_block(input, expectedSize);
+      } catch (e) { throw rustCorrupt(e, "RUST_LZ4_CORRUPT"); }
+    };
+    globalThis.pb3_rust_lz4_decompress_frame = (data) => {
+      const input = data instanceof Uint8Array ? data : new Uint8Array(data);
+      try {
+        return wasm.rust_lz4_decompress_frame(input);
+      } catch (e) { throw rustCorrupt(e, "RUST_LZ4_CORRUPT"); }
+    };
+    globalThis.pb3_rust_detect_language = (text) => wasm.rust_detect_language(text);
+    globalThis.pb3_rust_detect_languages = (texts) => {
+      const input = typeof texts === "string" ? texts : JSON.stringify(texts);
+      return wasm.rust_detect_languages(input);
+    };
+    globalThis.pb3_rust_detect_chinese_variant = (text) =>
+      wasm.rust_detect_chinese_variant(text);
+    globalThis.pb3_rust_infer_positions = (groups, minVotes, minShare) => {
+      const input = typeof groups === "string" ? groups : JSON.stringify(groups);
+      return wasm.rust_infer_positions(input, minVotes, minShare);
+    };
+    globalThis.pb3_rust_typetree_value = (nodeJson, data, pos, littleEndian) => {
+      const input = data instanceof Uint8Array ? data : new Uint8Array(data);
+      try {
+        return wasm.rust_parse_typetree_value(nodeJson, input, pos, littleEndian);
+      } catch (e) { throw rustCorrupt(e, "RUST_TYPETREE_CORRUPT"); }
+    };
+  } catch (e) {
+    globalThis.pb3_rust_lz4_decompress = null;
+    globalThis.pb3_rust_lz4_decompress_frame = null;
+    globalThis.pb3_rust_detect_language = null;
+    globalThis.pb3_rust_detect_languages = null;
+    globalThis.pb3_rust_detect_chinese_variant = null;
+    globalThis.pb3_rust_infer_positions = null;
+    globalThis.pb3_rust_typetree_value = null;
+    status("Không tải được Rust/WASM — dùng lz4js/lz4pure và Python như trước.");
+  }
+
   status("Đang tải mã PB3…");
   const man = await (await fetch("pb3/files.json")).json();
   const files = man.files;

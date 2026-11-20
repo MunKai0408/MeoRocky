@@ -34,8 +34,72 @@ Giới hạn đã biết (ghi thật, không giấu):
 """
 from __future__ import annotations
 
+import json
 import re
 from typing import Dict, Optional, Tuple
+
+# Cầu nối Rust/WASM (chỉ có trên web khi worker.js đã nạp wasm):
+# pb3_rust_detect_language(text) -> JSON '["zh","strong"]' | '[null,"none"]';
+# pb3_rust_detect_chinese_variant(text) -> "Hant"/"Hans"/null.
+# Vắng cầu nối (CPython/iSH) hoặc cầu nối hỏng -> rơi về logic Python
+# như trước, không đổi hành vi. _RS_BROKEN tắt cầu nối cho cả module
+# sau 1 lỗi lạ (giống _lz4_js_broken của UnityBackend).
+_RS_BROKEN = False
+_MISSING = object()
+
+
+def _rust_fn(name):
+    """Hàm cầu nối Rust theo tên, hoặc _MISSING khi vắng/hỏng."""
+    global _RS_BROKEN
+    if _RS_BROKEN:
+        return _MISSING
+    try:
+        import js as _js
+        fn = getattr(_js, name, None)
+    except Exception:
+        fn = None
+    return fn if fn is not None else _MISSING
+
+
+def _detect_language_rs(text):
+    """(code, conf) qua Rust/WASM, hoặc None khi vắng cầu nối / cầu nối hỏng."""
+    global _RS_BROKEN
+    fn = _rust_fn("pb3_rust_detect_language")
+    if fn is _MISSING:
+        return None
+    try:
+        out = fn(text)
+    except Exception:  # noqa: BLE001 - lỗi cầu nối -> tắt, rơi về Python
+        _RS_BROKEN = True
+        return None
+    try:
+        code, conf = json.loads(str(out))
+    except Exception:  # noqa: BLE001 - trả về lạ -> tắt, rơi về Python
+        _RS_BROKEN = True
+        return None
+    if conf not in ("strong", "weak", "none"):
+        _RS_BROKEN = True
+        return None
+    return code, conf
+
+
+def _detect_chinese_variant_rs(text):
+    """'Hant'/'Hans'/None qua Rust/WASM, hoặc _MISSING khi vắng/hỏng."""
+    global _RS_BROKEN
+    fn = _rust_fn("pb3_rust_detect_chinese_variant")
+    if fn is _MISSING:
+        return _MISSING
+    try:
+        out = fn(text)
+    except Exception:  # noqa: BLE001
+        _RS_BROKEN = True
+        return _MISSING
+    if out is None:
+        return None
+    if isinstance(out, str) and out in ("Hant", "Hans"):
+        return out
+    _RS_BROKEN = True
+    return _MISSING
 
 # ------------------------------------------------------------------ script
 def _script_counts(text: str) -> Dict[str, int]:
@@ -84,6 +148,9 @@ _SIMP_ONLY = set("学国会个来还这们让点头体战么广厂写读边长�
 
 def detect_chinese_variant(text: str) -> Optional[str]:
     """'Hant' | 'Hans' | None — chỉ để thống kê, không tách file."""
+    v = _detect_chinese_variant_rs(text)
+    if v is not _MISSING:
+        return v
     tr = sum(1 for ch in text if ch in _TRAD_ONLY)
     si = sum(1 for ch in text if ch in _SIMP_ONLY)
     if tr and not si:
@@ -172,6 +239,9 @@ def detect_language(text: str) -> Tuple[Optional[str], str]:
     """
     if not isinstance(text, str) or not text:
         return None, "none"
+    rs = _detect_language_rs(text)
+    if rs is not None:
+        return rs
     clean = _clean_for_detect(text)
     counts = _script_counts(clean)
     total = sum(counts.values())
