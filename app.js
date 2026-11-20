@@ -4675,6 +4675,38 @@ function gateRenderResult(parsed) {
     }
     html += "</table>";
   }
+  const fc3 = parsed.font_check_3step;
+  if (fc3) {
+    html += "<p>Kiểm tra font 3 bước — đường: <b>" + esc(fc3.path || "?") + "</b> — " +
+      esc(fc3.path_reason || "") + "</p>";
+    for (const t of (fc3.tiers || [])) {
+      let line = "<b>" + esc(t.name || "?") + "</b> (" + esc(t.kind || "?") + ")";
+      if (t.atlas) {
+        line += " · Atlas: <b>" + (t.atlas.letters == null ? "chưa biết" : t.atlas.letters + "/134") +
+          "</b> · dấu <b>" + (t.atlas.marks == null ? "chưa biết" : t.atlas.marks + "/8") + "</b>" +
+          (t.atlas.population_label ? " · " + esc(t.atlas.population_label) : "") +
+          (t.atlas.fallback_count != null ? " · fallback " + t.atlas.fallback_count : "") +
+          (t.atlas.atlas_used_pct != null ? " · atlas đã dùng <b>" + t.atlas.atlas_used_pct + "%</b>" : "") +
+          (t.atlas.free_rects_fit_median_glyph != null ? " · free rect vừa glyph: <b>" + t.atlas.free_rects_fit_median_glyph + "</b>" : "") +
+          (t.atlas.dynamic_note ? " · " + esc(t.atlas.dynamic_note) : "") +
+          (t.atlas.confirmed === false ? " · CHƯA XÁC NHẬN" : "");
+      }
+      if (t.cmap) {
+        if (t.cmap.letters != null) {
+          line += " · cmap: <b>" + t.cmap.letters + "/134</b> · dấu <b>" + t.cmap.marks + "/8</b>";
+        } else {
+          line += " · cmap: " + esc(t.cmap.reason || "chưa kiểm được");
+        }
+      }
+      html += "<p>" + line + "</p>";
+    }
+    for (const n of (fc3.notes || [])) {
+      html += "<p class=\"note\">" + esc(n) + "</p>";
+    }
+    if (fc3.recommendation) {
+      html += "<p class=\"note\">Đề xuất: " + esc(fc3.recommendation) + "</p>";
+    }
+  }
   const unmatched = parsed.unmatched || [];
   if (unmatched.length || (parsed.unmatched_total || 0) > 0) {
     const REASONS = { monobehaviour: "key MonoBehaviour có trong game nhưng chưa ép được (ánh xạ vị trí mơ hồ hoặc mô phỏng ghi lỗi — xem skipped trong plan)",
@@ -6060,6 +6092,78 @@ $("btn-font-unify").addEventListener("click", async () => {
       "tmp_fallback_plan.json (nếu game có TMP_FontAsset) và BeVietnamPro-Regular.ttf.</p>";
     html += "<p>Các bước trong Unity Editor: " + (plan.editor_steps || []).map(esc).join(" ") + "</p>";
     html += "<p class=warn>Giới hạn thật: " + (plan.limits || []).map(esc).join(" ") + "</p>";
+    if (parsed.warnings && parsed.warnings.length) {
+      html += "<p class=warn>Cảnh báo: " + parsed.warnings.map(esc).join("; ") + "</p>";
+    }
+    $("font-result").innerHTML = html;
+  } catch (e) { /* đã báo lỗi */ }
+});
+
+// ---- Kiểm tra font 3 bước (phần D) ----
+// Bước 1 tìm Font object + TMP_FontAsset; Bước 2 check atlas SDF
+// (m_CharacterTable vs 134 chữ + 8 dấu); Bước 3 check cmap TTF nguồn
+// (m_FontData) + AtlasPopulationMode + fallback. Chỉ đọc; báo cáo đầy đủ
+// nằm trong font_check_3step.json để tải về qua thanh Lưu file.
+$("btn-font-check-3step").addEventListener("click", async () => {
+  try {
+    const { parsed } = await runOp("Kiểm tra font 3 bước", "font_check_3step",
+      [inputPath()], inputFileArgs(), true);
+    const s = parsed.summary || {};
+    let html = "<p>Quét <b>" + (s.files_scanned || 0) + " file</b> · tìm được <b>" +
+      (s.fonts || 0) + " font</b> · TMP_FontAsset <b>" + (s.tmp_assets || 0) +
+      "</b> (" + (s.tmp_confirmed || 0) + " đã xác nhận · " + (s.tmp_unconfirmed || 0) +
+      " chưa xác nhận) · Font object đọc được cmap <b>" + (s.font_objects_readable || 0) +
+      "/" + (s.font_objects || 0) + "</b> · atlas tốt nhất <b>" +
+      (s.best_atlas_letters == null ? "—" : s.best_atlas_letters + "/134") +
+      "</b> · cmap tốt nhất <b>" +
+      (s.best_cmap_letters == null ? "—" : s.best_cmap_letters + "/134") + "</b></p>";
+    const all = (parsed.fonts || []).concat(parsed.tmp_assets || []);
+    const rep = parsed.report;
+    const tierByPid = {};
+    if (rep && Array.isArray(rep.tiers)) {
+      for (const t of rep.tiers) {
+        if (t.path_id != null) tierByPid[t.path_id] = t;
+      }
+    }
+    for (const f of all) {
+      html += "<h3>" + esc(f.name || "?") + " — " + esc(f.kind) +
+        (f.confirmed === false ? " · CHƯA XÁC NHẬN" : "") + "</h3>";
+      html += "<p>Nguồn: " + esc(f.source || "?") +
+        (f.path_id != null ? " · path_id " + f.path_id : "") +
+        (f.num_glyphs != null ? " · " + f.num_glyphs + " glyph" : "") + "</p>";
+      if (f.kind === "tmp_font_asset") {
+        const tier = tierByPid[f.path_id];
+        html += "<p>Atlas SDF: <b>" +
+          (f.atlas_letters == null ? "chưa biết" : f.atlas_letters + "/134 chữ") +
+          "</b> · dấu kết hợp <b>" +
+          (f.atlas_marks == null ? "chưa biết" : f.atlas_marks + "/8") + "</b>" +
+          (f.population_label ? " · AtlasPopulationMode <b>" + esc(f.population_label) + "</b>" : "") +
+          (f.fallback_count != null ? " · fallback <b>" + f.fallback_count + "</b>" : "") +
+          (f.atlas_used_pct != null ? " · atlas đã dùng <b>" + f.atlas_used_pct + "%</b>" : "") +
+          (f.free_rects_fit_median_glyph != null ? " · free rect vừa glyph cỡ TB: <b>" + f.free_rects_fit_median_glyph + "</b>" : "") +
+          (tier && tier.atlas && tier.atlas.dynamic_note ? " · " + esc(tier.atlas.dynamic_note) : "") +
+          (f.method ? " · xác nhận bằng " + esc(f.method) : "") + "</p>";
+      } else if (f.cmap_letters != null) {
+        html += "<p>cmap TTF nguồn: <b>" + f.cmap_letters + "/134 chữ</b> · dấu kết hợp <b>" +
+          f.cmap_marks + "/8</b>" +
+          (f.flavor ? " · " + esc(f.flavor) : "") + "</p>";
+      } else {
+        html += "<p>" + esc(f.reason || "Không đọc được font.") + "</p>";
+      }
+    }
+    if (!all.length) {
+      html += "<p>Không tìm được font nào trong file này — dùng font đi kèm Be Vietnam Pro (donor).</p>";
+    }
+    if (rep) {
+      html += "<p>Đường: <b>" + esc(rep.path || "?") + "</b> — " + esc(rep.path_reason || "") + "</p>";
+      for (const n of (rep.notes || [])) {
+        html += "<p class=\"note\">" + esc(n) + "</p>";
+      }
+      if (rep.recommendation) {
+        html += "<p class=\"note\">Đề xuất: " + esc(rep.recommendation) + "</p>";
+      }
+    }
+    html += "<p>File <b>font_check_3step.json</b> đã sẵn sàng để tải về — bấm “Lưu / Chia sẻ” ở thanh Lưu file bên dưới để lưu về máy.</p>";
     if (parsed.warnings && parsed.warnings.length) {
       html += "<p class=warn>Cảnh báo: " + parsed.warnings.map(esc).join("; ") + "</p>";
     }

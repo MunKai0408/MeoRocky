@@ -2264,6 +2264,31 @@ def font_list(path):
         return _err(e)
 
 
+def font_check_3step(path):
+    """Kiem tra font 3 buoc cua anh Duy (sdk/font_check) cho ca game.
+
+    Buoc 1 tim Font object + TMP_FontAsset; Buoc 2 check atlas SDF
+    (m_CharacterTable vs 134 chu + 8 dau); Buoc 3 check cmap TTF nguon
+    (m_FontData) + AtlasPopulationMode + fallback. Chi doc; ghi bao cao
+    ra /tmp/font_check_3step.json de JS tai ve.
+    """
+    try:
+        from sdk import font_check as fc
+
+        _check_size(path)
+        res = fc.scan_source(path)
+        res["report"] = fc.build_gate_report(res["fonts"]
+                                             + res["tmp_assets"])
+        out = "/tmp/font_check_3step.json"
+        with open(out, "w", encoding="utf-8") as fh:
+            json.dump(res, fh, ensure_ascii=False, indent=1)
+        res.update({"ok": True, "dest": out,
+                    "filename": "font_check_3step.json"})
+        return json.dumps(res, ensure_ascii=False)
+    except Exception as e:  # noqa: BLE001
+        return _err(e)
+
+
 def font_unify(path, donor_path):
     """"Dùng chung 1 font": gom mọi font game về Be Vietnam Pro (phần D).
 
@@ -2943,6 +2968,16 @@ def delivery_gate(path, translations_json, source_json=None,
         except Exception as exc:  # noqa: BLE001 - thành lỗi kiểm tra font
             if font_error is None:
                 font_error = "không quét được font trong file gốc: %s" % exc
+        # Check font 3 buoc (sdk/font_check): bo sung du lieu atlas SDF
+        # + cmap TTF nguon + population mode + fallback vao danh sach
+        # font (chi thong tin trong bao cao 3 tang; loi thi bo qua,
+        # verdict cua cong khong doi).
+        font_check_report = None
+        try:
+            from sdk import font_check as _fc
+            fonts, font_check_report = _fc.enrich_fonts(path, fonts)
+        except Exception:  # noqa: BLE001 - best effort
+            font_check_report = None
 
         def _pf(done, total):
             _emit("gate", done, total)
@@ -2957,7 +2992,8 @@ def delivery_gate(path, translations_json, source_json=None,
             progress_fn=_pf, src_path=path, pressed_path=pressed_arg,
             allow_partial=bool(allow_partial),
             source_locale=source_locale or "en",
-            target_lang=target_lang or "vi")
+            target_lang=target_lang or "vi",
+            font_check=font_check_report)
         # File gốc không đổi: xác minh sha sau khi chạy (cổng chỉ đọc).
         if hashlib.sha256(open(path, "rb").read()).hexdigest() != orig_sha:
             raise ValueError("file gốc đã đổi trong lúc kiểm — từ chối kết quả.")

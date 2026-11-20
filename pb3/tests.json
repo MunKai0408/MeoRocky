@@ -115,6 +115,7 @@
   "pb3/tests/test_final_optimize.py",
   "pb3/tests/test_final_review.py",
   "pb3/tests/test_font.py",
+  "pb3/tests/test_font_check_3step.py",
   "pb3/tests/test_font_unify.py",
   "pb3/tests/test_format_apple_plist.py",
   "pb3/tests/test_format_apple_strings.py",
