@@ -871,15 +871,16 @@ P1-5 (I3) → P2-1 → P2-2 → P2-3 → P2-4 → P3. Tiêu chí XONG từng m�
 - Test mới 39/39 pass (26 fixture + 13 game thật local, skip khi thiếu
   IPA); 10 check tĩnh `fails: []`; smoke 59/59; `node --check` app.js OK;
   Python 3.9 (không match/X|Y, chỉ thêm import stdlib).
-- Full suite nhánh (commit `c5db964`) vs baseline main v62 (cùng môi
-  trường, tuần tự): nhánh 2.762 test, 2.747 đạt, 12 lỗi, 0 fail
-  (2.745,4s); baseline 2.723 test, 2.709 đạt, 11 lỗi, 0 fail (2.643,3s).
-  Tập lỗi nhánh = tập lỗi baseline (10 lỗi fixture `sqlite_loc/a.sqlite`
-  thiếu + 1 timeout `test_po_write_dst_real`) + 1 timeout
-  `test_round_trip_pb3` (vượt 1800s trong full suite); test này chạy
-  riêng trên nhánh PASS trong 1.570,55s, và PASS trên baseline — biến
-  động tốc độ VM (test này vốn ~1.724s, sát mức 1.800s), không phải lỗi
-  code -> **0 đỏ mới**. Lần chạy baseline đầu bị VM restart giết ở 54%
-  (test_round_trip_pb3 1.566s) — chạy lại từ đầu, đủ bộ.
+- Full suite nhánh (head `0ef6d8c`) vs baseline main v64 (cùng môi
+  trường, tuần tự): nhánh 2.789 test, 2.774 đạt, 11 lỗi, 1 fail, 3 bỏ
+  qua (2.674,3s); baseline 2.750 test, 2.736 đạt, 11 lỗi, 0 fail, 3 bỏ
+  qua (2.662,5s). Tập lỗi GIỐNG HỆT nhau (10 lỗi fixture `sqlite_loc/
+  a.sqlite` thiếu + 1 timeout `test_po_write_dst_real`, có sẵn trên
+  main). 1 fail duy nhất của nhánh là `test_sw_keeps_precache_icons_
+  and_version` (test #56 ghim `CACHE_VERSION` v64, nhánh đã lên v65) —
+  ĐÃ SỬA pin sang v65 ở commit `7a895b4`, chạy lại 22/22 PASS. Lần này
+  `test_round_trip_pb3` PASS trong cả 2 full suite (không timeout như
+  lượt v62). Lần chạy baseline đầu bị runtime restart giết ở 4% —
+  chạy lại từ đầu, đủ bộ -> **0 đỏ mới** (+39 test mới, +38 đạt).
 - Dance pin/count v65: `tests.json` 199->200, precache đo lại 17.533.126 B
   / 140 mục, `CACHE_VERSION` v65-20261120.
