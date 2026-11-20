@@ -66,10 +66,12 @@ Chạy được trên Python 3.9 (không dùng cú pháp 3.10+, không tomllib).
 """
 from __future__ import annotations
 
+import base64
 import copy
 import hashlib
 import importlib
 import io
+import json
 import lzma
 import os
 import re
@@ -471,6 +473,9 @@ class UnityBackend:
         # Cầu nối JS lz4js (chỉ có trên web): thử 1 lần, nếu lỗi không
         # phải do input hỏng thì tắt cho backend này (rơi về lz4pure).
         self._lz4_js_broken = False
+        # Cầu nối Rust/WASM (chỉ có trên web): thử 1 lần, nếu lỗi không
+        # phải do input hỏng thì tắt cho backend này (rơi về lz4js/lz4pure).
+        self._lz4_rs_broken = False
         if mode == "LIBRARY":
             missing = [k for k in ("lz4", "unitypy") if probe[k]["status"] != "ok"]
             if missing:
@@ -596,6 +601,86 @@ class UnityBackend:
                            % (len(raw), uncompressed_size), where=where)
         return raw
 
+    def _decompress_lz4_rs(self, data, uncompressed_size, where="unity"):
+        """Giải nén 1 block LZ4 qua Rust/WASM (cầu nối pb3_rust_lz4_decompress).
+
+        Nhanh hơn lz4js (mã native qua WASM) và lz4pure (hàng chục lần).
+        Theo đúng mẫu _decompress_lz4_js: vắng cầu nối thì trả None để bên
+        gọi rơi về lz4js/lz4pure — không raise, không crash. Lỗi input hỏng
+        (WASM ném RUST_LZ4_CORRUPT) thì raise E_CORRUPT như lz4pure; lỗi JS
+        khác thì đánh dấu cầu nối hỏng cho backend này rồi trả None.
+        """
+        if self._lz4_rs_broken:
+            return None
+        try:
+            import js as _js
+            _rs = getattr(_js, "pb3_rust_lz4_decompress", None)
+        except Exception:
+            _rs = None
+        if _rs is None:
+            return None
+        try:
+            out = _rs(bytes(data), int(uncompressed_size))
+        except PB3Error:
+            raise
+        except Exception as exc:  # noqa: BLE001 - lỗi JS -> fallback hoặc E_CORRUPT
+            if "RUST_LZ4_CORRUPT" in str(exc):
+                detail = str(exc).split("RUST_LZ4_CORRUPT", 1)[1].lstrip(": ").strip()
+                raise PB3Error("E_CORRUPT", "LZ4 (Rust): %s" % (detail or "block hỏng"),
+                               where=where)
+            self._lz4_rs_broken = True
+            return None
+        try:
+            raw = bytes(out)
+        except Exception:
+            to_py = getattr(out, "to_py", None)
+            if not callable(to_py):
+                raise PB3Error("E_CORRUPT",
+                               "pb3_rust_lz4_decompress trả về kiểu không đọc được: %s"
+                               % type(out).__name__, where=where)
+            raw = bytes(to_py())
+        if len(raw) != uncompressed_size:
+            raise PB3Error("E_CORRUPT", "LZ4 (Rust) giải nén được %d/%d byte"
+                           % (len(raw), uncompressed_size), where=where)
+        return raw
+
+    def _decompress_frame_rs(self, data, where="lz4-frame"):
+        """Giải nén 1 LZ4 frame qua Rust/WASM (pb3_rust_lz4_decompress_frame).
+
+        Mẫu như _decompress_lz4_rs: vắng cầu nối thì trả None (bên gọi rơi
+        về lz4pure); input hỏng (RUST_LZ4_CORRUPT) thì raise E_CORRUPT.
+        """
+        if self._lz4_rs_broken:
+            return None
+        try:
+            import js as _js
+            _rs = getattr(_js, "pb3_rust_lz4_decompress_frame", None)
+        except Exception:
+            _rs = None
+        if _rs is None:
+            return None
+        try:
+            out = _rs(bytes(data))
+        except PB3Error:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            if "RUST_LZ4_CORRUPT" in str(exc):
+                detail = str(exc).split("RUST_LZ4_CORRUPT", 1)[1].lstrip(": ").strip()
+                raise PB3Error("E_CORRUPT",
+                               "LZ4 frame (Rust): %s" % (detail or "frame hỏng"),
+                               where=where)
+            self._lz4_rs_broken = True
+            return None
+        try:
+            return bytes(out)
+        except Exception:
+            to_py = getattr(out, "to_py", None)
+            if not callable(to_py):
+                raise PB3Error("E_CORRUPT",
+                               "pb3_rust_lz4_decompress_frame trả về kiểu không đọc được: %s"
+                               % type(out).__name__, where=where)
+            return bytes(to_py())
+
     def decompress(self, data, uncompressed_size, compression, where="unity"):
         """Giải nén một khối theo mã compression (0 none, 1 lzma, 2 lz4, 3 lz4hc, 5 zstd)."""
         if compression == 0:
@@ -621,9 +706,12 @@ class UnityBackend:
                     raise PB3Error("E_CORRUPT", "lz4.block lỗi: %s" % type(exc).__name__,
                                    where=where)
                 return bytes(out)
-            # Web (mọi mode, kể cả NATIVE): thử cầu nối JS lz4js trước
-            # lz4pure — nhanh hơn hàng chục lần; vắng cầu nối thì trả None và
-            # rơi về lz4pure như trước, không đổi hành vi.
+            # Web (mọi mode, kể cả NATIVE): thử Rust/WASM trước lz4js —
+            # mã native nhanh hơn JS; vắng cầu nối thì trả None và rơi về
+            # lz4js rồi lz4pure như trước, không đổi hành vi.
+            rs_out = self._decompress_lz4_rs(data, uncompressed_size, where=where)
+            if rs_out is not None:
+                return rs_out
             js_out = self._decompress_lz4_js(data, uncompressed_size, where=where)
             if js_out is not None:
                 return js_out
@@ -662,7 +750,7 @@ class UnityBackend:
                        where=where)
 
     def decompress_frame(self, data, where="lz4-frame"):
-        """Giải nén LZ4 frame: binding khi có, không thì Python thuần."""
+        """Giải nén LZ4 frame: binding khi có, không thì Rust/WASM rồi Python thuần."""
         if self.mode != "NATIVE" and self.has_lz4_binding:
             lz4_frame = importlib.import_module("lz4.frame")
             try:
@@ -670,6 +758,9 @@ class UnityBackend:
             except Exception as exc:  # noqa: BLE001
                 raise PB3Error("E_CORRUPT", "lz4.frame lỗi: %s" % type(exc).__name__,
                                where=where)
+        rs_out = self._decompress_frame_rs(data, where=where)
+        if rs_out is not None:
+            return rs_out
         return lz4pure.decompress_frame(data, where=where)
 
     def unitypy_load(self, data, where="unitypy"):
@@ -1932,12 +2023,99 @@ def _typetree_is_array(node):
             and arr.children[1].name == "common_106")
 
 
+# Cầu nối Rust/WASM cho read_typetree_value (chỉ có trên web khi worker.js
+# đã nạp wasm): pb3_rust_typetree_value(node_json, data, pos, little_endian)
+# -> JSON '{"value": ..., "end": pos}'. Vắng cầu nối (CPython/iSH) hoặc cầu
+# nối hỏng -> rơi về _read_typetree_value_py như trước, không đổi hành vi.
+# Node JSON chỉ gồm {name, byte_size, children} (3 trường reader dùng),
+# cache theo id(node) để không serialize lại mỗi object cùng type; cache
+# giữ tham chiếu mạnh tới node nên id không bị tái dùng. Giới hạn 512 mục
+# để không phình RAM trên điện thoại (đầy thì xóa, serialize lại sau).
+_TYPETREE_RS_BROKEN = False
+_TYPETREE_RS_NODE_CACHE = {}
+_TYPETREE_RS_NODE_CACHE_MAX = 512
+
+
+def _typetree_node_json(node):
+    """JSON của cây node ({name, byte_size, children}), có cache theo id."""
+    key = id(node)
+    ent = _TYPETREE_RS_NODE_CACHE.get(key)
+    if ent is not None and ent[0] is node:
+        return ent[1]
+    js = json.dumps({"name": node.name, "byte_size": node.byte_size,
+                     "children": [_typetree_node_dict(c) for c in node.children]},
+                    separators=(",", ":"))
+    if len(_TYPETREE_RS_NODE_CACHE) >= _TYPETREE_RS_NODE_CACHE_MAX:
+        _TYPETREE_RS_NODE_CACHE.clear()
+    _TYPETREE_RS_NODE_CACHE[key] = (node, js)
+    return js
+
+
+def _typetree_node_dict(node):
+    return {"name": node.name, "byte_size": node.byte_size,
+            "children": [_typetree_node_dict(c) for c in node.children]}
+
+
+def _typetree_value_from_json(obj):
+    """Khôi phục giá trị Python từ JSON của Rust (dict/list/str/int/None/
+    bytes dạng {"$bytes": base64})."""
+    if isinstance(obj, dict):
+        if set(obj.keys()) == {"$bytes"}:
+            return base64.b64decode(obj["$bytes"])
+        return {k: _typetree_value_from_json(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_typetree_value_from_json(v) for v in obj]
+    return obj
+
+
+def _read_typetree_value_rs(data, node, pos, endian):
+    """(giá_trị, vị_trị_mới) qua Rust/WASM, hoặc None khi vắng/hỏng cầu nối.
+    Input hỏng (WASM ném RUST_TYPETREE_CORRUPT) thì raise E_CORRUPT."""
+    global _TYPETREE_RS_BROKEN
+    if _TYPETREE_RS_BROKEN:
+        return None
+    try:
+        import js as _js
+        fn = getattr(_js, "pb3_rust_typetree_value", None)
+    except Exception:
+        fn = None
+    if fn is None:
+        return None
+    try:
+        out = fn(_typetree_node_json(node), bytes(data), int(pos), endian == "<")
+    except Exception as exc:  # noqa: BLE001 - lỗi JS -> E_CORRUPT hoặc fallback
+        if "RUST_TYPETREE_CORRUPT" in str(exc):
+            detail = str(exc).split("RUST_TYPETREE_CORRUPT", 1)[1].lstrip(": ").strip()
+            raise PB3Error("E_CORRUPT", "typetree (Rust): %s" % (detail or "object hỏng"),
+                           where="MonoBehaviour")
+        _TYPETREE_RS_BROKEN = True
+        return None
+    try:
+        parsed = json.loads(str(out))
+        value = _typetree_value_from_json(parsed["value"])
+        end = int(parsed["end"])
+    except (KeyError, TypeError, ValueError, AttributeError):
+        _TYPETREE_RS_BROKEN = True
+        return None
+    return value, end
+
+
 def read_typetree_value(data, node, pos, endian="<"):
+    """Đọc 1 giá trị theo node type tree — thử Rust/WASM trước, rơi về
+    Python thuần khi vắng cầu nối. Cùng chữ ký + cùng lỗi như trước."""
+    rs = _read_typetree_value_rs(data, node, pos, endian)
+    if rs is not None:
+        return rs
+    return _read_typetree_value_py(data, node, pos, endian)
+
+
+def _read_typetree_value_py(data, node, pos, endian="<"):
     """Đọc 1 giá trị theo node type tree tại pos (tương đối đầu object).
 
-    Trả (giá_trị, vị_trị_mới). dict = struct, list = vector, str = chuỗi
-    (byte[] giải UTF-8 lỗi thì trả bytes để bên gọi bỏ qua, không hỏng cả
-    object). Hỏng cấu trúc -> PB3Error E_CORRUPT."""
+    Bản Python thuần (đệ quy). Trả (giá_trị, vị_trị_mới). dict = struct,
+    list = vector, str = chuỗi (byte[] giải UTF-8 lỗi thì trả bytes để bên
+    gọi bỏ qua, không hỏng cả object). Hỏng cấu trúc -> PB3Error E_CORRUPT.
+    Điểm vào công khai là read_typetree_value() (thử Rust/WASM trước)."""
     where = "MonoBehaviour"
     n = len(data)
     if node.children:
@@ -1965,13 +2143,13 @@ def read_typetree_value(data, node, pos, endian="<"):
             vals = []
             for _ in range(count):
                 pos = _typetree_align4(pos)
-                v, pos = read_typetree_value(data, elem, pos, endian)
+                v, pos = _read_typetree_value_py(data, elem, pos, endian)
                 vals.append(v)
             return vals, pos
         out = {}
         for c in node.children:
             pos = _typetree_align4(pos)
-            v, pos = read_typetree_value(data, c, pos, endian)
+            v, pos = _read_typetree_value_py(data, c, pos, endian)
             out[c.name] = v
         return out, pos
     if node.byte_size == 0:
