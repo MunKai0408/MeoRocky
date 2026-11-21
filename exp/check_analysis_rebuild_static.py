@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Kiem tra tinh muc (E) rebuild [P0-1]: sdk/rebuild.py chi stdlib +
 Python 3.9, khong UnityPy/lz4, khong expose rebuild_zip; manifest
-(files.json 113, tests.json 203); sw.js precache 141 muc co
-sdk/rebuild.py, khong wheel chet, CACHE_VERSION v72-20261122; bridge co
+(files.json 113, tests.json 204); sw.js precache 141 muc co
+sdk/rebuild.py, khong wheel chet, CACHE_VERSION v73-20261122; bridge co
 op rebuild_apply; plan.py co progress_fn; unity.py co
 rebuild_bundle_streaming + khoa REBUILD_ALL con nguyen; UI du id (E);
 2 cho innerHTML f.source da duoc esc + code (E) moi esc du lieu game.
@@ -76,8 +76,8 @@ if len(files) != 113:
 if "pb3/sdk/rebuild.py" not in files:
     fails.append("files.json thieu pb3/sdk/rebuild.py")
 tests = json.loads((SITE / "pb3" / "tests.json").read_text())["files"]
-if len(tests) != 203:
-    fails.append("tests.json co %d file, ky vong 203" % len(tests))
+if len(tests) != 204:
+    fails.append("tests.json co %d file, ky vong 204" % len(tests))
 if "pb3/tests/test_rebuild.py" not in tests:
     fails.append("tests.json thieu pb3/tests/test_rebuild.py")
 
@@ -85,8 +85,8 @@ if "pb3/tests/test_rebuild.py" not in tests:
 sw = (SITE / "sw.js").read_text(encoding="utf-8")
 if '"pb3/sdk/rebuild.py"' not in sw:
     fails.append("sw.js precache thieu pb3/sdk/rebuild.py")
-if 'CACHE_VERSION = "v72-20261122"' not in sw:
-    fails.append("sw.js CACHE_VERSION khong phai v72-20261122")
+if 'CACHE_VERSION = "v73-20261122"' not in sw:
+    fails.append("sw.js CACHE_VERSION khong phai v73-20261122")
 m = re.search(r"const PRECACHE_URLS = \[(.*?)\];", sw, re.S)
 if not m:
     fails.append("sw.js khong tim thay PRECACHE_URLS")
