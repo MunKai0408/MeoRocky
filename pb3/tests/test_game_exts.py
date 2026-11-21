@@ -52,6 +52,34 @@ class TestGameExts(unittest.TestCase):
                         "không khớp GAME_EXTS trong app.js (sửa mảng thì "
                         "phải sửa regex theo)")
 
+    def test_error_message_lists_bundle(self):
+        """Thông báo lỗi sai định dạng phải liệt kê đủ đuôi, gồm .bundle.
+
+        Bug 21/11 (v69): gameExtError() dựng nửa đầu từ GAME_EXTS.join()
+        (đủ .bundle) nhưng nửa sau liệt kê cứng ".ipa/.zip/..." thiếu
+        .bundle. Khóa: nửa sau phải dựng động từ cùng GAME_EXTS +
+        GZIP_EXT, không còn chuỗi liệt kê cứng nào.
+        """
+        appjs = APP_JS.read_text(encoding="utf-8")
+        m = re.search(r"function gameExtError\(name\) \{(.*?)\n\}",
+                      appjs, re.S)
+        assert m is not None, "app.js: không tìm thấy gameExtError"
+        # Bỏ comment dòng (ghi chú lịch sử có nhắc chuỗi cứng cũ).
+        body = re.sub(r"//[^\n]*", "", m.group(1))
+        self.assertNotIn(".ipa/.zip", body,
+                         "gameExtError còn liệt kê cứng đuôi file "
+                         "(dễ lệch với GAME_EXTS như vụ thiếu .bundle)")
+        self.assertIn("GAME_EXTS", body,
+                      "gameExtError không dựng đuôi từ GAME_EXTS")
+        self.assertIn("GZIP_EXT", body,
+                      "gameExtError không dựng đuôi từ GZIP_EXT")
+        # Mô phỏng đúng logic JS: concat + join("/") phải chứa .bundle.
+        exts = _game_exts(appjs)
+        gz = re.search(r"GZIP_EXT = \"([^\"]+)\"", appjs).group(1)
+        tail = "/".join(list(exts) + [gz])
+        self.assertIn(".bundle", tail,
+                      "đuôi liệt kê từ GAME_EXTS + GZIP_EXT thiếu '.bundle'")
+
 
 if __name__ == "__main__":
     unittest.main()
