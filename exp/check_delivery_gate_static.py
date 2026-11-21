@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Kiem tra tinh cong kiem tra truoc khi giao (P0-2, buoc 6):
 sdk/gate.py chi stdlib + Python 3.9, khong UnityPy/lz4, khong ghi file;
-manifest (files.json 112, tests.json 201); sw.js precache 140 muc co
-sdk/gate.py, khong muc chet, CACHE_VERSION v70-20261121; bridge co op
+manifest (files.json 112, tests.json 202); sw.js precache 140 muc co
+sdk/gate.py, khong muc chet, CACHE_VERSION v75-20261122; bridge co op
 delivery_gate + rebuild_apply bat verdict cong khi duoc truyen; UI du
 id cong + nut Ghi bi khoa boi verdict + render cong esc du lieu game.
 In JSON {"fails": [...]}.
@@ -58,13 +58,16 @@ if re.search(r"\bapk\b", src):
     fails.append("gate.py chua tu 'apk' (cam theo luat iSH-only)")
 for need in ("def check_translation_completeness(",
              "def check_placeholders(",
+             "def check_translation_length(",
+             "def check_vietnamese_atlas_glyphs(",
              "def check_font_coverage(",
              "def font_entry_from_bytes(",
              "def run_gate(",
              "def canonical_translations_sha(",
              "GATE_VERSION", "delivery_allowed",
              "translation_complete", "placeholders", "diffverify",
-             "fonts", "integrity", "monobehaviour",
+             "fonts", "integrity", "translation_length",
+             "vietnamese_atlas_glyphs", "monobehaviour",
              "REQUIRED_VIETNAMESE", "group_by_unit", "build_plan",
              "after_sha"):
     if need not in src:
@@ -77,8 +80,8 @@ if len(files) != 112:
 if "pb3/sdk/gate.py" not in files:
     fails.append("files.json thieu pb3/sdk/gate.py")
 tests = json.loads((SITE / "pb3" / "tests.json").read_text())["files"]
-if len(tests) != 201:
-    fails.append("tests.json co %d file, ky vong 201" % len(tests))
+if len(tests) != 202:
+    fails.append("tests.json co %d file, ky vong 202" % len(tests))
 if "pb3/tests/test_gate.py" not in tests:
     fails.append("tests.json thieu pb3/tests/test_gate.py")
 
@@ -86,8 +89,8 @@ if "pb3/tests/test_gate.py" not in tests:
 sw = (SITE / "sw.js").read_text(encoding="utf-8")
 if '"pb3/sdk/gate.py"' not in sw:
     fails.append("sw.js precache thieu pb3/sdk/gate.py")
-if 'CACHE_VERSION = "v70-20261121"' not in sw:
-    fails.append("sw.js CACHE_VERSION khong phai v70-20261121")
+if 'CACHE_VERSION = "v75-20261122"' not in sw:
+    fails.append("sw.js CACHE_VERSION khong phai v75-20261122")
 m = re.search(r"const PRECACHE_URLS = \[(.*?)\];", sw, re.S)
 if not m:
     fails.append("sw.js khong tim thay PRECACHE_URLS")

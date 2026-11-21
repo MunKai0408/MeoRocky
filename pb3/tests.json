@@ -135,6 +135,7 @@
   "pb3/tests/test_game_exts.py",
   "pb3/tests/test_gate.py",
   "pb3/tests/test_gate_crash_fix.py",
+  "pb3/tests/test_gate_f5.py",
   "pb3/tests/test_godot.py",
   "pb3/tests/test_godot_translation.py",
   "pb3/tests/test_hardening.py",

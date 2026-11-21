@@ -16,6 +16,18 @@ truoc khi giao file:
       font se hien thi (bo 142 muc cua sdk/font), bao cao theo tung font;
   (e) toan ven: hash/cau truc file da ep khop ke hoach ep (don vi,
       entry, sha), khong ghi de file goc.
+  (f) do dai: ban dich dai hon goc theo byte UTF-8 chi bi tu choi khi
+      key do thuoc duong ghi do dai co dinh (vd literal IL2CPP: dai
+      hon goc thi too_long, che do strict thi bat ky lech nao cung
+      length_must_match — giong sdk/il2cpp.patch_literals); duong ghi
+      chinh cua cong (REBUILD_SECTION, PATCH_INPLACE leo thang khi dai
+      hon) CHO phep dai hon nen key dai hon chi ghi canh bao, khong
+      FAIL khi khong co key co dinh nao duoc khai bao;
+  (g) atlas: chu Viet dang dung phai co glyph trong atlas SDF cua font
+      TMP ma game se dung (khong chi cmap TTF nguon) — atlas thieu thi
+      cuu bang Dynamic (can suc chua + font nguon ve duoc chu do,
+      [HYPOTHESIS]) hoac fallback TMP; khi da chi dinh font hien thi
+      thi font do quyet dinh, atlas game chi tham khao (nhu (d)).
 
 QUY TAC CHAN (P0-2, 1 dong ly do): FAIL thi CHAN giao tuyet doi, khong
 co duong giao khi canh bao — vi file giao sai (thieu key, mat
@@ -64,18 +76,20 @@ from sdk import plan as _plan
 from sdk import rebuild as _rb
 from sdk import unity as _u
 
-GATE_VERSION = 1
+GATE_VERSION = 2  # v2 (F5): them 2 kiem tra (f) do dai + (g) atlas chu Viet.
 
 CHECK_TRANSLATION = "translation_complete"
 CHECK_PLACEHOLDERS = "placeholders"
 CHECK_DIFFVERIFY = "diffverify"
 CHECK_FONTS = "fonts"
 CHECK_INTEGRITY = "integrity"
+CHECK_LENGTH = "translation_length"
+CHECK_ATLAS_GLYPHS = "vietnamese_atlas_glyphs"
 #: Kiem tra atlas SDF tai tao (TMP) — check RIENG cho luong tmp_sdf_regen,
 #: khong nam trong CHECK_IDS/run_gate (run_gate khong co dau vao SDF).
 CHECK_TMP_SDF = "tmp_sdf"
 CHECK_IDS = (CHECK_TRANSLATION, CHECK_PLACEHOLDERS, CHECK_DIFFVERIFY,
-             CHECK_FONTS, CHECK_INTEGRITY)
+             CHECK_FONTS, CHECK_INTEGRITY, CHECK_LENGTH, CHECK_ATLAS_GLYPHS)
 
 _DETAIL_CAP = 50
 _UNMATCHED_CAP = 200
@@ -322,6 +336,116 @@ def check_placeholders(source: Optional[Dict[str, str]],
          "allowed_skipped": skipped, "failures_total": failures_total})
 
 
+# ------------------------------------------- (f) do dai ban dich
+def check_translation_length(
+        source: Optional[Dict[str, str]],
+        translations: Dict[str, str], *,
+        fixed_length_keys: Any = (),
+        strict: bool = False) -> Dict[str, Any]:
+    """(f) Do dai ban dich theo byte UTF-8 so voi ban goc.
+
+    Quy tac (ghi ro, khong tu suy ra luat cam dai hon):
+    - Duong ghi chinh cua cong (REBUILD_SECTION; PATCH_INPLACE leo
+      thang len REBUILD_SECTION khi dai hon) CHO phep ban dich dai hon
+      goc, nen key dai hon chi dem + canh bao, KHONG FAIL.
+    - Chi key nam trong `fixed_length_keys` (duong ghi do dai co dinh,
+      vd literal IL2CPP) moi bi tu choi do do dai: dai hon goc thi
+      `too_long` (khong ghi duoc o ca v31 lan v39 — giong
+      sdk/il2cpp.patch_literals); ngan hon goc thi chi FAIL khi
+      strict=True (`length_must_match`, kieu v39), khong strict thi
+      canh bao (v31 ghi duoc nho dem NUL).
+    - Thieu ban goc thi FAIL (fail-closed). Key thua (khong co trong
+      ban goc) khong tinh do dai o day — (a) da bao.
+    """
+    _validate_kv(translations, "translations")
+    if source is None:
+        return _check(
+            CHECK_LENGTH, "Độ dài bản dịch", "fail",
+            "Chưa có bản gốc để đối chiếu độ dài.",
+            [{"kind": "no_source",
+              "message_vi": "Chưa có bản gốc để đối chiếu độ dài bản dịch. "
+                            "Hãy cung cấp file JSON bản gốc rồi kiểm lại."}],
+            [], {"checked": 0, "longer": 0, "fixed_length_keys": 0,
+                 "rejected": 0, "max_growth_bytes": 0, "max_ratio": 0.0})
+    _validate_kv(source, "source")
+    fixed = set(fixed_length_keys or ())
+    failures: List[Dict[str, Any]] = []
+    warnings: List[str] = []
+    longer: List[Dict[str, Any]] = []
+    shorter_fixed: List[str] = []
+    max_growth = 0
+    max_ratio = 0.0
+    checked = 0
+    for key in translations:
+        if key not in source:
+            continue
+        checked += 1
+        src_b = len(source[key].encode("utf-8"))
+        tr_b = len(translations[key].encode("utf-8"))
+        if tr_b > src_b:
+            longer.append({"key": key, "source_bytes": src_b,
+                           "translated_bytes": tr_b})
+            max_growth = max(max_growth, tr_b - src_b)
+            if src_b:
+                max_ratio = max(max_ratio, tr_b / src_b)
+            if key in fixed:
+                failures.append({
+                    "key": key, "kind": "too_long",
+                    "source_bytes": src_b, "translated_bytes": tr_b,
+                    "message_vi": "Key %r: bản dịch %d byte, dài hơn gốc "
+                                  "%d byte — đường ghi độ dài cố định "
+                                  "không ghi được chuỗi dài hơn gốc "
+                                  "(too_long). Rút ngắn bản dịch hoặc "
+                                  "chuyển key này sang đường ghi rebuild."
+                                  % (key, tr_b, src_b)})
+        elif key in fixed and tr_b != src_b:
+            shorter_fixed.append(key)
+            if strict:
+                failures.append({
+                    "key": key, "kind": "length_must_match",
+                    "source_bytes": src_b, "translated_bytes": tr_b,
+                    "message_vi": "Key %r: bản dịch %d byte, khác gốc "
+                                  "%d byte — đường ghi độ dài cố định "
+                                  "chế độ strict yêu cầu đúng bằng byte "
+                                  "(length_must_match)."
+                                  % (key, tr_b, src_b)})
+    if shorter_fixed and not strict:
+        warnings.append(
+            "%d key độ dài cố định ngắn hơn gốc (%s) — ghi được ở kiểu "
+            "v31 (đệm NUL), chỉ chế độ strict (v39) mới từ chối."
+            % (len(shorter_fixed), ", ".join(shorter_fixed[:5])))
+    if longer and not fixed:
+        warnings.append(
+            "%d key bản dịch dài hơn gốc theo byte (tăng nhiều nhất %d "
+            "byte, gấp %.2f lần) — đường ghi rebuild cho phép dài hơn, "
+            "chỉ liệt kê để soát, không chặn giao."
+            % (len(longer), max_growth, max_ratio))
+    failures_total = len(failures)
+    failures = failures[:_DETAIL_CAP]
+    status = "fail" if failures_total else "pass"
+    if status == "pass":
+        if longer:
+            summary = ("%d key dài hơn gốc (tăng nhiều nhất %d byte) — "
+                       "đường ghi rebuild cho phép, không key nào bị "
+                       "từ chối do độ dài." % (len(longer), max_growth))
+        else:
+            summary = "Không key nào dài hơn gốc theo byte (%d key đã kiểm)." % checked
+    else:
+        summary = ("%d key bị từ chối do độ dài (đường ghi độ dài cố "
+                   "định): xem chi tiết." % failures_total)
+    return _check(
+        CHECK_LENGTH, "Độ dài bản dịch", status, summary,
+        failures, warnings,
+        {"checked": checked, "longer": len(longer),
+         "fixed_length_keys": len(fixed),
+         "rejected": failures_total,
+         "max_growth_bytes": max_growth,
+         "max_ratio": round(max_ratio, 2),
+         "failures_total": failures_total},
+        longer_keys=[e["key"] for e in longer[:_DETAIL_CAP]],
+        rejected_keys=[f["key"] for f in failures[:_DETAIL_CAP]])
+
+
 # ------------------------------------------------------------- (d) font
 def font_entry_from_bytes(data: bytes, name: str,
                           source: str = "font do người dùng chỉ định",
@@ -548,6 +672,284 @@ def check_font_coverage(translations: Dict[str, str],
          "used_vietnamese": len(used), "target_lang": target_lang},
         fonts=report_fonts, used_chars=[chr(cp) for cp in used],
         font_check_3step=three_step)
+
+
+# ------------------------------------------- (g) atlas chu Viet (TMP)
+def check_vietnamese_atlas_glyphs(
+        translations: Dict[str, str],
+        fonts: Optional[List[Dict[str, Any]]], *,
+        display_fonts: Any = (),
+        target_lang: str = "vi",
+        font_check: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """(g) Chu Viet dang dung co glyph trong atlas SDF cua font TMP ma
+    game se dung khong — khong chi cmap TTF nguon (check (d)).
+
+    Du lieu: `fonts` la danh sach font da quet (dang font_list, co the
+    da enrich 3 buoc): muc tmp_font_asset mang `missing_codepoints`
+    DAY DU cua atlas (khac hex hien thi trong tier chi cat 16 muc),
+    `population_label`, `source_font_file`, `fallback_entries`,
+    `confirmed`/`atlas_unknown`. `font_check` la bao cao 3 tang
+    (sdk/font_check.build_gate_report) — neu khong co thi tu xay tu
+    `fonts` (chi lay tier de biet `dynamic_rescue`).
+
+    Quy tac:
+    - Dich khong phai tieng Viet: PASS + canh bao (du lieu atlas chi
+      co bo 134 chu + 8 dau tieng Viet; do phu cmap cua dich do (d)
+      quyet dinh). Dich chua dang ky bo chu: FAIL nhu (d).
+    - Da chi dinh font hien thi: font do quyet dinh (nhu (d)) — atlas
+      game chi tham khao: PASS + canh bao theo tung atlas thieu chu.
+    - Khong thi: moi atlas TMP DA XAC NHAN phai phu het chu Viet dang
+      dung; chu thieu duoc cuu neu (1) Dynamic: tier bao
+      `dynamic_rescue` True (suc chua + font nguon, [HYPOTHESIS]) VA
+      font nguon ghep doi ve duoc chu do, hoac (2) co TMP fallback
+      (m_FallbackFontAssetTable) ma atlas cua no co chu do.
+    - Khong co atlas TMP nao duoc xac nhan ma game co TMP: FAIL
+      `atlas_unknown` (fail-closed — khong biet chu co hien khong).
+      Atlas chua xac nhan ben canh atlas da xac nhan: canh bao, khong
+      FAIL (duong hien thi chinh da kiem duoc).
+    - Game khong dung TMP (khong co muc tmp_font_asset): PASS — chu
+      hien thi do cmap font quyet dinh, (d) da kiem.
+    """
+    _validate_kv(translations, "translations")
+    if target_lang not in _font.REQUIRED_CHARS:
+        return _check(
+            CHECK_ATLAS_GLYPHS, "Chữ Việt trong atlas font game", "fail",
+            "Chưa có dữ liệu bộ chữ để kiểm atlas cho %s."
+            % _font.lang_name(target_lang),
+            [{"kind": "font_unknown_target",
+              "message_vi": "Chưa có dữ liệu bộ chữ để kiểm atlas cho %s — đích này chưa được hỗ trợ (chỉ kiểm được: %s)."
+                            % (_font.lang_name(target_lang),
+                               ", ".join(sorted(_font.REQUIRED_CHARS)))}],
+            [], {"atlases": 0, "confirmed": 0, "unknown": 0,
+                 "used_vietnamese": 0, "missing_used": 0,
+                 "rescued_dynamic": 0, "rescued_fallback": 0,
+                 "target_lang": target_lang})
+    required = (_font.REQUIRED_VIETNAMESE if target_lang == "vi"
+                else _font.required_chars(target_lang))
+    used_set = set()
+    for value in translations.values():
+        for ch in value:
+            cp = ord(ch)
+            if cp in required:
+                used_set.add(cp)
+    used = sorted(used_set)
+    if target_lang != "vi":
+        return _check(
+            CHECK_ATLAS_GLYPHS, "Chữ Việt trong atlas font game", "pass",
+            "Atlas TMP chỉ có dữ liệu chữ Việt (134 chữ + 8 dấu) nên không kiểm được chữ %s trong atlas — độ phủ cmap của đích do kiểm tra font (d) quyết định."
+            % _font.lang_name(target_lang),
+            [], ["Atlas TMP chưa kiểm được chữ %s có dấu — chỉ kiểm cmap font hiển thị ở (d)."
+                 % _font.lang_name(target_lang)],
+            {"atlases": 0, "confirmed": 0, "unknown": 0,
+             "used_vietnamese": 0, "missing_used": 0,
+             "rescued_dynamic": 0, "rescued_fallback": 0,
+             "target_lang": target_lang})
+    if not used:
+        return _check(
+            CHECK_ATLAS_GLYPHS, "Chữ Việt trong atlas font game", "pass",
+            "Bản dịch không dùng chữ Việt nào trong bộ 142 mục — không cần kiểm atlas.",
+            [], [],
+            {"atlases": 0, "confirmed": 0, "unknown": 0,
+             "used_vietnamese": 0, "missing_used": 0,
+             "rescued_dynamic": 0, "rescued_fallback": 0,
+             "target_lang": target_lang})
+    supplied = [f for f in (display_fonts or [])]
+    if fonts is None and not supplied:
+        return _check(
+            CHECK_ATLAS_GLYPHS, "Chữ Việt trong atlas font game", "fail",
+            "Chưa quét được font trong game nên không biết game có dùng atlas TMP không.",
+            [{"kind": "no_fonts",
+              "message_vi": "Chưa quét được font trong file gốc nên không biết game có dùng atlas TMP không — chưa kiểm được chữ Việt có glyph trong atlas không. Hãy quét font game hoặc chỉ định font hiển thị."}],
+            [], {"atlases": 0, "confirmed": 0, "unknown": 0,
+                 "used_vietnamese": len(used), "missing_used": 0,
+                 "rescued_dynamic": 0, "rescued_fallback": 0,
+                 "target_lang": target_lang})
+    tmp = [f for f in (fonts or [])
+           if f.get("kind") == "tmp_font_asset"]
+    if not tmp:
+        if fonts is None:
+            # Chua quet font game (vd Mod job chi truyen font hien thi)
+            # — khong khang dinh game khong co TMP, chi ghi la chua
+            # biet; font hien thi da chi dinh quyet dinh nen van PASS.
+            return _check(
+                CHECK_ATLAS_GLYPHS, "Chữ Việt trong atlas font game", "pass",
+                "Đã chỉ định font hiển thị nên atlas game chỉ tham khảo (chưa quét font trong game nên không liệt kê atlas).",
+                [], ["Chưa quét font trong game nên không biết game có dùng atlas TMP không — cổng kết luận theo font hiển thị đã chỉ định."],
+                {"atlases": 0, "confirmed": 0, "unknown": 0,
+                 "used_vietnamese": len(used), "missing_used": 0,
+                 "rescued_dynamic": 0, "rescued_fallback": 0,
+                 "target_lang": target_lang})
+        return _check(
+            CHECK_ATLAS_GLYPHS, "Chữ Việt trong atlas font game", "pass",
+            "Game không dùng TMP_FontAsset — chữ hiển thị do cmap font quyết định, đã kiểm ở (d).",
+            [], [],
+            {"atlases": 0, "confirmed": 0, "unknown": 0,
+             "used_vietnamese": len(used), "missing_used": 0,
+             "rescued_dynamic": 0, "rescued_fallback": 0,
+             "target_lang": target_lang})
+    # Tier 3 tang (chi de biet dynamic_rescue + fallback): dung bao cao
+    # truyen vao neu co, khong thi tu xay tu danh sach font tho.
+    tiers = []
+    if font_check is not None:
+        tiers = font_check.get("tiers") or []
+    else:
+        try:
+            from sdk import font_check as _fc
+            tiers = _fc.build_gate_report(fonts, target_lang).get("tiers") or []
+        except Exception:  # noqa: BLE001 - bao cao phu, loi thi bo
+            tiers = []
+    tier_by_pid = {}
+    tier_by_name = {}
+    for t in tiers:
+        if t.get("path_id") is not None:
+            tier_by_pid[t["path_id"]] = t
+        if t.get("name"):
+            tier_by_name[t["name"]] = t
+    cmap_by_pid = {}
+    for f in (fonts or []):
+        if (f.get("kind") in ("unity_font", "ttf", "otf", "ttc")
+                and f.get("path_id") is not None):
+            cmap_by_pid[f["path_id"]] = f
+    tmp_by_pid = {f.get("path_id"): f for f in tmp
+                  if f.get("path_id") is not None}
+    failures: List[Dict[str, Any]] = []
+    warnings: List[str] = []
+    details: List[Dict[str, Any]] = []
+    confirmed = 0
+    unknown = 0
+    unknown_names: List[str] = []
+    n_missing = 0
+    n_dyn = 0
+    n_fb = 0
+    for f in tmp:
+        name = f.get("name") or "?"
+        missing = f.get("missing_codepoints")
+        known = (f.get("status") in ("full", "partial")
+                 and f.get("confirmed", True)
+                 and not f.get("atlas_unknown")
+                 and missing is not None)
+        if not known:
+            unknown += 1
+            unknown_names.append(name)
+            details.append({"name": name, "status": "unknown",
+                            "population_label": f.get("population_label"),
+                            "missing_used_chars": [],
+                            "rescued_dynamic_chars": [],
+                            "rescued_fallback_chars": [],
+                            "still_missing_chars": []})
+            continue
+        confirmed += 1
+        missing_used = sorted(cp for cp in set(missing) if cp in used_set)
+        if not missing_used:
+            details.append({"name": name, "status": "covered",
+                            "population_label": f.get("population_label"),
+                            "missing_used_chars": [],
+                            "rescued_dynamic_chars": [],
+                            "rescued_fallback_chars": [],
+                            "still_missing_chars": []})
+            continue
+        tier = (tier_by_pid.get(f.get("path_id"))
+                or tier_by_name.get(name) or {})
+        dyn_ok = bool((tier.get("atlas") or {}).get("dynamic_rescue")
+                      is True)
+        src = f.get("source_font_file") or {}
+        src_entry = (cmap_by_pid.get(src.get("path_id"))
+                     if src.get("path_id") else None)
+        src_missing = (set(src_entry.get("missing_codepoints") or [])
+                       if src_entry is not None else None)
+        fb_atlases = []
+        for e in (f.get("fallback_entries") or []):
+            if not isinstance(e, dict):
+                continue
+            tgt = tmp_by_pid.get(e.get("path_id"))
+            if (tgt is not None and tgt.get("status") in ("full", "partial")
+                    and tgt.get("confirmed", True)
+                    and not tgt.get("atlas_unknown")
+                    and tgt.get("missing_codepoints") is not None):
+                fb_atlases.append(tgt)
+        rescued_dyn: List[int] = []
+        rescued_fb: List[int] = []
+        still: List[int] = []
+        for cp in missing_used:
+            if dyn_ok and (src_missing is None or cp not in src_missing):
+                rescued_dyn.append(cp)
+            elif any(cp not in set(a.get("missing_codepoints") or [])
+                     for a in fb_atlases):
+                rescued_fb.append(cp)
+            else:
+                still.append(cp)
+        n_dyn += len(rescued_dyn)
+        n_fb += len(rescued_fb)
+        n_missing += len(still)
+        det = {"name": name, "status": "covered" if not still else "missing",
+               "population_label": f.get("population_label"),
+               "missing_used_chars": [chr(cp) for cp in missing_used],
+               "rescued_dynamic_chars": [chr(cp) for cp in rescued_dyn],
+               "rescued_fallback_chars": [chr(cp) for cp in rescued_fb],
+               "still_missing_chars": [chr(cp) for cp in still]}
+        details.append(det)
+        if supplied:
+            if still or rescued_dyn or rescued_fb:
+                warnings.append(
+                    "Atlas %r thiếu %d chữ Việt đang dùng (%s)%s — chỉ tham khảo vì đã chỉ định font hiển thị."
+                    % (name, len(missing_used),
+                       " ".join(det["missing_used_chars"][:10]),
+                       ("; Dynamic có thể sinh thêm %d chữ [HYPOTHESIS]"
+                        % len(rescued_dyn)) if rescued_dyn else ""))
+            continue
+        if rescued_dyn:
+            warnings.append(
+                "Atlas %r: Dynamic có thể sinh thêm %d chữ Việt đang dùng (%s) — [HYPOTHESIS, chưa chạy thử game thật]."
+                % (name, len(rescued_dyn),
+                   " ".join(det["rescued_dynamic_chars"][:10])))
+        if rescued_fb:
+            warnings.append(
+                "Atlas %r: %d chữ Việt đang dùng được cứu bởi font fallback (%s)."
+                % (name, len(rescued_fb),
+                   " ".join(det["rescued_fallback_chars"][:10])))
+        if still:
+            label = f.get("population_label")
+            hint = ""
+            if label == "Static":
+                hint = " Atlas Static — không sinh thêm glyph khi chạy."
+            elif label == "Dynamic":
+                hint = (" Atlas Dynamic nhưng chưa xác nhận cứu được "
+                        "(thiếu font nguồn hoặc atlas đã đầy).")
+            failures.append({
+                "font": name, "kind": "atlas_missing_glyph",
+                "missing_chars": det["still_missing_chars"],
+                "message_vi": "Atlas %r thiếu %d chữ Việt dùng trong bản dịch mà không cứu được: %s.%s Thêm TMP_FontAsset fallback tiếng Việt hoặc bake lại atlas đủ 134 chữ."
+                              % (name, len(still),
+                                 " ".join(det["still_missing_chars"][:10]),
+                                 hint)})
+    if unknown_names:
+        warnings.append(
+            "%d atlas TMP chưa xác nhận được (%s) — chưa biết chữ Việt có glyph trong đó không; cổng chỉ kết luận theo %d atlas đã xác nhận."
+            % (unknown, ", ".join(unknown_names[:5]), confirmed))
+    if confirmed == 0 and tmp:
+        failures.append({
+            "kind": "atlas_unknown",
+            "message_vi": "Game có %d TMP_FontAsset nhưng không xác nhận được atlas nào (layout cũ/chưa đọc được bảng ký tự) — chưa kiểm được chữ Việt có glyph trong atlas không. Hãy chỉ định font hiển thị hoặc bake lại atlas." % len(tmp)})
+    status = "fail" if failures else "pass"
+    if supplied:
+        summary = ("Đã chỉ định font hiển thị nên atlas game chỉ tham khảo: %d atlas TMP đã kiểm, %d chữ Việt đang dùng bị thiếu ở atlas game (xem cảnh báo)."
+                   % (len(tmp), sum(len(d["missing_used_chars"]) for d in details))
+                   if any(d["missing_used_chars"] for d in details) else
+                   "Đã chỉ định font hiển thị nên atlas game chỉ tham khảo: %d atlas TMP đều phủ đủ chữ Việt đang dùng." % len(tmp))
+    elif status == "pass":
+        summary = ("%d atlas TMP đã xác nhận đều phủ đủ %d chữ Việt đang dùng%s."
+                   % (confirmed, len(used),
+                      (" (Dynamic có thể sinh thêm %d chữ [HYPOTHESIS])" % n_dyn) if n_dyn else ""))
+    else:
+        summary = "Atlas TMP thiếu chữ Việt đang dùng hoặc chưa xác nhận được atlas nào."
+    return _check(
+        CHECK_ATLAS_GLYPHS, "Chữ Việt trong atlas font game", status, summary,
+        failures, warnings,
+        {"atlases": len(tmp), "confirmed": confirmed, "unknown": unknown,
+         "used_vietnamese": len(used), "missing_used": n_missing,
+         "rescued_dynamic": n_dyn, "rescued_fallback": n_fb,
+         "target_lang": target_lang},
+        atlases=details)
 
 
 # ------------------------------------------- (f) atlas SDF tai tao (TMP)
@@ -1188,7 +1590,9 @@ def run_gate(source_bytes: bytes, *, source_name: str,
              allow_partial: bool = False,
              source_locale: str = "en",
              target_lang: str = "vi",
-             font_check: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+             font_check: Optional[Dict[str, Any]] = None,
+             fixed_length_keys: Any = None,
+             fixed_length_strict: bool = False) -> Dict[str, Any]:
     """Chay cong kiem tra day du, tra 1 verdict duy nhat.
 
     Khong ghi file nao. Loi dau vao (translations/source/allowlist sai
@@ -1196,7 +1600,12 @@ def run_gate(source_bytes: bytes, *, source_name: str,
     noi dung file (ma hoa, khong doc duoc don vi) thi tra verdict
     FAIL kem ly do, khong raise — cong luon tra verdict khi dau vao
     hop le. font_check: bao cao font 3 buoc da enrich (sdk/font_check)
-    — chi thong tin trong font_check_3step, khong doi verdict."""
+    — chi thong tin trong font_check_3step, khong doi verdict.
+    fixed_length_keys: key thuoc duong ghi do dai co dinh (vd literal
+    IL2CPP) — ban dich dai hon goc thi check (f) FAIL (too_long);
+    fixed_length_strict=True thi lech nao cung FAIL (length_must_match,
+    kieu v39). Khong khai bao thi (f) chi canh bao key dai hon."""
+
     _validate_kv(translations, "translations")
     if not translations:
         raise ValueError("translations phải là JSON object không rỗng "
@@ -1210,7 +1619,7 @@ def run_gate(source_bytes: bytes, *, source_name: str,
     lim = limits or Limits()
     be = backend or _u.UnityBackend("NATIVE")
 
-    def _prog(done: int, total: int = 5) -> None:
+    def _prog(done: int, total: int = 6) -> None:
         if progress_fn is not None:
             try:
                 progress_fn(done, total)
@@ -1287,6 +1696,20 @@ def run_gate(source_bytes: bytes, *, source_name: str,
                                   target_lang=target_lang,
                                   font_check=font_check)
     _prog(5)
+
+    # (f) do dai + (g) atlas chu Viet: thuan tuy, khong mo phong — chay
+    # ca khi (a)/(b) da FAIL (khong doi verdict FAIL san, chi lam ro
+    # them ly do). (g) dung bao cao 3 tang goc truyen vao (da enrich,
+    # neu co); khong dung ban xay tu muc font da chuan hoa trong (d)
+    # vi ban do mat population_label/source_font_file/fallback.
+    check_f = check_translation_length(
+        source_texts, translations,
+        fixed_length_keys=fixed_length_keys,
+        strict=fixed_length_strict)
+    check_g = check_vietnamese_atlas_glyphs(
+        translations, fonts, display_fonts=display_fonts,
+        target_lang=target_lang, font_check=font_check)
+    _prog(6)
 
     # (c) diffverify.
     unmatched_by_reason: Dict[str, int] = {}
@@ -1426,7 +1849,8 @@ def run_gate(source_bytes: bytes, *, source_name: str,
             [{"kind": "skipped_simulation", "message_vi": _skip_msg}],
             check_e["warnings"], check_e["counts"])
 
-    checks = [check_a, check_b, check_c, check_d, check_e]
+    checks = [check_a, check_b, check_c, check_d, check_e, check_f,
+              check_g]
     verdict = "PASS" if all(c["status"] == "pass" for c in checks) else "FAIL"
     errors: List[str] = []
     for chk in checks:

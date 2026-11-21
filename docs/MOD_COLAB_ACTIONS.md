@@ -107,6 +107,29 @@ thì **dừng lại, không ép** — đó là kết quả đúng, xem `gate-rep
   IPA; các check khác đều ĐẠT, 35,7 giây) — nên chế độ quét không dùng
   được cho 9K. Chọn "scan" trong panel khi game có font đọc được và muốn
   kiểm đúng font của game.
+- **Cổng v2 — thêm 2 kiểm tra (F5, 22/11).** Cổng giờ có 7 kiểm tra
+  (`GATE_VERSION` 2): (f) **độ dài bản dịch** — key dài hơn gốc theo
+  byte chỉ bị từ chối khi thuộc đường ghi độ dài cố định (literal
+  IL2CPP: dài hơn thì `too_long`, chế độ strict thì lệch nào cũng
+  `length_must_match`); đường ghi rebuild cho phép dài hơn nên không
+  khai báo key cố định thì chỉ cảnh báo, không chặn. (g) **chữ Việt
+  trong atlas TMP** — chữ Việt đang dùng phải có glyph trong atlas SDF
+  của font TMP game sẽ dùng (không chỉ cmap TTF): atlas thiếu thì cứu
+  bằng Dynamic (cần sức chứa + font nguồn vẽ được chữ đó, luôn kèm
+  [HYPOTHESIS]) hoặc TMP fallback; đã chỉ định font hiển thị thì font
+  đó quyết định, atlas game chỉ tham khảo. Đo thật 22/11 (gate-only):
+  9K donor PASS (74–119 giây, RAM ~521 MB), 9K scan FAIL fail-closed
+  (không quét được font game), EK2 scan FAIL (100 đơn vị E_ENCRYPTED,
+  1344 key chưa ép, 116 giây).
+- **Báo cáo từng bước (F5).** `summary.json` có thêm `steps` (5 bước
+  gate/apply/repack/pressed/artifact): mỗi bước ghi rõ file nào **đã
+  ghi** (tên + byte) và mục nào **bị từ chối + vì sao** (đơn vị bị từ
+  chối, key chưa ép, key quá dài, atlas thiếu glyph, file vượt ngân
+  sách artifact). Bước chưa chạy ghi `skipped` kèm lý do (cổng chưa
+  đạt / chỉ chạy cổng / không bật repack). Script Actions
+  (`.github/scripts/mod_large.py`) in tóm tắt từng bước ra log. Danh
+  sách từ chối cắt ở 50 mục đầu, có ghi chú khi tổng thật lớn hơn số
+  liệt kê (cổng cắt unmatched ở 200 mục).
 - **Drive quota tải công khai:** file bị tải quá nhiều gần đây thì Google
   chặn ("Too many users...") tối đa 24 giờ — bước tải fail với thông báo
   riêng, chỉ cần chờ rồi bấm chạy lại (không phải lỗi workflow).
@@ -145,7 +168,11 @@ plan hay luồng nhập kết quả — chúng không gắn Unity.
 
 - `pb3/sdk/mod_job.py` — runner (`run_mod_job`, ngân sách artifact,
   interface engine `ModEngine`/`ENGINES`/`get_engine`,
-  `summary["timings"]` từng bước, không ghi thừa zip).
+  `summary["timings"]` từng bước, không ghi thừa zip,
+  `summary["steps"]` báo cáo từng bước — `build_step_report`).
+- `pb3/sdk/gate.py` — cổng (`run_gate`, `GATE_VERSION` 2, 7 kiểm tra:
+  (f) `check_translation_length`, (g)
+  `check_vietnamese_atlas_glyphs`).
 - `pb3/sdk/colab_job.py` — schema Mod job (`kind="mod"`, `build_mod_job`,
   trường `engine`, `JOB_ENGINES`)
   + manifest Mod (`build_mod_manifest`, `write_mod_manifest`).
