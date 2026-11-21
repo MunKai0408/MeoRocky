@@ -93,13 +93,15 @@ thì **dừng lại, không ép** — đó là kết quả đúng, xem `gate-rep
     chỉ qua Colab.
   - DST 1,69 GB: không trả được qua Actions; ngoài ra DST không phải
     Unity nên ngoài phạm vi Mod job.
-- **EK2 không ép được — bundle mã hóa.** EK2 v0.0.18: cổng FAIL vì
-  100/100 đơn vị bị từ chối `E_ENCRYPTED` (bundle mã hóa, flag 0x243),
-  0 đơn vị ép được, 1344 key unmatched (đo thật, cổng 46,5 giây).
-  Runner dừng lại đúng thiết kế, vẫn trả `gate-report.json` + manifest
-  về web. Muốn ép EK2 cần file IPA mà bundle đã giải mã. Trích xuất
-  vẫn được (en.json 1344 key) — chỉ bước ép là không làm được trên
-  file này. Đây là giới hạn của file game, không phải lỗi tool.
+- **EK2 — bundle KHÔNG còn bị từ chối mã hoá (F3, 22/11).** EK2 v0.0.18:
+  100/100 bundle flag 0x243 KHÔNG phải mã hoá — revision "0.0.0" bị xoá
+  nên bit 0x200 là cờ padding (cờ mới); bước liệt kê đơn vị của cổng trả
+  112 đơn vị (105 bundle + 7 .assets), refused 0 (đo thật). Kết luận cũ
+  ("cổng FAIL vì 100/100 đơn vị bị từ chối `E_ENCRYPTED`, 46,5 giây") chỉ
+  đúng TRƯỚC fix F3. Cổng ĐẦY ĐỦ trên EK2 hiện chưa đo xong — probe
+  gate_only timeout 1800s dưới tải (22/11) — nên round-trip EK2 vẫn chờ
+  đo lại trên máy rỗi; en.json cũ (1344 key) chỉ gồm text trích được lúc
+  bundle còn bị từ chối, nay đã lỗi thời.
 - **Font kiểm (check d):** mặc định dùng font Be Vietnam Pro đi kèm trong
   repo (`display_font="donor"`, giống chế độ "Font đi kèm" trên web).
   Đã đo thật: cổng 9K 2252 key ở chế độ quét (scan) **FAIL duy nhất check
