@@ -467,6 +467,15 @@ class CapsPoTest(unittest.TestCase):
         print("\n[DST po_write] apply %.1fs, output %d B"
               % (dt, os.path.getsize(out_path)))
 
+    # Tran timeout rieng cho test nay (run_tests.py: mac dinh 180s):
+    # [ĐÃ ĐO THẬT] chay rieng 222,5s (apply 168,1s + doc/parse lai .po
+    # 87.828 entry 2 lan + doi chieu toan bo) tren DST that 1,69 GB —
+    # chi cham, khong phai loi that — nen 180s khong du. Dat 1800s
+    # (cung muc tien le test_mod_job.py::test_round_trip_* dung cho
+    # round-trip PB3 ~16 phut); tran la gioi han tren, khong phai muc
+    # tieu thoi gian. Chi ap cho method nay, khong nang tran chung.
+    test_po_write_dst_real.timeout_s = 1800
+
 
 if __name__ == "__main__":
     unittest.main()
