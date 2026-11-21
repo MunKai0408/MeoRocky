@@ -320,19 +320,24 @@ def il2cpp_table(path, entry=None, include_single_words=None):
         return _err(e)
 
 
-def patch_il2cpp_literals(path, entry, table_json, manifest_json=None):
-    """Ép bản dịch literals VÀO global-metadata.dat (vá tại chỗ).
+def patch_il2cpp_literals(path, entry, table_json, manifest_json=None,
+                          relayout=False):
+    """Ép bản dịch literals VÀO global-metadata.dat.
 
     table_json: dict {LIT_NNNNNN: text_đã_dịch} (lấy từ output tab Dịch
     sau khi dịch il2cpp-literals.json). manifest_json: manifest kèm
     theo bảng (để verify text gốc từng key trước khi vá — sai file
-    metadata thì bỏ qua key đó, không vá mù).
-    Vá tại chỗ, fail-closed từng literal (v31: bản dịch <= gốc theo
-    byte; v39: phải đúng bằng byte; dài hơn thì bỏ qua kèm lý do) rồi
-    VERIFY bằng cách đọc lại toàn bộ literal. File gốc KHÔNG bị ghi đè
-    (xác minh sha sau khi chạy); metadata đã vá ghi ra
+    metadata thì bỏ qua key đó, không vá mù). relayout: True thì dựng
+    lại blob literal (dời các section sau blob) nên bản dịch DÀI HƠN
+    gốc vẫn ghi được ở cả v31 lẫn v39; False (mặc định, giữ hành vi
+    cũ) thì vá tại chỗ, fail-closed từng literal (v31: bản dịch <= gốc
+    theo byte; v39: phải đúng bằng byte; dài hơn thì bỏ qua kèm lý
+    do) rồi VERIFY bằng cách đọc lại toàn bộ literal. File gốc KHÔNG
+    bị ghi đè (xác minh sha sau khi chạy); metadata đã vá ghi ra
     /tmp/pb3out/global-metadata.patched.dat + sidecar JSON, trả `dest`
-    để worker gửi file về tải (như mọi op có output).
+    để worker gửi file về tải (như mọi op có output). Game có chạy
+    được với metadata re-layout không là [HYPOTHESIS] — chưa test trên
+    máy thật, chỉ verify được cấu trúc file.
     """
     try:
         from sdk import il2cpp as il2cpp_sdk
@@ -363,12 +368,16 @@ def patch_il2cpp_literals(path, entry, table_json, manifest_json=None):
                 raise ValueError("manifest phải là object JSON.")
         data, source_label = il2cpp_sdk.read_metadata_bytes(
             path, entry=(str(entry) if entry else None))
+        if isinstance(relayout, str):
+            relayout = relayout.strip().lower() in (
+                "1", "true", "yes", "on")
+        relayout = bool(relayout)
         # sha FILE GỐC (cả IPA — để sidecar/repack đối chiếu) khác sha
         # MEMBER metadata (chỉ để ghi nhận): đừng lẫn 2 cái.
         file_sha = hashlib.sha256(open(path, "rb").read()).hexdigest()
         meta_sha = hashlib.sha256(data).hexdigest()
         patched, report = il2cpp_sdk.apply_literal_patches(
-            data, table, manifest)
+            data, table, manifest, relayout=relayout)
         out_dir = "/tmp/pb3out"
         os.makedirs(out_dir, exist_ok=True)
         dest = os.path.join(out_dir, il2cpp_sdk.PATCHED_FILE)
@@ -386,6 +395,8 @@ def patch_il2cpp_literals(path, entry, table_json, manifest_json=None):
             "metadata_version": report["metadata_version"],
             "patched_count": report["patched_count"],
             "skipped_count": report["skipped_count"],
+            "mode": report.get("mode", "inplace"),
+            "size_delta": report.get("size_delta", 0),
         }
         with open(os.path.join(out_dir, il2cpp_sdk.PATCHED_SIDECAR),
                   "w", encoding="utf-8") as fh:
@@ -400,14 +411,20 @@ def patch_il2cpp_literals(path, entry, table_json, manifest_json=None):
             "patched_sha256": patched_sha,
             "dest": dest, "filename": il2cpp_sdk.PATCHED_FILE,
             "patched_bytes": len(patched),
-            "note": ("Đã vá %d/%d key tại chỗ (verify đọc lại đạt). "
-                     "%d key chưa vá được — xem skipped/key_results: "
-                     "bản dịch dài hơn gốc (v31) hoặc không đúng bằng "
-                     "byte (v39) thì không vá được tại chỗ; muốn vá cả "
-                     "những key đó phải re-layout toàn bộ blob literal "
-                     "(chưa hỗ trợ)." % (report["patched_count"],
-                                         len(table),
-                                         report["skipped_count"])),
+            "note": (("Đã vá %d/%d key bằng re-layout (file %d -> %d "
+                      "byte, %+d byte; %d section sau blob dời nguyên "
+                      "vẹn). Game có chạy được với metadata re-layout "
+                      "không thì CHƯA kiểm chứng trên máy thật — chỉ "
+                      "verify được cấu trúc file. "
+                      % (report["patched_count"], len(table), len(data),
+                         len(patched), report.get("size_delta", 0),
+                         report.get("sections_shifted", 0)))
+                     if relayout else
+                     ("Đã vá %d/%d key tại chỗ (verify đọc lại đạt). "
+                      % (report["patched_count"], len(table))))
+                    + ("%d key chưa vá được — xem key_results từng key "
+                       "kèm lý do (không giả vờ ghi được)."
+                       % report["skipped_count"]),
         })
         return json.dumps(report, ensure_ascii=False)
     except Exception as e:  # noqa: BLE001

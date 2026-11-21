@@ -45,7 +45,8 @@ import struct
 from core.errors import PB3Error
 
 __all__ = ["IL2CPP_MAGIC", "SUPPORTED_VERSIONS", "read_header",
-           "iter_literals", "extract_literals", "LABEL"]
+           "iter_literals", "extract_literals", "relayout_literals",
+           "LABEL"]
 
 LABEL = "il2cpp-literals"
 
@@ -385,12 +386,26 @@ def extract_literals(stream_or_path, source, min_len=4,
 #     bảng; dài hơn thì không ghi được (lý do too_long).
 #   * v39 (delta): độ dài suy ra từ index kế tiếp nên chỉ ghi được khi
 #     đúng bằng byte; ngắn/dài hơn đều không ghi được (length_must_match).
-#   Re-layout toàn bộ blob literal (để dịch dài hơn vẫn ghi được) cần
-#   dời mọi section sau blob + sửa mọi offset header — KHÔNG có runtime
-#   Unity để kiểm chứng game còn chạy nên KHÔNG làm (ghi rõ follow-up).
+# - RE-LAYOUT toàn bộ blob literal (relayout_literals, F1): ghi được bản
+#   dịch DÀI HƠN gốc ở cả v31 lẫn v39 — dựng lại blob mới (mọi literal
+#   xếp theo đúng thứ tự index, literal đã vá mang byte mới), dời NGUYÊN
+#   VẸN mọi section sau blob đi delta = span mới - span cũ, sửa dataSize
+#   + offset của các section đó trong header, giữ căn lề 4 byte. Xem
+#   ghi chú đầu mục re-layout: khảo sát header v31/v39, quy tắc
+#   dataSize theo version, và verify 5 mục sau khi dựng lại.
+# - Phương án thay thế đã cân nhắc (KHÔNG làm): (a) viết tắt/bảng rút
+#   gọn theo glossary — ĐÁNH ĐỔI: bản dịch bị bóp nghĩa, phải duy trì
+#   glossary tay từng game, vẫn kẹt khi từ rút gọn còn dài hơn gốc;
+#   (b) cắt ngắn (truncate) — ĐÁNH ĐỔI: mất nghĩa, câu dở dang; (c) chỉ
+#   vá tại chỗ — ĐÁNH ĐỔI: phần lớn chuỗi tiếng Việt (dài hơn tiếng Anh)
+#   ở lại "chưa ghi được". Re-layout là phương án duy nhất giữ nguyên
+#   nghĩa bản dịch; rủi ro còn lại là game có chạy được với metadata đã
+#   dời section không — KHÔNG có runtime Unity để kiểm chứng nên đây là
+#   [HYPOTHESIS] cho tới khi test trên máy thật (xem báo cáo F1).
 # - Verify sau khi vá: đọc lại TOÀN BỘ literal từ bytes đã vá — literal
 #   đã vá phải đúng text mới, literal còn lại phải giống hệt gốc; header
-#   (version, table/data offsets) không đổi; kích thước file không đổi.
+#   (version, table/data offsets) không đổi; kích thước file không đổi
+#   (vá tại chỗ) hoặc đổi đúng delta (re-layout).
 
 TABLE_FILE = "il2cpp-literals.json"
 MANIFEST_FILE = "il2cpp-literals.manifest.json"
@@ -523,39 +538,19 @@ def _read_literal_entries(fh, header):
     return out
 
 
-def patch_literals(data, patches):
-    """Vá literal IL2CPP TẠI CHỖ trong bytes metadata.
+def _effective_patches(before, patches):
+    """Gắn lại whitespace 2 đầu của literal gốc vào bản dịch.
 
-    patches: {literal_index (int): text_mới (str)}. Trả
-    (patched_bytes, report) với report = {metadata_version,
-    literals_total, requested, patched: [{index, old_len, new_len}],
-    skipped: [{index, reason}], verified: True}.
-
-    Quy tắc (xem ghi chú đầu mục): v31 ghi được khi bản dịch ngắn hơn
-    hoặc bằng gốc (byte); v39 chỉ khi đúng bằng byte. Literal nào không
-    vá được thì bỏ qua kèm lý do, KHÔNG raise cả đợt. Verify sau khi vá
-    bằng cách đọc lại toàn bộ literal: đã vá đúng text mới, còn lại
-    giống hệt gốc, header + kích thước file không đổi — sai thì raise
-    E_VERIFY_FAILED (không trả bytes đã vá).
+    Bảng dịch giữ text ĐÃ STRIP (extract_literals strip để dịch sạch)
+    nên bản dịch chỉ thay phần text hiển thị; khi vá, gắn lại whitespace
+    gốc của literal đó để độ dài so theo text đã strip (cái user thấy
+    trong bảng) và file giữ nguyên layout. Không làm vậy thì literal có
+    thừa whitespace 2 đầu sẽ không bao giờ vá được ở v39 (bản dịch
+    19 byte != gốc 20 byte — vd 9K LIT_000042), dù bản dịch đúng
+    bằng text đã strip. Literal không có whitespace thừa thì đây
+    là no-op (prefix/suffix rỗng). Dùng chung cho vá tại chỗ và
+    re-layout để 2 đường cho cùng kết quả.
     """
-    if not isinstance(data, (bytes, bytearray)):
-        raise ValueError("data phải là bytes của global-metadata.dat.")
-    data = bytes(data)
-    fh = io.BytesIO(data)
-    header = read_header(fh)
-    before = {}
-    for idx, text, _off, _ln in iter_literals(fh, header):
-        before[idx] = text
-    entries = _read_literal_entries(fh, header)
-    # Giữ whitespace 2 đầu của literal gốc (layout): bảng dịch giữ text
-    # ĐÃ STRIP (extract_literals strip để dịch sạch) nên bản dịch chỉ
-    # thay phần text hiển thị; khi vá, gắn lại whitespace gốc của
-    # literal đó để độ dài so theo text đã strip (cái user thấy trong
-    # bảng) và file giữ nguyên layout. Không làm vậy thì literal có
-    # thừa whitespace 2 đầu sẽ không bao giờ vá được ở v39 (bản dịch
-    # 19 byte != gốc 20 byte — vd 9K LIT_000042), dù bản dịch đúng
-    # bằng text đã strip. Literal không có whitespace thừa thì đây
-    # là no-op (prefix/suffix rỗng).
     eff_patches = {}
     for _idx, _new in patches.items():
         if isinstance(_idx, int) and not isinstance(_idx, bool) \
@@ -566,7 +561,42 @@ def patch_literals(data, patches):
             eff_patches[_idx] = _pre + _new.strip() + _suf
         else:
             eff_patches[_idx] = _new
-    patches = eff_patches
+    return eff_patches
+
+
+def patch_literals(data, patches, relayout=False):
+    """Vá literal IL2CPP trong bytes metadata.
+
+    patches: {literal_index (int): text_mới (str)}. Trả
+    (patched_bytes, report) với report = {metadata_version,
+    literals_total, requested, patched: [{index, old_len, new_len}],
+    skipped: [{index, reason}], verified: True}.
+
+    relayout=False (mặc định): vá TẠI CHỖ như trước — v31 ghi được khi
+    bản dịch ngắn hơn hoặc bằng gốc (byte); v39 chỉ khi đúng bằng byte.
+    relayout=True: dựng lại toàn bộ blob literal (relayout_literals)
+    nên bản dịch DÀI HƠN gốc vẫn ghi được ở cả 2 version; file đổi
+    kích thước đúng delta, mọi section sau blob dời nguyên vẹn.
+
+    Quy tắc (vá tại chỗ): v31 ghi được khi bản dịch ngắn hơn
+    hoặc bằng gốc (byte); v39 chỉ khi đúng bằng byte. Literal nào không
+    vá được thì bỏ qua kèm lý do, KHÔNG raise cả đợt. Verify sau khi vá
+    bằng cách đọc lại toàn bộ literal: đã vá đúng text mới, còn lại
+    giống hệt gốc, header + kích thước file không đổi (vá tại chỗ) — sai
+    thì raise E_VERIFY_FAILED (không trả bytes đã vá).
+    """
+    if relayout:
+        return relayout_literals(data, patches)
+    if not isinstance(data, (bytes, bytearray)):
+        raise ValueError("data phải là bytes của global-metadata.dat.")
+    data = bytes(data)
+    fh = io.BytesIO(data)
+    header = read_header(fh)
+    before = {}
+    for idx, text, _off, _ln in iter_literals(fh, header):
+        before[idx] = text
+    entries = _read_literal_entries(fh, header)
+    patches = _effective_patches(before, patches)
     out = bytearray(data)
     patched = []
     skipped = []
@@ -657,6 +687,7 @@ def patch_literals(data, patches):
                        "tập literal đọc được đổi sau khi vá — không trả "
                        "bytes đã vá", where="il2cpp")
     return patched_bytes, {
+        "mode": "inplace",
         "metadata_version": int(header.version),
         "literals_total": int(header.entry_count),
         "requested": len(patches),
@@ -666,13 +697,375 @@ def patch_literals(data, patches):
     }
 
 
-def apply_literal_patches(data, table, manifest=None):
+# ---------------------------------------------------------------------------
+# Re-layout blob literal (F1): ghi bản dịch DÀI HƠN gốc
+# ---------------------------------------------------------------------------
+# Khảo sát header global-metadata.dat trên file thật [ĐÃ ĐO THẬT]:
+# - Cả v31 (Tom, 7.147.868 B) lẫn v39 (9K, 20.881.624 B) đều có đúng 31
+#   section xếp LIỀN NHAU từ sau header tới cuối file, theo đúng thứ tự
+#   (stringLiterals, stringLiteralData, strings, events, properties,
+#   methods, parameterDefaultValues, fieldDefaultValues,
+#   fieldAndParameterDefaultValueData, fieldMarshaledSizes, parameters,
+#   fields, genericParameters, genericParameterConstraints,
+#   genericContainers, nestedTypes, interfaces, vtableMethods,
+#   interfaceOffsets, typeDefinitions, images, assemblies, fieldRefs,
+#   referencedAssemblies, attributesInfo, attributeTypes,
+#   attributeTypeRanges, unresolvedVirtualCallParameterTypes,
+#   unresolvedVirtualCallParameterRanges, windowsRuntimeTypeNames,
+#   exportedTypeDefinitions). Section cuối kết thúc đúng EOF cả 2 file.
+# - v31: mỗi section là cặp (offset, size) 8 byte trong header 256 byte;
+#   mọi section bắt đầu đúng cuối section trước (mọi cuối đều căn 4).
+# - v39: mỗi section là bộ ba (offset, size, count) 12 byte trong header
+#   380 byte; section bắt đầu ở vị trí căn 4 tiếp theo (blob literal
+#   kết thúc 1.025.867, strings bắt đầu 1.025.868 — 1 byte đệm NUL;
+#   strings kết thúc 3.904.551, events bắt đầu 3.904.552 — 1 byte đệm
+#   NUL); count của strings = 153.447 đúng số chuỗi không rỗng đếm được
+#   trong blob, count của bảng cố định = size / kích thước entry
+#   (vd events 10.296 / 429 = 24 byte, typeDefinitions 1.952.420 /
+#   23.810 = 82 byte).
+# - Blob literal: Tom 298.169/298.172 byte thuộc về literal nào đó (3
+#   byte cuối là đệm trong dataSize); 9K 912.343/912.343 byte phủ kín.
+#   Literal v31 xếp đơn điệu theo index, không chồng lấn; v39 delta
+#   đơn điệu, 2 literal rỗng (đầu + cuối, độ dài 0).
+# - dataSize theo version: v31 pad-inclusive (align4 nội dung — Tom
+#   298.172 = align4(298.169)); v39 exact (9K 912.343, cuối blob không
+#   căn 4). Re-layout GIỮ ĐÚNG quy ước từng version: v31 dataSize mới =
+#   align4(nội dung mới); v39 dataSize mới = đúng nội dung mới (vì độ
+#   dài literal cuối suy ra từ dataSize — pad-inclusive sẽ biến literal
+#   rỗng cuối thành "\x00").
+# - Vì sao phải dựng lại TOÀN BỘ blob (không nối thêm từng literal):
+#   v39 delta suy độ dài từ index kế tiếp nên 1 literal dời chỗ sẽ phá
+#   tính đơn điệu của bảng delta; v31 tuy có offset tường minh nhưng
+#   dựng lại toàn bộ cho 1 đường code duy nhất cho cả 2 version, verify
+#   giống hệt nhau. Đánh đổi: diff byte lớn hơn vá tại chỗ (mọi literal
+#   sau literal đầu tiên bị dài ra đều đổi offset) — verify 5 mục dưới
+#   chứng minh mọi byte khác đều đúng chỗ.
+# - An toàn của việc dời section: mọi tham chiếu trong các section sau
+#   blob đều là INDEX (index vào bảng khác / byte-offset tương đối so
+#   với đầu section strings của chính nó), không phải offset tuyệt đối
+#   trong file — nên dời NGUYÊN VẸN cả section giữ nguyên mọi tham
+#   chiếu; chỉ header (offset tuyệt đối) phải sửa. Đây là kết luận từ
+#   bố cục Il2CppDumper/libil2cpp + kiểm chứng byte (section sau blob
+#   giữ nguyên từng byte sau khi dời), KHÔNG phải bằng chứng runtime.
+# - GIỚI HẠN: re-layout CHỈ xác minh trên v31/v39. v24/v27/v29 tuy đọc
+#   được literal (cùng layout pairs) nhưng bố cục section chưa xác minh
+#   (v24 có thêm rgctx/metadata-usage theo version phụ) nên TỪ CHỐI rõ
+#   ràng thay vì đoán — fail-closed.
+# - Game còn chạy được với metadata đã dời section không: [HYPOTHESIS]
+#   cho tới khi test trên máy thật. Không có runtime Unity ở đây; bằng
+#   chứng mạnh nhất có được là verify 5 mục (đọc lại toàn bộ literal
+#   theo byte thô + section sau blob giống hệt từng byte + tiling
+#   header/file hợp lệ + header chỉ đổi đúng vùng cho phép).
+
+_SECTION_NAMES = (
+    "stringLiterals", "stringLiteralData", "strings", "events",
+    "properties", "methods", "parameterDefaultValues",
+    "fieldDefaultValues", "fieldAndParameterDefaultValueData",
+    "fieldMarshaledSizes", "parameters", "fields",
+    "genericParameters", "genericParameterConstraints",
+    "genericContainers", "nestedTypes", "interfaces",
+    "vtableMethods", "interfaceOffsets", "typeDefinitions",
+    "images", "assemblies", "fieldRefs", "referencedAssemblies",
+    "attributesInfo", "attributeTypes", "attributeTypeRanges",
+    "unresolvedVirtualCallParameterTypes",
+    "unresolvedVirtualCallParameterRanges",
+    "windowsRuntimeTypeNames", "exportedTypeDefinitions",
+)
+_RELAYOUT_VERSIONS = (31, 39)
+
+
+def _align4(n):
+    """Căn lên bội số 4 (mọi section metadata bắt đầu ở biên 4 byte)."""
+    return (n + 3) & ~3
+
+
+def _read_sections(data, header):
+    """Đọc + validate toàn bộ 31 section từ header metadata.
+
+    Trả list dict {name, offset, size, count, off_pos} (off_pos = vị
+    trí byte của field offset trong header, để ghi lại khi dời).
+    Raise E_UNSUPPORTED_FORMAT khi version chưa xác minh bố cục section
+    (chỉ v31/v39), E_CORRUPT khi section không xếp liền nhau / byte đệm
+    không phải NUL / section cuối không kết thúc đúng EOF.
+    """
+    if header.version not in _RELAYOUT_VERSIONS:
+        raise PB3Error(
+            "E_UNSUPPORTED_FORMAT",
+            "re-layout chỉ xác minh trên metadata v31/v39 (file này "
+            "v%d: bố cục section chưa xác minh — dùng vá tại chỗ thay "
+            "thế)" % header.version, where="il2cpp")
+    header_size = 256 if header.layout == "pairs" else 380
+    step = 8 if header.layout == "pairs" else 12
+    sections = []
+    for k, name in enumerate(_SECTION_NAMES):
+        base = 8 + step * k
+        if header.layout == "pairs":
+            off, size = struct.unpack_from("<ii", data, base)
+            count = None
+        else:
+            off, size, count = struct.unpack_from("<iii", data, base)
+        sections.append({"name": name, "offset": int(off),
+                         "size": int(size), "count": count,
+                         "off_pos": base})
+    if sections[0]["offset"] != header_size \
+            or sections[0]["size"] != header.table_size:
+        raise PB3Error("E_CORRUPT",
+                       "metadata v%d: bảng literal trong header section "
+                       "(%d+%d) không khớp bảng đã đọc (%d+%d)"
+                       % (header.version, sections[0]["offset"],
+                          sections[0]["size"], header.table_off,
+                          header.table_size), where="il2cpp")
+    if sections[1]["offset"] != header.data_off \
+            or sections[1]["size"] != header.data_size:
+        raise PB3Error("E_CORRUPT",
+                       "metadata v%d: blob literal trong header section "
+                       "(%d+%d) không khớp blob đã đọc (%d+%d)"
+                       % (header.version, sections[1]["offset"],
+                          sections[1]["size"], header.data_off,
+                          header.data_size), where="il2cpp")
+    prev_end = None
+    for sec in sections:
+        off, size = sec["offset"], sec["size"]
+        if off < 0 or size < 0:
+            raise PB3Error("E_CORRUPT",
+                           "metadata v%d: section %s offset/size âm "
+                           "(%d+%d)" % (header.version, sec["name"],
+                                        off, size), where="il2cpp")
+        if prev_end is not None:
+            want = _align4(prev_end)
+            if off != want:
+                raise PB3Error(
+                    "E_CORRUPT",
+                    "metadata v%d: section %s bắt đầu %d, chờ %d (cuối "
+                    "section trước căn 4) — bố cục không khớp mẫu đã "
+                    "xác minh, không dời" % (header.version,
+                                             sec["name"], off, want),
+                    where="il2cpp")
+            if any(data[prev_end:off]):
+                raise PB3Error(
+                    "E_CORRUPT",
+                    "metadata v%d: byte đệm trước section %s không phải "
+                    "NUL — bố cục không khớp mẫu đã xác minh"
+                    % (header.version, sec["name"]), where="il2cpp")
+        prev_end = off + size
+    if prev_end != len(data):
+        raise PB3Error("E_CORRUPT",
+                       "metadata v%d: section cuối kết thúc %d != kích "
+                       "thước file %d — bố cục không khớp mẫu đã xác "
+                       "minh" % (header.version, prev_end, len(data)),
+                       where="il2cpp")
+    return sections
+
+
+def relayout_literals(data, patches):
+    """Dựng lại blob literal để ghi bản dịch DÀI HƠN gốc (F1).
+
+    patches: {literal_index (int): text_mới (str)}. Trả
+    (new_bytes, report) với report = {mode: "relayout",
+    metadata_version, literals_total, requested,
+    patched: [{index, old_len, new_len, old_offset, new_offset}],
+    skipped: [{index, reason}], verified: True,
+    old_size, new_size, size_delta, blob_old_size, blob_new_size,
+    sections_shifted}.
+
+    Cách làm: blob mới = mọi literal xếp theo đúng thứ tự index
+    (literal đã vá mang byte mới, literal chưa vá + literal nhị phân
+    giữ nguyên từng byte); bảng literal viết lại toàn bộ (v31:
+    length+dataIndex; v39: delta offset tích lũy, giữ đơn điệu);
+    dataSize theo quy ước từng version (v31 align4, v39 exact);
+    mọi section sau blob dời nguyên vẹn đi delta, sửa offset của
+    chúng trong header, đệm NUL tới biên 4 byte. Entry count và count
+    của mọi section giữ nguyên (không thêm/bớt literal nào).
+
+    Fail-closed: version khác v31/v39, section không xếp liền nhau,
+    byte đệm không phải NUL, literal vượt blob -> raise rõ ràng
+    (E_UNSUPPORTED_FORMAT / E_CORRUPT), không trả bytes nửa vời.
+    Literal không vá được (index lạ, không phải chuỗi, gốc không đọc
+    được, unchanged) thì bỏ qua kèm lý do như vá tại chỗ. Verify 5
+    mục sau khi dựng (sai mục nào raise E_VERIFY_FAILED, không trả
+    bytes): (1) kích thước file = cũ + delta; (2) header đọc lại hợp
+    lệ, dataSize + offset các section sau blob đúng delta, count giữ
+    nguyên; (3) mọi section sau blob giống hệt từng byte với gốc
+    (chỉ dời chỗ); (4) mọi literal đọc lại theo byte thô đúng byte
+    mong muốn (đã vá = mới, còn lại = gốc, kể cả literal nhị phân);
+    (5) header chỉ đổi đúng vùng cho phép (bảng literal, field
+    dataSize, field offset các section sau blob).
+    """
+    if not isinstance(data, (bytes, bytearray)):
+        raise ValueError("data phải là bytes của global-metadata.dat.")
+    if not isinstance(patches, dict):
+        raise ValueError("patches phải là dict {literal_index: text}.")
+    data = bytes(data)
+    fh = io.BytesIO(data)
+    header = read_header(fh)
+    sections = _read_sections(data, header)
+    before = {}
+    for idx, text, _off, _ln in iter_literals(fh, header):
+        before[idx] = text
+    entries = _read_literal_entries(fh, header)
+    blob = data[header.data_off:header.data_off + header.data_size]
+    raw = []
+    for ln, off in entries:
+        if off < 0 or ln < 0 or off + ln > len(blob):
+            raise PB3Error("E_CORRUPT",
+                           "metadata v%d: literal vượt khỏi blob "
+                           "(offset %d + độ dài %d > %d)"
+                           % (header.version, off, ln, len(blob)),
+                           where="il2cpp")
+        raw.append(blob[off:off + ln])
+    eff = _effective_patches(before, patches)
+    new_parts = list(raw)
+    patched = []
+    skipped = []
+    for idx in sorted(eff, key=lambda x: str(x)):
+        new_text = eff[idx]
+        if not isinstance(idx, int) or isinstance(idx, bool) \
+                or idx < 0 or idx >= header.entry_count:
+            skipped.append({"index": idx,
+                            "reason": "index ngoài bảng literal"})
+            continue
+        if not isinstance(new_text, str):
+            skipped.append({"index": idx,
+                            "reason": "bản dịch không phải chuỗi"})
+            continue
+        old_len, old_off = entries[idx]
+        old_text = before.get(idx)
+        if old_text is None:
+            skipped.append({"index": idx,
+                            "reason": "literal gốc không đọc được "
+                                      "(không phải text sạch)"})
+            continue
+        new_raw = new_text.encode("utf-8")
+        if new_raw == old_text.encode("utf-8"):
+            skipped.append({"index": idx,
+                            "reason": "unchanged (bản dịch giống gốc)"})
+            continue
+        new_parts[idx] = new_raw
+        patched.append({"index": idx, "old_len": int(old_len),
+                        "new_len": len(new_raw),
+                        "old_offset": int(old_off), "new_offset": None})
+    new_offsets = []
+    pos = 0
+    for part in new_parts:
+        new_offsets.append(pos)
+        pos += len(part)
+    content_size = pos
+    if header.layout == "pairs":
+        new_data_size = _align4(content_size)
+    else:  # delta: độ dài literal cuối suy ra từ dataSize
+        new_data_size = content_size
+    new_span = _align4(content_size)
+    old_span = sections[2]["offset"] - header.data_off
+    delta = new_span - old_span
+    for p in patched:
+        p["new_offset"] = int(new_offsets[p["index"]])
+    out = bytearray(data[:header.data_off])
+    if header.layout == "pairs":
+        for i in range(header.entry_count):
+            struct.pack_into("<II", out, header.table_off + i * 8,
+                             len(new_parts[i]), new_offsets[i])
+    else:
+        for i in range(header.entry_count):
+            struct.pack_into("<I", out, header.table_off + i * 4,
+                             new_offsets[i])
+    data_size_pos = 20 if header.layout == "pairs" else 24
+    struct.pack_into("<i", out, data_size_pos, new_data_size)
+    for sec in sections[2:]:
+        struct.pack_into("<i", out, sec["off_pos"],
+                         sec["offset"] + delta)
+    out += b"".join(new_parts)
+    out += b"\x00" * (new_span - content_size)
+    out += data[sections[2]["offset"]:]
+    new_data = bytes(out)
+    # ---- Verify 5 mục (fail-closed, không trả bytes sai) ----
+    if len(new_data) != len(data) + delta:
+        raise PB3Error("E_VERIFY_FAILED",
+                       "re-layout: kích thước file %d != cũ %d + delta "
+                       "%d" % (len(new_data), len(data), delta),
+                       where="il2cpp")
+    fh2 = io.BytesIO(new_data)
+    header2 = read_header(fh2)
+    if (header2.version, header2.table_off, header2.table_size,
+            header2.data_off, header2.entry_count) != (
+            header.version, header.table_off, header.table_size,
+            header.data_off, header.entry_count):
+        raise PB3Error("E_VERIFY_FAILED",
+                       "re-layout: header đổi ngoài dự kiến (version / "
+                       "table / data offset / entry count)", where="il2cpp")
+    if header2.data_size != new_data_size:
+        raise PB3Error("E_VERIFY_FAILED",
+                       "re-layout: dataSize đọc lại %d != %d"
+                       % (header2.data_size, new_data_size),
+                       where="il2cpp")
+    sections2 = _read_sections(new_data, header2)
+    for old, new in zip(sections[2:], sections2[2:]):
+        if new["offset"] != old["offset"] + delta \
+                or new["size"] != old["size"] \
+                or new["count"] != old["count"]:
+            raise PB3Error(
+                "E_VERIFY_FAILED",
+                "re-layout: section %s đổi ngoài dự kiến (offset %d -> "
+                "%d, chờ +%d)" % (old["name"], old["offset"],
+                                 new["offset"], delta), where="il2cpp")
+    if new_data[sections2[2]["offset"]:] \
+            != data[sections[2]["offset"]:]:
+        raise PB3Error("E_VERIFY_FAILED",
+                       "re-layout: section sau blob đổi byte (phải giữ "
+                       "nguyên từng byte, chỉ dời chỗ)", where="il2cpp")
+    entries2 = _read_literal_entries(fh2, header2)
+    blob2 = new_data[header2.data_off:
+                     header2.data_off + header2.data_size]
+    for i in range(header.entry_count):
+        ln, off = entries2[i]
+        if off < 0 or ln < 0 or off + ln > len(blob2) \
+                or blob2[off:off + ln] != new_parts[i]:
+            raise PB3Error(
+                "E_VERIFY_FAILED",
+                "re-layout: literal %d đọc lại sai sau khi dựng lại "
+                "(không trả bytes đã vá)" % i, where="il2cpp")
+    allowed = set()
+    for p in range(header.table_off,
+                   header.table_off + header.table_size, 4):
+        allowed.add(p)
+    allowed.add(data_size_pos)
+    for sec in sections[2:]:
+        allowed.add(sec["off_pos"])
+    header_size = 256 if header.layout == "pairs" else 380
+    for p in range(0, header_size, 4):
+        if p in allowed:
+            continue
+        if data[p:p + 4] != new_data[p:p + 4]:
+            raise PB3Error(
+                "E_VERIFY_FAILED",
+                "re-layout: header đổi ở byte %d ngoài vùng cho phép "
+                "(chỉ bảng literal, dataSize, offset section sau blob "
+                "được đổi)" % p, where="il2cpp")
+    return new_data, {
+        "mode": "relayout",
+        "metadata_version": int(header.version),
+        "literals_total": int(header.entry_count),
+        "requested": len(eff),
+        "patched": patched,
+        "skipped": skipped,
+        "verified": True,
+        "old_size": len(data),
+        "new_size": len(new_data),
+        "size_delta": int(delta),
+        "blob_old_size": int(header.data_size),
+        "blob_new_size": int(new_data_size),
+        "sections_shifted": len(sections) - 2,
+    }
+
+
+def apply_literal_patches(data, table, manifest=None, relayout=False):
     """Vá theo BẢNG DỊCH {key: text_mới} (+ manifest tuỳ chọn).
 
     Key suy ra literal_index từ manifest (ưu tiên — kèm verify text
     gốc) hoặc từ dạng LIT_NNNNNN. Key không suy được index, key trùng
     index, hoặc text gốc khác manifest (sai file metadata) thì bỏ qua
-    kèm lý do, không vá. Trả (patched_bytes, report) — report có thêm
+    kèm lý do, không vá. relayout=True: dựng lại blob (xem
+    relayout_literals) nên bản dịch dài hơn gốc vẫn ghi được; mặc định
+    False giữ vá tại chỗ cũ. Trả (patched_bytes, report) — report có thêm
     "key_results" [{key, index, outcome, reason}] để UI hiện từng key.
     """
     if not isinstance(table, dict):
@@ -733,7 +1126,8 @@ def apply_literal_patches(data, table, manifest=None):
                 continue
         patches[idx] = new_text
         key_of_index[idx] = str(key)
-    patched_bytes, report = patch_literals(data, patches)
+    patched_bytes, report = patch_literals(data, patches,
+                                           relayout=relayout)
     patched_idx = {p["index"] for p in report["patched"]}
     skipped_by_idx = {s["index"]: s["reason"]
                       for s in report["skipped"]}
