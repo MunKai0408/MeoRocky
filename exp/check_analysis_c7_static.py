@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Kiem tra tinh muc C7: sdk/patch_pack.py chi stdlib + Python 3.9;
 manifest (files.json 112, tests.json 201); sw.js precache co
-sdk/patch_pack.py va CACHE_VERSION v69-20261121; bridge co op patch_pack;
+sdk/patch_pack.py va CACHE_VERSION v70-20261121; bridge co op patch_pack;
 UI co 2 nut xuat pack; khong co chuoi cam theo luat iSH-only trong
 patch_pack.py (ca chuoi template cua script ap). In JSON {"fails": [...]}.
 """
@@ -97,8 +97,8 @@ if "pb3/tests/test_patch_pack.py" not in tests:
 sw = (SITE / "sw.js").read_text(encoding="utf-8")
 if '"pb3/sdk/patch_pack.py"' not in sw:
     fails.append("sw.js precache thieu pb3/sdk/patch_pack.py")
-if 'CACHE_VERSION = "v69-20261121"' not in sw:
-    fails.append("sw.js CACHE_VERSION khong phai v69-20261121")
+if 'CACHE_VERSION = "v70-20261121"' not in sw:
+    fails.append("sw.js CACHE_VERSION khong phai v70-20261121")
 
 # 6. bridge co op patch_pack + khong goi mang trong patch_pack.py.
 bridge = (SITE / "pb3" / "bridge.py").read_text(encoding="utf-8")
