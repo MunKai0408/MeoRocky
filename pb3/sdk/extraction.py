@@ -323,8 +323,10 @@ def _expand_serialized(sf, assets_name: str, vpath: str):
         safe = _sanitize_segment(name)
         base = vpath + ("::" + assets_name if assets_name else "")
         out[base + "::" + safe] = script.encode("utf-8")
-    for _pid, _tname in sf.textures():
-        mb["textures"].append((assets_name, _pid, _tname))
+    _tex_fn = getattr(sf, "textures", None)
+    if callable(_tex_fn):
+        for _pid, _tname in _tex_fn():
+            mb["textures"].append((assets_name, _pid, _tname))
     warns: List[str] = []
     n_mb = 0
     n_mb_strings = 0

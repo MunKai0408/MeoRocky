@@ -17,8 +17,8 @@
 //
 // Lưu ý dung lượng (đo thật từ đĩa, cùng phương pháp kiểm A3 của
 // harness mục 6: tổng các file trong PRECACHE_URLS, chưa tính "./" là
-// alias của index.html): precache 17.605.303 B (16,79 MiB) = Pyodide
-// 13.605.176 B (12,97 MiB, 7 file) + PB3 2.790.553 B (2,66 MiB) +
+// alias của index.html): precache 17.605.377 B (16,79 MiB) = Pyodide
+// 13.605.176 B (12,97 MiB, 7 file) + PB3 2.790.627 B (2,66 MiB) +
 // shell/gốc 679.038 B + font 177.264 B + fzstd+lz4js 42.653 B +
 // icons/fixtures 310.619 B. Nạp 1 lần ở lần thăm đầu (nền, không chặn
 // vẽ trang); lần sau đọc từ Cache Storage, không tốn mạng nữa.

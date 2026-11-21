@@ -275,6 +275,21 @@ def test_build_layers_scene_and_textures(tmp_path):
     assert any("level0" in vp and "monobehaviour" in vp for vp in virtual)
 
 
+def test_expand_serialized_tolerates_sf_without_textures():
+    """Hoi quy: stub SerializedFile cu (khong co textures()) van chay,
+    mb["textures"] rong thay vi AttributeError."""
+    class FakeSF:
+        def text_assets(self):
+            return []
+
+        def monobehaviour_texts(self, warnings=None):
+            return []
+
+    _out, mb, _notes, _n_ta, _n_mb, _n_s = ext._expand_serialized(
+        FakeSF(), "", "v")
+    assert mb["textures"] == []
+
+
 def test_build_report_has_f4_sections(tmp_path):
     zpath = _make_ipa(tmp_path, [
         ("Payload/Game.app/Data/level0", _level_sf()),
