@@ -247,6 +247,15 @@ class ExtractionResult:
     # trích xuất — ghi vào sidecar provenance + trả trong response extract
     # để (E) phân loại key StringTable ở đơn vị khác; không có thì {}.
     shared_index: Dict[str, Dict[str, int]] = field(default_factory=dict)
+    # F4 — chữ còn sót:
+    # - texture_warnings: [{source, name}] — Texture2D có thể chứa chữ vẽ
+    #   trong ảnh; CHỈ liệt kê tên để cảnh báo, KHÔNG OCR, KHÔNG vẽ lại
+    #   (tối đa 500 mục, tổng thật ở texture_total). Trống thì [].
+    # - scene_text: {units, items, keys, ui_text_keys, note} — chữ
+    #   scene/prefab (TMP m_text / UI Text m_Text) qua đường MB generic.
+    texture_warnings: List[Dict[str, Any]] = field(default_factory=list)
+    texture_total: int = 0  # F4: tong so Texture2D gap (listed co the cat 500)
+    scene_text: Dict[str, Any] = field(default_factory=dict)
 
 
 # File MonoBehaviour generic đã tách ngôn ngữ thành công (xem _expand_unity
@@ -304,13 +313,18 @@ def _expand_serialized(sf, assets_name: str, vpath: str):
     out: Dict[str, bytes] = {}
     notes: List[str] = []
     mb: Dict[str, Any] = {"string_tables": [], "shared_tables": [], "generic": [],
-                          "language_sources": [], "text_data_lists": []}
+                          "language_sources": [], "text_data_lists": [],
+                          # F4: Texture2D [(assets_name, path_id, ten)] — chi
+                          # de liet ke + canh bao chu trong anh, khong OCR.
+                          "textures": []}
     tas = sf.text_assets()
     n_text_assets = len(tas)
     for _pid, name, script in tas:
         safe = _sanitize_segment(name)
         base = vpath + ("::" + assets_name if assets_name else "")
         out[base + "::" + safe] = script.encode("utf-8")
+    for _pid, _tname in sf.textures():
+        mb["textures"].append((assets_name, _pid, _tname))
     warns: List[str] = []
     n_mb = 0
     n_mb_strings = 0
@@ -359,6 +373,7 @@ def _expand_unity(data: bytes, vpath: str, backend, limits) -> Tuple[Dict[str, b
     locale từ m_Code), SharedTableData (entries {m_Id: key}), generic
     (fields {đường_dẫn: chuỗi} nếu có type tree, strings [...] nếu không),
     language_source (languages + terms theo chỉ số cột, giữ chuỗi rỗng).
+    "textures": [(assets_name, path_id, tên)] — Texture2D (F4, chỉ liệt kê).
     StringTable/SharedTableData join theo m_Id ở _build_layers (chúng có thể
     nằm ở 2 bundle khác nhau trong cùng IPA).
 
@@ -370,7 +385,8 @@ def _expand_unity(data: bytes, vpath: str, backend, limits) -> Tuple[Dict[str, b
     out: Dict[str, bytes] = {}
     notes: List[str] = []
     mb: Dict[str, Any] = {"string_tables": [], "shared_tables": [], "generic": [],
-                          "language_sources": [], "text_data_lists": []}
+                          "language_sources": [], "text_data_lists": [],
+                          "textures": []}
     assets: List[Tuple[str, Any]] = []
     det = unity_sdk.detect_bundle(data)
     if det is not None:
@@ -407,7 +423,7 @@ def _expand_unity(data: bytes, vpath: str, backend, limits) -> Tuple[Dict[str, b
         got, mb_i, notes_i, n_ta, n_m, n_s = _expand_serialized(sf, assets_name, vpath)
         out.update(got)
         for k in ("string_tables", "shared_tables", "generic", "language_sources",
-                  "text_data_lists"):
+                  "text_data_lists", "textures"):
             mb[k].extend(mb_i[k])
         notes.extend(notes_i)
         n_text_assets += n_ta
@@ -434,7 +450,8 @@ def _expand_unity_stream(path: str, vpath: str, backend, limits):
     out: Dict[str, bytes] = {}
     notes: List[str] = []
     mb: Dict[str, Any] = {"string_tables": [], "shared_tables": [], "generic": [],
-                          "language_sources": [], "text_data_lists": []}
+                          "language_sources": [], "text_data_lists": [],
+                          "textures": []}
     n_sf = 0
     n_text_assets = 0
     n_mb = 0
@@ -456,7 +473,7 @@ def _expand_unity_stream(path: str, vpath: str, backend, limits):
         got, mb_i, notes_i, n_ta, n_m, n_s = _expand_serialized(sf, entry_name, vpath)
         out.update(got)
         for k in ("string_tables", "shared_tables", "generic", "language_sources",
-                  "text_data_lists"):
+                  "text_data_lists", "textures"):
             mb[k].extend(mb_i[k])
         notes.extend(notes_i)
         n_text_assets += n_ta
@@ -687,6 +704,11 @@ def _mb_generic_kv(items, split_languages=False, key_map_out=None):
 
     kept_pairs = []  # (base_key, value, path_id, item_index)
     pair_loc = []  # song song kept_pairs: (chỉ số trong pairs, field_path thô|None)
+    # F4: song song kept_pairs — (o file scene?, field la m_text/m_Text?).
+    # m_text = TextMeshPro (TMP), m_Text = UI Text gan truc tiep object.
+    # Object khong type tree (scan path) khong co ten field -> chi dem
+    # duoc scene, khong phan biet duoc m_text (ghi ro o bao cao).
+    pair_flags = []
     dropped = 0
     for item_idx, item in enumerate(items):
         base = _sanitize_segment(item.get("name") or "") or ("mb_%d" % item.get("path_id", 0))
@@ -707,12 +729,23 @@ def _mb_generic_kv(items, split_languages=False, key_map_out=None):
             kept_pairs.append(("%s.%s" % (base, suffix), v,
                                item.get("path_id", 0), item_idx))
             pair_loc.append((j, raw_fp))
+            pair_flags.append((
+                bool(item.get("scene_file")),
+                raw_fp is not None
+                and str(raw_fp).split(".")[-1] in ("m_text", "m_Text")))
 
     kept = len(kept_pairs)
     stats: Dict[str, Any] = {"by_mechanism": {"strong": 0, "position": 0,
                                               "default": 0},
                              "per_lang": {}, "stable_suffix_keys": 0,
-                             "x_suffix_keys": 0}
+                             "x_suffix_keys": 0,
+                             # F4: chu scene/prefab (TMP/UI Text).
+                             "scene_items": sum(
+                                 1 for it in items if it.get("scene_file")),
+                             "scene_keys": sum(
+                                 1 for sc, _ut in pair_flags if sc),
+                             "ui_text_keys": sum(
+                                 1 for _sc, ut in pair_flags if ut)}
     if not split_languages:
         kv: Dict[str, str] = {}
         used = set()
@@ -1424,10 +1457,23 @@ def _fill_string_table_universe(grouped, shared_keys):
     return reordered, filled
 
 
+def _is_scene_path(path: str) -> bool:
+    """Entry co phai file scene Unity (.unity hoac levelN khong duoi)?
+
+    F4: text UI (TextMeshPro/UI Text) gan truc tiep object nam trong
+    scene — truoc day inventory xep levelN la "file" nen bi bo qua.
+    """
+    base = os.path.basename(path or "").lower()
+    if base.endswith(".unity"):
+        return True
+    return re.match(r"^level\d+$", base) is not None
+
+
 def _build_layers(root_vfs, inv: List[disc.InventoryEntry], limits, backend, log,
                   progress_fn: Optional[Callable[[str, int, Optional[int]], None]] = None,
                   skipped: Optional[List[Dict[str, Any]]] = None,
-                  split_mono_languages: bool = False
+                  split_mono_languages: bool = False,
+                  extra_out: Optional[Dict[str, Any]] = None,
                   ) -> Tuple[List[_Layer], Dict[str, Dict[str, int]]]:
     """Các lớp VFS: gốc + container lồng + TextAsset Unity ảo (MemoryVFS).
 
@@ -1465,6 +1511,15 @@ def _build_layers(root_vfs, inv: List[disc.InventoryEntry], limits, backend, log
     mb_generic_units: Dict[Tuple[str, str], List[Dict[str, Any]]] = {}
     mb_lang_sources: List[Tuple[str, str, Dict[str, Any]]] = []
     mb_text_data_lists: List[Tuple[str, str, Dict[str, Any]]] = []
+    # F4: Texture2D [(don_vi, assets_name, ten)] + thong ke chu scene.
+    mb_textures: List[Tuple[str, str, str]] = []
+    scene_stats: Dict[str, Any] = {"units": 0, "items": 0, "keys": 0,
+                                   "ui_text_keys": 0,
+                                   "note": "Chu scene/prefab (TextMeshPro "
+                                   "m_text / UI Text m_Text) qua duong "
+                                   "MonoBehaviour generic; object khong "
+                                   "type tree chi dem duoc theo file scene, "
+                                   "khong phan biet duoc field m_text."}
     total = len(inv)
 
     def _add_skipped(path: str, reason: str) -> None:
@@ -1571,6 +1626,13 @@ def _build_layers(root_vfs, inv: List[disc.InventoryEntry], limits, backend, log
                     log("Unity: %s: không đọc được [%s]" % (entry.path, exc.code))
                     continue
                 got, notes, mb = _expand_unity(data, entry.path, backend, limits)
+            # F4: file scene -> danh dau item generic de _mb_generic_kv
+            # dem rieng chu scene; texture gom de canh bao chu trong anh.
+            if _is_scene_path(entry.path):
+                for _an, _it in mb["generic"]:
+                    _it["scene_file"] = True
+            for _an, _pid, _tname in mb.get("textures") or []:
+                mb_textures.append((entry.path, _an, _tname))
             for item in mb["string_tables"]:
                 mb_tables.append((entry.path, item))
             mb_shared.extend(mb["shared_tables"])
@@ -1704,6 +1766,17 @@ def _build_layers(root_vfs, inv: List[disc.InventoryEntry], limits, backend, log
         res = _mb_generic_kv(items, split_languages=split_mono_languages)
         kept, dropped = res["kept"], res["dropped"]
         unit_label = unit_path + ("::" + assets_name if assets_name else "")
+        # F4: gop thong ke chu scene tu moi don vi generic.
+        _sc = res["stats"]
+        if _sc.get("scene_keys"):
+            scene_stats["units"] += 1
+            scene_stats["items"] += _sc.get("scene_items", 0)
+            scene_stats["keys"] += _sc.get("scene_keys", 0)
+            scene_stats["ui_text_keys"] += _sc.get("ui_text_keys", 0)
+        scene_note = ("; scene: %d key (%d field m_text/m_Text)"
+                      % (_sc.get("scene_keys", 0),
+                         _sc.get("ui_text_keys", 0))) \
+            if _sc.get("scene_keys") else ""
         if split_mono_languages:
             by_lang = res["by_lang"] or {}
             stats = res["stats"]
@@ -1732,7 +1805,7 @@ def _build_layers(root_vfs, inv: List[disc.InventoryEntry], limits, backend, log
                    stats["by_mechanism"]["strong"], stats["by_mechanism"]["position"],
                    stats["by_mechanism"]["default"],
                    stats.get("aligned_chunks", 0) + stats.get("aligned_groups", 0),
-                   stats.get("term_keyed", 0)))
+                   stats.get("term_keyed", 0)) + scene_note)
             continue
         kv = res["kv"]
         if not kv:
@@ -1748,7 +1821,7 @@ def _build_layers(root_vfs, inv: List[disc.InventoryEntry], limits, backend, log
         virtual[vpath] = json.dumps(kv, ensure_ascii=False, indent=1).encode("utf-8")
         virtual_origin[vpath] = "generic_flat"
         log("Unity: %s -> MonoBehaviour: %d chuỗi (lọc %d chuỗi rác, xuất %s)"
-            % (unit_label, kept, dropped, vpath))
+            % (unit_label, kept, dropped, vpath) + scene_note)
     if virtual:
         layers.append(_Layer("", MemoryVFS(virtual, limits=limits), "virtual",
                              origin_map=virtual_origin))
@@ -1763,6 +1836,11 @@ def _build_layers(root_vfs, inv: List[disc.InventoryEntry], limits, backend, log
         for mid, key in (item.get("entries") or {}).items():
             if isinstance(key, str) and isinstance(mid, int):
                 d[key] = mid
+    # F4: texture + thong ke scene cho ben goi (run_extraction) dua vao
+    # report; khong doi kieu tra ve (test cu unpack 2 gia tri).
+    if extra_out is not None:
+        extra_out["textures"] = list(mb_textures)
+        extra_out["scene_text"] = dict(scene_stats)
     return layers, shared_index
 
 
@@ -2353,10 +2431,32 @@ def run_extraction(req: ExtractionRequest) -> ExtractionResult:
     # locales hoặc cứng req.locale): file ảo tách theo ngôn ngữ, không còn
     # file gộp trộn mọi ngôn ngữ. Không lọc -> file gộp cũ (tương thích ngược).
     split_mono = bool(locales) or (req.locale not in (None, "all"))
+    _f4_extra: Dict[str, Any] = {}
     layers, shared_index = _build_layers(root_vfs, inv, limits, backend, log,
                                          progress_fn=_progress, skipped=result.skipped,
-                                         split_mono_languages=split_mono)
+                                         split_mono_languages=split_mono,
+                                         extra_out=_f4_extra)
     result.shared_index = dict(shared_index or {})
+    # F4: texture co the chua chu trong anh — chi liet ke ten (toi da
+    # 500, dedup theo (source, ten)) + canh bao khong OCR/khong ve lai;
+    # chu scene/prefab dem rieng de nguoi dung thay duoc.
+    _seen_tex = set()
+    _tex_list: List[Dict[str, Any]] = []
+    for _unit, _assets, _tname in _f4_extra.get("textures") or []:
+        _src = _unit + ("::" + _assets if _assets else "")
+        _key = (_src, _tname)
+        if _key in _seen_tex:
+            continue
+        _seen_tex.add(_key)
+        if len(_tex_list) < 500:
+            _tex_list.append({"source": _src, "name": _tname})
+    result.texture_warnings = _tex_list
+    result.texture_total = len(_f4_extra.get("textures") or [])
+    result.scene_text = dict(_f4_extra.get("scene_text") or {})
+    if _f4_extra.get("textures"):
+        log("texture: %d Texture2D (liet ke %d ten de canh bao chu trong "
+            "anh — khong OCR, khong ve lai)"
+            % (len(_f4_extra["textures"]), len(_tex_list)))
     # MERGE-MB-GENERIC: game có nguồn ngôn ngữ có cấu trúc (I2/ST) trong
     # lớp virtual thì MB-generic KHÔNG được miễn lọc mềm, KHÔNG được gộp
     # (I2/ST thắng trước — giữ chuẩn 9K/PB3/EK2 byte-identical). Chỉ game
@@ -3447,6 +3547,18 @@ def _build_report(req: ExtractionRequest, result: ExtractionResult, logs: List[s
         "merged_files": list(result.merged_files),
         "language_columns": list(result.language_columns),
         "generated_keys": list(result.generated_keys),
+        # F4 — chữ còn sót (xem ExtractionResult.texture_warnings/scene_text):
+        # texture_text: {total, listed, note, textures:[{source,name}]};
+        # scene_text: {units, items, keys, ui_text_keys, note, ...}.
+        "texture_text": {
+            "total": result.texture_total,
+            "listed": len(result.texture_warnings),
+            "note": "Chu co the nam trong anh/texture: chi liet ke ten "
+            "texture de nguoi dung kiem tra bang mat / thay anh tay. "
+            "Khong OCR, khong ve lai chu len anh.",
+            "textures": list(result.texture_warnings),
+        },
+        "scene_text": dict(result.scene_text),
         "total_entries": result.total_entries,
         "elapsed_s": round(result.elapsed_s, 1),
         "checkpoint_used": result.checkpoint_used,
