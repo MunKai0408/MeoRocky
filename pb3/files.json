@@ -69,6 +69,7 @@
   "pb3/sdk/font.py",
   "pb3/sdk/font_check.py",
   "pb3/sdk/font_list.py",
+  "pb3/sdk/font_writeback.py",
   "pb3/sdk/format_probe.py",
   "pb3/sdk/formats.py",
   "pb3/sdk/gate.py",

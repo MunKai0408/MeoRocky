@@ -1309,6 +1309,17 @@
     <input id="inp-tmp-sdf-name" type="text" placeholder="Tên TMP asset (vd Aniara_Light SDF; để trống = asset đầu tiên)" size="42">
     <input id="inp-tmp-sdf-extra" type="text" placeholder="Ký tự thêm (vd àáâ… hoặc U+1EA0,U+1EA1)" size="42">
     <button id="btn-font-tmp-sdf">Tái tạo atlas SDF (thử nghiệm)</button>
+    <select id="inp-font-wb-mode" style="width:auto">
+      <option value="auto" selected>Lập kế hoạch ghi ngược (auto)</option>
+      <option value="tmp_sdf">TMP Static SDF — ghi atlas tái tạo</option>
+      <option value="font_merge">Font thường — gộp glyph rồi ghi</option>
+      <option value="fallback_clone">TMP Dynamic — nhân bản fallback</option>
+      <option value="link">TMP — gắn fallback vào asset</option>
+      <option value="global_link">TMP — gắn vào fallback toàn cục</option>
+    </select>
+    <input id="inp-font-wb-donor" type="text" placeholder="Tên TMP donor cho mode link (vd NotoSans-Regular SDF)" size="42">
+    <label><input type="checkbox" id="inp-font-wb-dryrun" checked> Chỉ xem trước (dry-run)</label>
+    <button id="btn-font-writeback">Ghi ngược font Việt (thử nghiệm)</button>
     <button id="btn-font-list">Liệt kê font của game</button>
     <button id="btn-font-unify">Dùng chung 1 font Be Vietnam Pro</button>
     <button id="btn-font-check-3step">Kiểm tra font 3 bước</button>

@@ -6020,7 +6020,7 @@ $("btn-font-fallback").addEventListener("click", async () => {
 // Sinh lại atlas SDF cho 1 TMP_FontAsset từ font nhúng (cùng kích thước/
 // padding/pointSize, fail-closed nếu không xếp vừa) rồi đo MAE so với
 // atlas gốc. Dry-run: chỉ tải atlas mới (.raw) về, KHÔNG ghi vào file
-// game. Ghi ngược (M1/M2) là bước sau. Tên asset để trống = asset đầu
+// game. Ghi ngược vào game bằng nút "Ghi ngược font Việt" (mode TMP Static SDF). Tên asset để trống = asset đầu
 // tiên có font nhúng; ô ký tự thêm nhận chuỗi ký tự hoặc U+XXXX,U+YYYY.
 $("btn-font-tmp-sdf").addEventListener("click", async () => {
   try {
@@ -6044,7 +6044,59 @@ $("btn-font-tmp-sdf").addEventListener("click", async () => {
       (worst ? "<br>Kém nhất: " + esc(worst) : "") + "</p>";
     html += "<p>" + esc(parsed.note || "") + "</p>";
     html += "<p>File atlas mới <b>" + esc(parsed.filename || "") + "</b> đã tải về tự động. " +
-      "Đây là bản dry-run — ghi ngược vào game (M1/M2) chưa có trong đợt này.</p>";
+      "Đây là bản dry-run — ghi ngược vào game bằng nút “Ghi ngược font Việt” (mode TMP Static SDF).</p>";
+    $("font-result").innerHTML = html;
+  } catch (e) { /* đã báo lỗi */ }
+});
+
+// ---- Ghi ngược font Việt (thử nghiệm, font_writeback) ----
+// F2: ghi atlas/bảng glyph/font đã sửa ngược vào file game. Mode auto chỉ
+// lập kế hoạch (không ghi): liệt kê từng Font object / TMP asset + đường
+// ghi (tmp_sdf/font_merge/fallback_clone/link/global_link) + lý do. Các
+// mode có đích ghi 1 asset (dùng chung ô tên asset + ký tự thêm ở trên;
+// mode link cần thêm tên TMP donor). Mặc định dry-run (chỉ tính + báo
+// cáo, không ghi); bỏ tick mới ghi bản .assets/.resS đã sửa ra
+// font_writeback.zip để tải về — file gốc không bị động vào, tool không
+// ký lại IPA. Clone giữ APM + m_SourceFontFile của asset gốc [HYPOTHESIS,
+// cần kiểm chứng trên game thật]; global fallback cũng vậy.
+$("btn-font-writeback").addEventListener("click", async () => {
+  try {
+    const name = ($("inp-tmp-sdf-name").value || "").trim() || null;
+    const extra = ($("inp-tmp-sdf-extra").value || "").trim();
+    const mode = $("inp-font-wb-mode").value || "auto";
+    const dryRun = $("inp-font-wb-dryrun").checked;
+    const donorTmp = ($("inp-font-wb-donor").value || "").trim() || null;
+    const { parsed } = await runOp("Ghi ngược font Việt", "font_writeback",
+      [inputPath(), name, mode, extra, dryRun,
+       "/pb3web/fonts/BeVietnamPro-Regular.ttf", donorTmp],
+      inputFileArgs(), true);
+    let html = "";
+    if (mode === "auto") {
+      const routes = parsed.routes || {};
+      html += "<p><b>Kế hoạch ghi ngược font Việt</b> — " +
+        Object.keys(routes).map((r) => esc(r) + ": " + routes[r]).join(" · ") + "</p>";
+      for (const p of (parsed.plan || [])) {
+        html += "<h3>" + esc(p.name || "?") + " — " + esc(p.kind) + " · " + esc(p.route) + "</h3>";
+        html += "<p>" + esc(p.reason || "") + "</p>";
+        if (p.missing_total != null) html += "<p>Thiếu: <b>" + p.missing_total + "</b> ký tự" +
+          (p.fallback_count != null ? " · fallback: " + p.fallback_count : "") + "</p>";
+        if (p.notes && p.notes.length) html += "<p class=warn>" + p.notes.map(esc).join(" ") + "</p>";
+      }
+      html += "<p>File <b>font_writeback_plan.json</b> đã tải về tự động. Chọn 1 mode có đích + tên asset rồi bấm lại để ghi (bỏ tick dry-run mới ghi thật).</p>";
+    } else {
+      html += "<p><b>Ghi ngược font Việt (" + esc(mode) + ")</b> — asset <b>" + esc(parsed.asset || "?") + "</b>" +
+        (parsed.dry_run ? " · <b>dry-run (chỉ xem trước, chưa ghi)</b>" : " · <b>ĐÃ GHI RA ZIP</b>") + "</p>";
+      if (parsed.glyphs_old != null) html += "<p>Glyph: " + parsed.glyphs_old + " → <b>" + parsed.glyphs_new + "</b>" +
+        (parsed.added && parsed.added.length ? " (thêm " + parsed.added.length + " ký tự)" : "") + "</p>";
+      if (parsed.covered_before != null) html += "<p>Cmap: " + parsed.covered_before + " → <b>" + parsed.covered_after + "</b>/142</p>";
+      if (parsed.entries_before != null) html += "<p>Fallback: " + parsed.entries_before + " → <b>" + parsed.entries_after + "</b></p>";
+      if (parsed.clone_name) html += "<p>Asset fallback mới: <b>" + esc(parsed.clone_name) + "</b> · atlas " + esc(parsed.atlas || "") + "</p>";
+      if (parsed.gate) html += "<p>Cổng kiểm tra: <b>" + esc(parsed.gate.status || "?") + "</b></p>";
+      if (parsed.warnings && parsed.warnings.length) html += "<p class=warn>Cảnh báo: " + parsed.warnings.map(esc).join("; ") + "</p>";
+      html += "<p>File <b>" + esc(parsed.filename || "") + "</b> đã tải về tự động. " +
+        (parsed.dry_run ? "Đây là bản dry-run — bỏ tick “Chỉ xem trước” rồi bấm lại để ghi thật ra zip."
+          : "Trong zip có bản .assets đã sửa (+ .resS đã sửa nếu có) và font_writeback.json — tự chèn lại vào IPA, tool không ký lại IPA.") + "</p>";
+    }
     $("font-result").innerHTML = html;
   } catch (e) { /* đã báo lỗi */ }
 });

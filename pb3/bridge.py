@@ -47,6 +47,8 @@ import sys
 import time
 import zipfile
 
+from core.errors import PB3Error
+
 WEB_ROOT = "/pb3web"
 # Giới hạn riêng của bản web (RAM tab trình duyệt, không phải giới hạn PB3):
 # file đầu vào >2 GiB thì từ chối rõ thay vì để trình duyệt crash.
@@ -2064,13 +2066,18 @@ def _parse_extra_codepoints(extra):
 
 
 def _iter_tmp_sf(path):
-    """Yield (display, sf, ress_slice) cho moi SerializedFile trong nguon.
+    """Yield (display, data, sf, ress_slice, ress_full) cho moi
+    SerializedFile trong nguon.
 
     Nguon: thu muc / ZIP/IPA / file .assets/.unity3d doc lap (nhu
     tmp_font.scan_source). ress_slice(path, offset, size) doc 1 lat cat
-    cua file .resS tuong ung (trong ZIP hoac roi tren dia).
+    cua file .resS tuong ung (trong ZIP hoac roi tren dia);
+    ress_full(path=None) doc TOAN BO file .resS tuong ung (None neu
+    khong co — vd clone can append atlas, tmp_sdf can patch atlas).
+    data la bytes goc cua SerializedFile (de ghi nguoc).
     """
     from sdk import containers as cont
+    from sdk import tmp_font as tf
     from sdk import unity as uni
 
     src = str(path)
@@ -2097,7 +2104,18 @@ def _iter_tmp_sf(path):
                         fh.seek(off)
                         return fh.read(size)
 
-                yield full, sf, _slice
+                def _full(p=None, _full=full):
+                    ress_path = _full + ".resS"
+                    if not os.path.exists(ress_path) and p:
+                        base = os.path.dirname(_full)
+                        ress_path = os.path.join(base,
+                                                 os.path.basename(p))
+                    if not os.path.exists(ress_path):
+                        return None
+                    with open(ress_path, "rb") as fh:
+                        return fh.read()
+
+                yield full, data, sf, _slice, _full
         return
     if zipfile.is_zipfile(src):
         vfs = cont.open_vfs(src)
@@ -2124,10 +2142,24 @@ def _iter_tmp_sf(path):
                             entry = cand
                             break
                 if entry is None:
-                    raise PB3Error("khong co file resS %s" % p)
+                    raise ValueError("khong co file resS %s" % p)
                 return bytes(_vfs.slice(entry, off, size))
 
-            yield name, sf, _slice
+            def _full(p=None, _vfs=vfs, _map=by_suffix, _name=name):
+                entry = _map.get(_name + ".resS")
+                if entry is None and p:
+                    entry = _map.get(p) or _map.get(p.rsplit("/", 1)[-1])
+                if entry is None:
+                    for cand in _map.values():
+                        if cand.endswith("/" + _name + ".resS") \
+                                or cand.endswith(_name + ".resS"):
+                            entry = cand
+                            break
+                if entry is None:
+                    return None
+                return bytes(_vfs.read(entry))
+
+            yield name, data, sf, _slice, _full
         return
     # File .assets/.unity3d doc lap.
     data = open(src, "rb").read()
@@ -2142,7 +2174,17 @@ def _iter_tmp_sf(path):
             fh.seek(off)
             return fh.read(size)
 
-    yield src, sf, _slice
+    def _full(p=None, _src=src):
+        ress_path = _src + ".resS"
+        if not os.path.exists(ress_path) and p:
+            base = os.path.dirname(_src)
+            ress_path = os.path.join(base, os.path.basename(p))
+        if not os.path.exists(ress_path):
+            return None
+        with open(ress_path, "rb") as fh:
+            return fh.read()
+
+    yield src, data, sf, _slice, _full
 
 
 def tmp_sdf_regen(path, asset_name=None, extra=""):
@@ -2154,7 +2196,8 @@ def tmp_sdf_regen(path, asset_name=None, extra=""):
     them (vd chu Viet thieu) hoac "U+1EA0,U+1EA1".
     Chi tai tao trong cung kich thuoc atlas (fail-closed neu khong xep
     vua). KHONG ghi vao file game — tra atlas moi (.raw) + bang glyph
-    moi + bao cao MAE de tai ve; ghi nguoc la buoc sau (M1/M2).
+    moi + bao cao MAE de tai ve; ghi nguoc vao game bang op
+    font_writeback mode tmp_sdf (nut "Ghi nguoc font Viet").
     """
     try:
         from sdk import tmp_font as tf
@@ -2162,14 +2205,17 @@ def tmp_sdf_regen(path, asset_name=None, extra=""):
 
         _check_size(path)
         extra_cps = _parse_extra_codepoints(extra)
-        # Tim asset: quet cac SerializedFile, khop ten (chinh xac truoc,
-        # roi chuoi con, roi so thu tu).
+        # Tim asset: quet cac SerializedFile, khop ten chinh xac truoc
+        # (ke ca bo khoang trang/chu hoa), roi chuoi con, roi so thu tu.
+        # KHONG loc is_tmp: tren file khong typetree (vd PB3) script
+        # nam ngoai file nen is_tmp luon False — xac nhan bang decode
+        # duoc + co bang glyph thay vi script [DA DO THAT: PB3 43 TMP
+        # deu is_tmp False, op cu tra "da quet: khong co"].
         found = None
+        sub = None
         scanned_names = []
-        for display, sf, ress_slice in _iter_tmp_sf(path):
+        for display, _data, sf, ress_slice, _ress_full in _iter_tmp_sf(path):
             for f in tf.find_tmp_font_assets(sf):
-                if not f["is_tmp"]:
-                    continue
                 try:
                     raw = sf.object_bytes(f["path_id"])
                     dec = tf.decode_object(raw, sf.endian)
@@ -2177,22 +2223,21 @@ def tmp_sdf_regen(path, asset_name=None, extra=""):
                     continue
                 nm = dec.get("name") or ""
                 scanned_names.append(nm)
-                match = False
-                if asset_name is None:
-                    match = True
-                elif str(asset_name).isdigit():
-                    match = len(scanned_names) - 1 == int(asset_name)
-                elif nm == str(asset_name):
-                    match = True
-                elif str(asset_name) in nm:
-                    match = True
-                if match and dec.get("glyph_table"):
+                if not dec.get("glyph_table"):
+                    continue
+                kind = _match_kind(nm, asset_name,
+                                   len(scanned_names) - 1)
+                if kind == 2:
                     found = (display, sf, f["path_id"], ress_slice, dec)
                     break
+                if kind == 1 and sub is None:
+                    sub = (display, sf, f["path_id"], ress_slice, dec)
             if found:
                 break
         if found is None:
-            return _err(PB3Error(
+            found = sub
+        if found is None:
+            return _err(ValueError(
                 "khong tim thay TMP asset %r (da quet: %s)"
                 % (asset_name, ", ".join(scanned_names) or "khong co")))
         display, sf, pid, ress_slice, dec = found
@@ -2225,6 +2270,421 @@ def tmp_sdf_regen(path, asset_name=None, extra=""):
             "pct_lt3": rep["pct_lt3"], "pass": rep["pass"],
             "worst": rep["worst"], "note": rep["note"],
         }, ensure_ascii=False)
+    except Exception as e:  # noqa: BLE001
+        return _err(e)
+
+
+def _donor_font_bytes(donor_path):
+    """Doc font donor Be Vietnam Pro (du 142/142).
+
+    donor_path: duong dan do JS truyen (tren web:
+    /pb3web/fonts/BeVietnamPro-Regular.ttf). None = tim canh bridge.py
+    (pb3/fonts/BeVietnamPro-Regular.ttf, dung cho test CPython).
+    """
+    if donor_path:
+        with open(donor_path, "rb") as fh:
+            return fh.read()
+    cand = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                        "fonts", "BeVietnamPro-Regular.ttf")
+    if os.path.exists(cand):
+        with open(cand, "rb") as fh:
+            return fh.read()
+    raise ValueError("khong tim thay font donor BeVietnamPro-Regular.ttf")
+
+
+def _match_kind(nm, asset_name, index):
+    """Muc do khop ten asset: 2 = chinh xac, 1 = chuoi con, 0 = khong.
+
+    Chinh xac ke ca khi chi khac khoang trang / chu hoa — vd ten ke
+    hoach "Perfect DOS VGA 437" (family trong font) phai khop Font
+    object "PerfectDOSVGA437" (m_Name). None / so thu tu: khop nhu cu
+    (2). Khop chinh xac LUON thang chuoi con: "LiberationSans SDF"
+    khong duoc roi vao "LiberationSans SDF - Fallback" chi vi Fallback
+    dung truoc trong file [DA DO THAT tren PB3: pid 1206 < 1207].
+    """
+    if asset_name is None:
+        return 2
+    if str(asset_name).isdigit():
+        return 2 if index == int(asset_name) else 0
+    nm = nm or ""
+    want = str(asset_name)
+    if nm == want:
+        return 2
+    norm = lambda s: "".join(str(s).split()).lower()
+    if norm(nm) == norm(want):
+        return 2
+    if want in nm or norm(want) in norm(nm):
+        return 1
+    return 0
+
+
+def _tmp_population_from_name(name):
+    """AtlasPopulationMode suy tu ten asset (quy uoc dat ten cua TMP):
+    "<Font> SDF - DYNAMIC" = Dynamic, "<Font> SDF" = Static. Chi dung
+    khi khong doc duoc APM tu bo cuc byte (PB3 khong typetree, bo cuc
+    nhi phan Kusa khong dung tren PB3) — ke hoach ghi ro la suy tu ten
+    [HYPOTHESIS, ten do TMP dat luc tao asset]."""
+    if not name:
+        return None
+    if name.endswith("SDF - DYNAMIC"):
+        return "Dynamic"
+    if name.endswith("SDF"):
+        return "Static"
+    return None
+
+
+def _tmp_source_font_name(name):
+    """Ten font nguon suy tu ten TMP: bo hau to " SDF" / " SDF - DYNAMIC"."""
+    if not name:
+        return None
+    if name.endswith("SDF - DYNAMIC"):
+        return name[:-len(" SDF - DYNAMIC")]
+    if name.endswith(" SDF"):
+        return name[:-len(" SDF")]
+    return None
+
+
+def _plan_tmp_entry_fw(name, path_id, display, raw, endian, fonts,
+                       all_font_names=None):
+    """1 muc TMP trong ke hoach auto, tu decode truc tiep (khong qua
+    font_check — font_check danh dau moi TMP PB3 la unconfirmed vi
+    khong co typetree/script, nen ke hoach tu no toan route "none").
+
+    fonts: muc unity_font cung file (tu scan_serialized_file) de tra
+    cmap font nguon theo ten; all_font_names: ten font o MOI file de
+    ghi chu khi font nguon chi co o file khac (ghi nguoc chi dung
+    duoc font trong cung file). Do phu atlas doc tu bang character
+    (locate_char_table, dung ca 2 layout); % dung atlas uoc tu dien
+    tich rect glyph (chi layout moi co rect — layout cu de None).
+    """
+    from sdk import font_writeback as fw
+    from sdk import tmp_font as tf
+
+    dec = tf.decode_object(raw, endian)
+    gt = dec.get("glyph_table")
+    fi = dec.get("font_info") or {}
+    population = _tmp_population_from_name(name)
+    atlas_letters = atlas_marks = None
+    used_pct = None
+    if gt:
+        try:
+            loc = fw.locate_char_table(raw, endian, gt)
+            unis = {r["unicode"] for r in loc["records"]}
+            letters = set(tf.vietnamese_letters_134())
+            marks = set(tf.combining_marks_8())
+            atlas_letters = len(letters & unis)
+            atlas_marks = len(marks & unis)
+        except Exception:
+            pass
+        if gt.get("layout") == "new" and fi.get("atlas_width") \
+                and fi.get("atlas_height"):
+            try:
+                recs = tf.read_glyph_records(raw, gt["offset"],
+                                             gt["count"], gt["stride"],
+                                             endian)
+                area = sum(max(0, r["rect"][2]) * max(0, r["rect"][3])
+                           for r in recs if r.get("rect"))
+                used_pct = round(
+                    100.0 * area / (fi["atlas_width"] * fi["atlas_height"]),
+                    1)
+            except Exception:
+                pass
+    base = _tmp_source_font_name(name)
+    src = None
+    if base:
+        norm = lambda s: "".join(str(s).split()).lower()
+        for f in fonts:
+            if f.get("name") == base or f.get("family") == base \
+                    or norm(f.get("name") or "") == norm(base) \
+                    or norm(f.get("family") or "") == norm(base):
+                src = f
+                break
+    src_present = src is not None
+    notes = []
+    if not src_present and base and all_font_names:
+        norm = lambda s: "".join(str(s).split()).lower()
+        if base in all_font_names or norm(base) in (
+                norm(n) for n in all_font_names):
+            notes.append("Font nguon %s co o file .assets khac, khong co "
+                         "trong cung file nay — ghi nguoc chi dung duoc "
+                         "font trong cung file." % base)
+    src_letters = (src or {}).get("cmap_letters")
+    src_marks = (src or {}).get("cmap_marks")
+    classify = {"kind": "tmp", "name": name, "confirmed": True,
+                "population": population,
+                "atlas_letters": atlas_letters, "atlas_marks": atlas_marks,
+                "source_present": src_present,
+                "source_letters": src_letters, "source_marks": src_marks,
+                "atlas_is_bitmap": None, "atlas_used_pct": used_pct,
+                "fallback_count": None}
+    route = fw.classify_case(classify)
+    reason = route["reason_vi"]
+    if population is not None:
+        notes.append("Population suy tu ten asset [HYPOTHESIS].")
+    if src_present:
+        notes.append("Font nguon suy tu ten asset [HYPOTHESIS].")
+    if (route["route"] == "tmp_dynamic_source_merge" and src_present
+            and (src_letters is None or src_marks is None)):
+        reason = ("TMP %s Dynamic, font nguon co mat nhung chua doc duoc "
+                  "cmap — gop glyph Viet vao font nguon roi kiem tra lai."
+                  % name)
+    if route["route"] == "tmp_dynamic_fallback" and used_pct is None:
+        reason = reason.replace(
+            "atlas dùng None%",
+            "atlas khong con cho (chua do duoc % dung)")
+    if route["route"] == "tmp_static_sdf":
+        notes.append("Chua do pixel atlas — neu la bitmap (khong phai SDF), "
+                     "buoc ghi se tu choi E_BITMAP_ATLAS.")
+    if route["route"] == "tmp_dynamic_fallback":
+        notes.append("Clone giu APM cua asset goc + m_SourceFontFile goc "
+                     "[HYPOTHESIS, can kiem chung tren game that].")
+    missing = None
+    if atlas_letters is not None and atlas_marks is not None:
+        missing = 142 - atlas_letters - atlas_marks
+    return {"kind": "tmp", "name": name, "path_id": path_id,
+            "source": display, "confirmed": True,
+            "population": population, "atlas": "%sx%s" % (
+                fi.get("atlas_width"), fi.get("atlas_height"))
+            if fi.get("atlas_width") else None,
+            "missing_total": missing, "fallback_count": None,
+            "source_present": src_present,
+            "source_cmap_known": src_letters is not None,
+            "source_letters": src_letters, "source_marks": src_marks,
+            "route": route["route"], "reason": reason,
+            "action": route["action"], "notes": notes}
+
+
+def _font_writeback_plan(path):
+    """Mode auto: chi lap ke hoach (khong ghi gi) — phan loai tung Font
+    object / TMP asset sang duong ghi nguoc F2. Ghi ke hoach ra
+    /tmp/font_writeback_plan.json de JS tai ve.
+
+    TMP lay tu decode truc tiep (sdk/font_writeback xac nhan), khong
+    qua font_check.scan_source — scan_source danh dau moi TMP PB3 la
+    unconfirmed (khong typetree/script) nen ke hoach tu no toan route
+    "none" [DA DO THAT: 43/43 unconfirmed, atlas 0/0]. Font object lay
+    tu font_check.scan_serialized_file (cmap doc duoc binh thuong).
+    """
+    from sdk import font_check as fc
+    from sdk import font_writeback as fw
+
+    plan = []
+    warnings = []
+    files_scanned = 0
+    tmp_cands = []
+    all_font_names = set()
+    for display, _data, sf, _slice, _full in _iter_tmp_sf(path):
+        files_scanned += 1
+        try:
+            scan = fc.scan_serialized_file(sf, display)
+        except Exception as exc:  # noqa: BLE001
+            warnings.append("%s: quet font loi: %s" % (display, exc))
+            continue
+        warnings.extend(scan.get("warnings") or [])
+        fonts = [f for f in scan.get("fonts") or []
+                 if f.get("kind") == "unity_font"]
+        for f in fonts:
+            all_font_names.add(f.get("name") or "")
+            all_font_names.add(f.get("family") or "")
+            classify = {"kind": "font", "name": f.get("name"),
+                        "source_letters": f.get("cmap_letters"),
+                        "source_marks": f.get("cmap_marks")}
+            route = fw.classify_case(classify)
+            plan.append({"kind": "font", "name": f.get("name"),
+                         "path_id": f.get("path_id"), "source": display,
+                         "confirmed": True, "population": None,
+                         "atlas": None,
+                         "missing_total": f.get("missing_total"),
+                         "fallback_count": None, "source_present": True,
+                         "source_cmap_known": True,
+                         "source_letters": f.get("cmap_letters"),
+                         "source_marks": f.get("cmap_marks"),
+                         "route": route["route"],
+                         "reason": route["reason_vi"],
+                         "action": route["action"], "notes": []})
+        try:
+            _ids, names = fw._confirmed_tmp_ids(sf)
+        except Exception as exc:  # noqa: BLE001
+            warnings.append("%s: xac nhan TMP loi: %s" % (display, exc))
+            continue
+        for pid, nm in names.items():
+            try:
+                raw = sf.object_bytes(pid)
+            except Exception as exc:  # noqa: BLE001
+                warnings.append("TMP #%s: khong doc duoc bytes: %s"
+                                % (pid, exc))
+                continue
+            tmp_cands.append((display, pid, nm, raw, sf.endian, fonts))
+    # Lap muc TMP SAU khi quet het file — can biet ten font o MOI file
+    # de ghi chu khi font nguon chi co o file khac.
+    for display, pid, nm, raw, endian, fonts in tmp_cands:
+        try:
+            plan.append(_plan_tmp_entry_fw(nm, pid, display, raw, endian,
+                                           fonts, all_font_names))
+        except Exception as exc:  # noqa: BLE001
+            warnings.append("TMP %s: lap ke hoach loi: %s" % (nm, exc))
+    routes = {}
+    for p in plan:
+        routes[p["route"]] = routes.get(p["route"], 0) + 1
+    out = "/tmp/font_writeback_plan.json"
+    payload = {"schema": "font_writeback_plan/1", "source": str(path),
+               "plan": plan, "routes": routes,
+               "files_scanned": files_scanned, "warnings": warnings}
+    with open(out, "w", encoding="utf-8") as fh:
+        json.dump(payload, fh, ensure_ascii=False, indent=1)
+    payload.update({"ok": True, "dest": out,
+                    "filename": "font_writeback_plan.json"})
+    return json.dumps(payload, ensure_ascii=False)
+
+
+def _font_writeback_run(path, asset_name, mode, extra_cps, dry_run,
+                        donor_path, donor_tmp):
+    """Mode co dich: tim asset trong file game roi goi sdk/font_writeback.
+
+    dry_run=True (mac dinh): tinh ban ghi trong RAM roi CHI tra bao cao
+    (/tmp/font_writeback.json), khong ghi file game. dry_run=False: ghi
+    ban .assets da sua (+ .resS da sua neu co) ra /tmp/font_writeback.zip
+    de tai ve — file goc KHONG bi dong vao; nguoi dung tu chen lai vao
+    IPA (tool khong ky lai IPA).
+    """
+    from sdk import font as _fontmod
+    from sdk import font_writeback as fw
+
+    donor = _donor_font_bytes(donor_path)
+    found = None
+    fallback = None
+    scanned = []
+    for display, data, sf, ress_slice, ress_full in _iter_tmp_sf(path):
+        if mode == "font_merge":
+            try:
+                cands = list(_fontmod.list_unity_font_objects(sf))
+            except Exception:
+                continue
+        else:
+            _ids, names = fw._confirmed_tmp_ids(sf)
+            cands = [(pid, nm) for pid, nm in names.items()]
+        for pid, nm in cands:
+            scanned.append(nm)
+            kind = _match_kind(nm, asset_name, len(scanned) - 1)
+            if kind == 2:
+                found = ("font" if mode == "font_merge" else "tmp",
+                         display, data, sf, ress_slice, ress_full, pid, nm)
+                break
+            if kind == 1 and fallback is None:
+                fallback = ("font" if mode == "font_merge" else "tmp",
+                            display, data, sf, ress_slice, ress_full,
+                            pid, nm)
+        if found:
+            break
+    if found is None:
+        found = fallback
+    if found is None:
+        raise ValueError("khong tim thay asset %r (da quet: %s)"
+                       % (asset_name, ", ".join(scanned) or "khong co"))
+    kind, display, data, sf, ress_slice, ress_full, pid, nm = found
+    rep = None
+    extra_files = {}
+    if mode == "tmp_sdf":
+        rep = fw.writeback_tmp_sdf(data, pid, extra_cps, ress_slice)
+        if not dry_run:
+            ress = ress_full()
+            if ress is None:
+                raise ValueError("khong co file .resS de patch atlas")
+            ap = rep["atlas_patch"]
+            new_atlas = rep["new_atlas_bytes"]
+            if len(new_atlas) != ap["size"]:
+                raise ValueError("atlas moi %d byte, khac patch %d byte"
+                               % (len(new_atlas), ap["size"]))
+            patched_ress = bytearray(ress)
+            patched_ress[ap["offset"]:ap["offset"] + ap["size"]] = new_atlas
+            extra_files[os.path.basename(display) + ".resS"] = bytes(
+                patched_ress)
+    elif mode == "font_merge":
+        rep = fw.writeback_font_merge(data, pid, donor, extra=extra_cps)
+    elif mode == "fallback_clone":
+        ress = ress_full()
+        if ress is None:
+            raise ValueError("khong co file .resS (clone can append atlas)")
+        rep = fw.clone_fallback_asset(data, pid, donor, ress,
+                                      extra_cps or None)
+        extra_files[os.path.basename(display) + ".resS"] = \
+            rep["new_ress_bytes"]
+    elif mode == "link":
+        if not donor_tmp:
+            raise ValueError("mode link can ten TMP donor (donor_tmp)")
+        _ids, names = fw._confirmed_tmp_ids(sf)
+        donor_pid = None
+        for cand_pid, cand_nm in names.items():
+            if cand_nm == donor_tmp or donor_tmp in cand_nm:
+                donor_pid = cand_pid
+                break
+        if donor_pid is None:
+            raise ValueError("khong tim thay TMP donor %r trong cung file"
+                           % donor_tmp)
+        rep = fw.link_fallback(data, pid, donor_pid)
+    elif mode == "global_link":
+        rep = fw.link_global_fallback(data, pid)
+    else:  # noqa: SIM108 - khong toi duoc (mode da kiem o tren)
+        raise ValueError("mode %r khong ho tro" % mode)
+    report = {k: v for k, v in rep.items()
+              if k not in ("patched_sf_bytes", "new_atlas_bytes",
+                           "new_ress_bytes")}
+    report.update({"mode": mode, "asset": nm, "path_id": pid,
+                   "source": display, "dry_run": bool(dry_run),
+                   "extra_codepoints": list(extra_cps)})
+    changed = rep.get("status") != "already_linked"
+    out = "/tmp/font_writeback.json"
+    with open(out, "w", encoding="utf-8") as fh:
+        json.dump(report, fh, ensure_ascii=False, indent=1)
+    if dry_run or not changed:
+        return json.dumps(dict(report, ok=True, dest=out,
+                               filename="font_writeback.json"),
+                          ensure_ascii=False)
+    zpath = "/tmp/font_writeback.zip"
+    with zipfile.ZipFile(zpath, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr(os.path.basename(display), rep["patched_sf_bytes"])
+        for name, blob in extra_files.items():
+            zf.writestr(name, blob)
+        zf.writestr("font_writeback.json",
+                    json.dumps(report, ensure_ascii=False, indent=1))
+    return json.dumps(dict(report, ok=True, dest=zpath,
+                           filename="font_writeback.zip"),
+                      ensure_ascii=False)
+
+
+def font_writeback(path, asset_name=None, mode="auto", extra="",
+                   dry_run=True, donor_path=None, donor_tmp=None):
+    """Ghi nguoc font tieng Viet vao file game (F2, THU NGHIEM).
+
+    path: file game (IPA/.assets/.unity3d/thu muc). asset_name: ten TMP
+    asset / Font object (vd "Aniara_Light SDF", "Perfect DOS VGA 437";
+    de trong = asset dau tien) hoac so thu tu. mode: auto (chi lap ke
+    hoach, khong ghi) / tmp_sdf (TMP Static SDF: tai tao atlas + bang
+    glyph roi ghi) / font_merge (Font object TTF/OTF: gop glyph roi
+    chen) / fallback_clone (nhan ban TMP fallback tu donor Be Vietnam
+    Pro) / link (them 1 TMP vao bang fallback cua TMP dich) /
+    global_link (them TMP dich vao danh sach fallback toan cuc TMP
+    Settings). extra: ky tu can them (vd "aàáâ..." hoac "U+1EA0").
+    dry_run=True (mac dinh): chi tinh + bao cao, khong ghi file game.
+    dry_run=False: ghi ban .assets/.resS da sua ra /tmp/font_writeback
+    .zip de tai ve (file goc khong bi dong vao). donor_tmp: ten TMP
+    donor cho mode link. Ap dung gate + verify trong sdk truoc khi tra.
+    """
+    try:
+        _check_size(path)
+        extra_cps = _parse_extra_codepoints(extra)
+        mode = str(mode or "auto").strip().lower()
+        if mode not in ("auto", "tmp_sdf", "font_merge", "fallback_clone",
+                        "link", "global_link"):
+            return _err(ValueError(
+                "mode %r khong ho tro (auto/tmp_sdf/font_merge/"
+                "fallback_clone/link/global_link)" % mode))
+        if isinstance(dry_run, str):
+            dry_run = dry_run.strip().lower() in ("1", "true", "yes", "on")
+        if mode == "auto":
+            return _font_writeback_plan(path)
+        return _font_writeback_run(path, asset_name, mode, extra_cps,
+                                   dry_run, donor_path, donor_tmp)
     except Exception as e:  # noqa: BLE001
         return _err(e)
 
