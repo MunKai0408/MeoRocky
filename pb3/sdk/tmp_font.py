@@ -238,6 +238,9 @@ def find_face_info(data: bytes, start: int, endian: str):
                         "scale": round(sc, 3), "declared_char_count": cc,
                         "line_height": round(lh, 2), "atlas_width": None,
                         "atlas_height": None, "atlas_basis": None,
+                        # Vi tri ghi nguoc (F2): pointSize float o e,
+                        # CharacterCount int o e+8.
+                        "point_size_offset": e, "count_offset": e + 8,
                     }
                     for key, slot in _FACEINFO_COMMON:
                         info[key] = _f32(data, e + 4 * slot, endian)
@@ -324,6 +327,10 @@ def find_face_info_new(data: bytes, start: int, endian: str):
                                 "line_height": round(lh, 2),
                                 "atlas_width": None, "atlas_height": None,
                                 "atlas_basis": None, "format": "new",
+                                # Vi tri ghi nguoc (F2): pointSize INT o f,
+                                # CharacterCount int o f+8.
+                                "point_size_offset": f,
+                                "count_offset": f + 8,
                             }
                             info["ascender"] = _f32(data, f + 16, endian)
                             info["cap_height"] = _f32(data, f + 20, endian)
@@ -727,6 +734,10 @@ def decode_object(data: bytes, endian: str, ctx=None) -> dict:
             "atlas_height": fi["atlas_height"],
             "atlas_basis": fi["atlas_basis"],
             "offset": fi["offset"],
+            # Vi tri ghi nguoc (F2): de ben goi patch CharacterCount /
+            # PointSize dung ban FaceInfo nay.
+            "count_offset": fi.get("count_offset"),
+            "point_size_offset": fi.get("point_size_offset"),
         }
     else:
         problems.append("Không thấy neo FaceInfo (tên font + PointSize/Scale/"

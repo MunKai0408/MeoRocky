@@ -23,7 +23,14 @@ class TestErrorCodes(unittest.TestCase):
         ext = {c for c, s in errors.ERROR_SPECS.items() if s.extension}
         self.assertEqual(ext, {"E_UNSUPPORTED_ON_ISH", "E_CONFIG_INVALID", "E_TOO_LARGE", "E_IO",
                                "E_CORRUPT", "E_NOT_IMPLEMENTED", "E_NETWORK", "E_TIMEOUT",
-                               "E_WRITE_WAVE"})
+                               "E_WRITE_WAVE",
+                               "E_CHAR_TABLE", "E_TMP_LAYOUT", "E_NO_ATLAS",
+                               "E_NO_SOURCE_FONT", "E_NO_MATERIAL",
+                               "E_NO_TMP_SETTINGS", "E_NO_FALLBACK_VECTOR",
+                               "E_NO_FALLBACK_ASSET", "E_BITMAP_ATLAS",
+                               "E_ATLAS_FULL", "E_REGEN_DROPS_GLYPHS",
+                               "E_DONOR_MISSING", "E_CLONE_REF",
+                               "E_FALLBACK_AFTER", "E_ALREADY_LINKED"})
 
     def test_every_code_has_vi_message_and_valid_exit(self):
         for c, s in errors.ERROR_SPECS.items():

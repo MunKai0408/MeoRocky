@@ -91,7 +91,9 @@ def parse_texture2d(raw, endian):
             (ssize,) = struct.unpack_from(endian + "I", raw, p - 4)
         except Exception:
             continue
-        stream = {"offset": soffset, "size": ssize, "path": path}
+        # Vi tri ghi nguoc (F2): offset u64 o p-12, size u32 o p-4.
+        stream = {"offset": soffset, "size": ssize, "path": path,
+                  "offset_pos": p - 12, "size_pos": p - 4}
         break
     return {"name": name, "width": width, "height": height,
             "complete": complete, "format": fmt, "mip": mip,
@@ -161,22 +163,30 @@ def find_atlas_texture(sf, tmp_name):
     Co the co nhieu Texture2D cung ten (vd 9K: 1 stub 1x1 khong stream
     + 1 atlas that co stream) — uu tien cai co stream (.resS); neu
     khong co cai nao co stream thi tra cai dau tien.
+    Ten texture co the dung ten day du ("<TMP> Atlas") hoac ten goc
+    ("<Base> Atlas", vd PB3 Fedoka: TMP "Fedoka-Regular SDF - DYNAMIC"
+    nhung texture "Fedoka-Regular Atlas") — thu ca 2, uu tien ten day
+    du (F2).
     """
-    want = tmp_name + " Atlas"
+    wants = [tmp_name + " Atlas"]
+    base = _base_name(tmp_name)
+    if base != tmp_name:
+        wants.append(base + " Atlas")
     first = None
-    for o in sf.objects:
-        if o.class_id != TEXTURE_CLASS_ID:
-            continue
-        try:
-            raw = sf.object_bytes(o.path_id)
-        except Exception:
-            continue
-        info = parse_texture2d(raw, sf.endian)
-        if info and info["name"] == want:
-            if first is None:
-                first = (o.path_id, info)
-            if info.get("stream"):
-                return o.path_id, info
+    for want in wants:
+        for o in sf.objects:
+            if o.class_id != TEXTURE_CLASS_ID:
+                continue
+            try:
+                raw = sf.object_bytes(o.path_id)
+            except Exception:
+                continue
+            info = parse_texture2d(raw, sf.endian)
+            if info and info["name"] == want:
+                if first is None:
+                    first = (o.path_id, info)
+                if info.get("stream"):
+                    return o.path_id, info
     return first
 
 
@@ -297,6 +307,9 @@ def regen_tmp_asset(sf, tmp_path_id, extra_codepoints,
             "median_mae": err["median_mae"], "mean_mae": err["mean_mae"],
             "pct_lt3": err["pct_lt3"], "pass": err["pass"],
             "worst": err["worst"],
+            # Rows day du de chan doan MAE (F2, sdk/font_writeback) —
+            # khoi do lai 1 lan nua.
+            "mae_rows": err.get("rows"),
             "new_atlas": gen["atlas"], "new_table": new_table,
             "new_count": len(gen["glyphs"]),
             "table_offset": gt["offset"], "table_stride": gt["stride"],
