@@ -108,8 +108,12 @@ function gameExtOk(name) {
   return GAME_EXTS.some((ext) => lower.endsWith(ext)) || lower.endsWith(GZIP_EXT);
 }
 function gameExtError(name) {
+  // Đuôi liệt kê dựng động từ GAME_EXTS + GZIP_EXT để không lệch nhau
+  // nữa (trước đây đoạn cứng ".ipa/.zip/..." thiếu .bundle trong khi
+  // GAME_EXTS đã có — lỗi hiển thị v69).
+  const allExts = GAME_EXTS.concat(GZIP_EXT);
   return "File \"" + name + "\" không phải định dạng PB3 hỗ trợ (" +
-    GAME_EXTS.join(", ") + ", " + GZIP_EXT + "). Hãy chọn file .ipa/.zip/.unity3d/.assets/.ttf/.json/.tar.xz/.gz.";
+    allExts.join(", ") + "). Hãy chọn file " + allExts.join("/") + ".";
 }
 
 function fmtBytes(n) {
@@ -967,7 +971,7 @@ async function maybeShowIpaZipHint(el) {
 // Nút “Chọn lại file” (mục C) ở MỖI dòng, 2 trường hợp thật:
 //  - Còn trong phiên (dữ liệu còn trong state.file / state.batchFiles):
 //    mở lại NGAY, không mở hộp chọn file — file game (.ipa/.zip/.unity3d/
-//    .assets/.tar.xz/.gz) thành file hiện tại rồi mở tab Danh sách (không
+//    .bundle/.assets/.tar.xz/.gz) thành file hiện tại rồi mở tab Danh sách (không
 //    boot worker, xem nhanh được ngay); .ttf mở tab Font; .json mở trong
 //    tab Mod (đọc từ dữ liệu trong phiên, giữ thứ tự key gốc).
 //  - Hết phiên (chỉ còn metadata localStorage): mở hộp chọn file
