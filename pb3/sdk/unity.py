@@ -1766,6 +1766,31 @@ class SerializedFile:
         self._text_cache = out
         return list(out)
 
+    def textures(self, warnings=None):
+        """[(path_id, name)] cho moi object Texture2D (class 28).
+
+        Ten = aligned_string dau tien trong du lieu object (m_Name).
+        Texture co the chua chu ve trong anh (F4) — chi liet ke ten de
+        canh bao nguoi dung, KHONG OCR, KHONG giai ma anh. Object
+        Texture2D doc loi bi bo qua kem ghi chu vao `warnings` (neu co)
+        thay vi lam hong ca file, nhu text_assets()."""
+        out = []
+        notes = []
+        for o in self.objects:
+            if o.class_id != 28:
+                continue
+            try:
+                raw = self.object_bytes(o.path_id)
+                name = _Reader(raw, self.endian).aligned_string()
+            except PB3Error as exc:
+                notes.append("bỏ qua Texture2D path_id=%d (%s)"
+                             % (o.path_id, exc.code))
+                continue
+            out.append((o.path_id, name))
+        if warnings is not None:
+            warnings.extend(notes)
+        return out
+
     def monobehaviour_texts(self, warnings=None):
         """Text trong mọi object MonoBehaviour (class 114).
 

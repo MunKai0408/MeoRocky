@@ -112,6 +112,17 @@ ERROR_SPECS: Dict[str, ErrorSpec] = dict([
        "Dừng ghi ngay, lưu checkpoint (anti_wave) rồi thử lại sau; "
        "kiểm tra bằng probe_wave() trước khi ghi tiếp.",
        EXIT_SAFETY, True),
+    # --- F4 (2026-11-22): Mono DLL ---
+    # E_TOO_LONG: bản dịch dài hơn chuỗi gốc mà heap #US không còn chỗ
+    # dời tới (không còn slot trống đủ lớn) — từ chối rõ ràng, không ghi.
+    _s("E_TOO_LONG", "Bản dịch dài hơn chuỗi gốc mà không còn chỗ dời trong heap.",
+       "Rút ngắn bản dịch, hoặc rút ngắn một chuỗi khác trong cùng DLL để "
+       "giải phóng slot rồi vá lại.", EXIT_USER, True),
+    # E_STRONG_NAME: DLL ký strong-name — vá byte sẽ phá chữ ký, runtime
+    # từ chối load. Từ chối thay vì giao DLL hỏng.
+    _s("E_STRONG_NAME", "DLL đã ký strong-name; vá sẽ phá chữ ký.",
+       "Dùng bản DLL chưa ký, hoặc ký lại bằng key của tác giả sau khi vá.",
+       EXIT_SAFETY, True),
 ])
 
 _CTRL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")

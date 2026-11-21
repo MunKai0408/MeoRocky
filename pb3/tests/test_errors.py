@@ -23,7 +23,7 @@ class TestErrorCodes(unittest.TestCase):
         ext = {c for c, s in errors.ERROR_SPECS.items() if s.extension}
         self.assertEqual(ext, {"E_UNSUPPORTED_ON_ISH", "E_CONFIG_INVALID", "E_TOO_LARGE", "E_IO",
                                "E_CORRUPT", "E_NOT_IMPLEMENTED", "E_NETWORK", "E_TIMEOUT",
-                               "E_WRITE_WAVE"})
+                               "E_WRITE_WAVE", "E_TOO_LONG", "E_STRONG_NAME"})
 
     def test_every_code_has_vi_message_and_valid_exit(self):
         for c, s in errors.ERROR_SPECS.items():

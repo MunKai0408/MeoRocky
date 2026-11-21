@@ -611,7 +611,17 @@ CONTAINER_EXTENSIONS = frozenset([
     # inventory()).
     ".pck", ".pak",
 ])
-UNITY_EXTENSIONS = frozenset([".assets", ".unity3d", ".bundle", ".resS"])
+UNITY_EXTENSIONS = frozenset([".assets", ".unity3d", ".bundle", ".resS",
+                               # F4: file scene Unity dung rieng (.unity) —
+                               # SerializedFile nhu .assets, chua text UI
+                               # (TextMeshPro/UI Text) gan truc tiep object.
+                               ".unity"])
+# F4: scene iOS khong co duoi file (level0..level9 trong Data/) — nhan
+# dang theo TEN (SerializedFile khong co magic de sniff: 16 byte dau
+# toan 0). Chi ten dung `level<N>` moi tinh; file ten khac khong duoi
+# van la "file" nhu cu (tranh nhan nham). Parse loi thi _build_layers
+# ghi skipped co ly do, khong bo qua lang le.
+_LEVEL_FILE_RE = re.compile(r"^level\d+$", re.I)
 # Bộ tuple dùng cho str.endswith (đừng dựng lại mỗi entry trong inventory).
 _UNITY_EXTS_TUPLE = tuple(UNITY_EXTENSIONS)
 
@@ -716,8 +726,9 @@ def inventory(vfs: VFS, limits, *, prefix: str = "", depth: int = 0,
 
     - Entry container -> mở bằng open_vfs, liệt kê tiếp (tối đa
       limits.max_depth; vượt -> E_ARCHIVE_BOMB).
-    - Entry Unity (.assets/.unity3d/.bundle/UnityFS) -> kind 'unity' (pipeline
-      mở rộng thành TextAsset ảo ở bước sau, không liệt kê như container).
+    - Entry Unity (.assets/.unity3d/.bundle/.unity/scene levelN/UnityFS)
+      -> kind 'unity' (pipeline mo rong thanh TextAsset ao o buoc sau,
+      khong liet ke nhu container).
     - 7z -> kind 'excluded', lý do rõ ràng (chưa có backend).
     - Tổng số entry vượt limits.max_entries -> E_ARCHIVE_BOMB.
     - on_entry(đã_liệt_kê, tên_entry): callback sau mỗi entry (kể cả entry
@@ -762,7 +773,8 @@ def inventory(vfs: VFS, limits, *, prefix: str = "", depth: int = 0,
                                       "7z chưa có backend (E_UNSUPPORTED_FORMAT)"))
             _tick(full)
             continue
-        if low.endswith(_UNITY_EXTS_TUPLE) or head[:7] == b"UnityFS":
+        if low.endswith(_UNITY_EXTS_TUPLE) or head[:7] == b"UnityFS" \
+                or _LEVEL_FILE_RE.match(os.path.basename(name)):
             out.append(InventoryEntry(full, [], name, size, "unity",
                                       score_text_likelihood(name, head, size)))
             _tick(full)
