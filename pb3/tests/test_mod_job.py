@@ -45,11 +45,13 @@ font_fx = _importlib_util.module_from_spec(_spec)  # noqa: E402
 _spec.loader.exec_module(font_fx)  # noqa: E402
 
 from core.errors import PB3Error  # noqa: E402
+from core.limits import Limits  # noqa: E402
 from sdk import colab_job as cj  # noqa: E402
 from sdk import gate as _gate  # noqa: E402
 from sdk import mod_job as mj  # noqa: E402
 from sdk import rebuild as _rb  # noqa: E402
 from sdk import repack as _rp  # noqa: E402
+from sdk import unity as _u  # noqa: E402
 from tests.tiering import slow  # noqa: E402
 
 DEAD_CELLS_ID = "18zGyS-P9VHY-sOCdOHOw70msSzm6_eqM"
@@ -481,14 +483,15 @@ class TestModJobRoundTripRealGames(TmpCase):
     """Round-trip tren game Unity that (chi chay khi IPA co san o
     ~/workspace/test-ipas — bo qua neu thieu). Ban dich [FIXTURE]:
     gia tri goc + tien to "[VI] " (giu nguyen placeholder, doi moi
-    key) — khong phai ban dich that cua user. EK2 khong round-trip
-    duoc (bundle ma hoa) nen co test fail-closed rieng, khong dung
-    _round_trip."""
+    key) — khong phai ban dich that cua user. EK2 co test liet ke
+    don vi rieng (F3: bundle khong con bi tu choi E_ENCRYPTED) —
+    round-trip day du EK2 chua do xong (cong day du > 30 phut duoi
+    tai, xem test do), khong dung _round_trip."""
 
     # Tran timeout rieng cho runner (run_tests.py: mac dinh 180s):
     # PB3 round-trip do that ~16 phut (cong 370s + ep 185s + repack
     # 58s + kiem lai 370s, test ~25 phut); 9K ~230s — ca 2 deu vuot
-    # 180s. EK2 fail-closed nhanh (~46s) nhung o chung lop nen
+    # 180s. EK2 liet ke don vi ~143s (F3 22/11) nhung o chung lop nen
     # cung huong tran nay (tran la gioi han tren, khong phai muc
     # tieu thoi gian).
     timeout_s = 1800
@@ -583,41 +586,34 @@ class TestModJobRoundTripRealGames(TmpCase):
         self.assertEqual(nkeys, 2252)
         self.assertGreater(repacked_size, 100 * 1024 * 1024)
 
-    def test_ek2_encrypted_bundles_gate_fails_closed(self):
-        """EK2 that: 100 bundle bi ma hoa (E_ENCRYPTED, flag 0x243) nen
-        cong FAIL, runner dung lai khong ep — dung thiet ke fail-closed,
-        khong phai loi tool (can IPA da giai ma bundle moi ep duoc).
-        [DA DO THAT: cong EK2 46,5 giay, refused 100, unmatched 1344.]
-        Du cong FAIL, bao cao + manifest van ve duoc web."""
+    def test_ek2_bundles_no_longer_refused_as_encrypted(self):
+        """EK2 that [DA DO THAT F3 22/11]: 100 bundle flag 0x243 KHONG
+        phai ma hoa — revision "0.0.0" bi xoa nen bit 0x200 la co padding
+        (co moi). Buoc liet ke don vi cua cong (rebuild._enumerate_units,
+        backend NATIVE nhu run_gate) tra 112 don vi (105 bundle + 7
+        .assets), refused 0 — khong con E_ENCRYPTED nao.
+        [DA DO THAT: _enumerate_units 142,8s tren may nay (backend NATIVE
+        dung lz4pure, duoi tai cua suite khac). Cong DAY DU thi CHUA do
+        xong — probe gate_only timeout 1800s ngay 22/11 (cong cu chi
+        46,5s vi tu choi nhanh ca 100 bundle), nen verdict cong + so
+        unmatched KHONG ghim o day; do lai tren may roi (Dung/Minh)
+        truoc khi round-trip EK2. en.json cu (1344 key) chi gom text
+        trich duoc luc bundle con bi tu choi, nay da loi thoi.]"""
         ipa = TEST_IPAS / "ek2-v0.0.18.ipa"
-        en_path = TEST_IPAS / "ek2-extract" / "en.json"
         if not ipa.is_file():
             self.skipTest("thieu IPA that: %s" % ipa)
-        if not en_path.is_file():
-            self.skipTest("thieu en.json that: %s" % en_path)
-        en = json.loads(en_path.read_text(encoding="utf-8"))
-        vi = self._vi_fixture(en)
-        src = _write_json(Path(self.tmp) / "en.json", en)
-        tr = _write_json(Path(self.tmp) / "vi.json", vi)
-        out = Path(self.tmp) / "out"
-        summary = mj.run_mod_job(
-            ipa_path=str(ipa), original_path=str(src),
-            translation_path=str(tr), out_dir=str(out),
-            game="ek2", target_lang="vi")
-        self.assertEqual(summary["status"], "gate_failed")
-        self.assertEqual(summary["gate_verdict"], "FAIL")
-        self.assertFalse(summary["applied"])
-        self.assertFalse(summary["repacked"])
-        self.assertEqual(summary["gate_totals"]["refused"], 100)
-        self.assertEqual(summary["gate_totals"]["unmatched"], 1344)
-        gate_back = json.loads(
-            (out / "gate-report.json").read_text(encoding="utf-8"))
-        self.assertIn("E_ENCRYPTED",
-                      json.dumps(gate_back, ensure_ascii=False))
-        manifest = cj.read_manifest(str(out / "handoff-manifest.json"))
-        self.assertEqual(manifest["status"], "done")
-        self.assertEqual(manifest["gate"]["verdict"], "FAIL")
-        self.assertEqual(manifest["files"][0]["name"], "gate-report.json")
+        data = ipa.read_bytes()
+        refused = []
+        units = _rb._enumerate_units(
+            data, _u.UnityBackend("NATIVE", Limits()), Limits(),
+            refused=refused)
+        self.assertEqual(len(units), 112)
+        kinds = {}
+        for _n, k in units:
+            kinds[k] = kinds.get(k, 0) + 1
+        self.assertEqual(kinds, {"bundle": 105, "assets": 7})
+        self.assertEqual(refused, [])
+        self.assertNotIn("E_ENCRYPTED", json.dumps(refused))
 
     def test_round_trip_pb3(self):
         summary, nkeys, repacked_size = self._round_trip(
