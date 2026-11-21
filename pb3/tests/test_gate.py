@@ -354,7 +354,7 @@ class TestGatePreWrite(unittest.TestCase):
         self.assertTrue(res["delivery_allowed"])
         self.assertEqual(res["mode"], "pre_write")
         self.assertEqual([c["status"] for c in res["checks"]],
-                         ["pass"] * 5)
+                         ["pass"] * 7)
         self.assertEqual(res["totals"]["changed"], 7)  # title giu nguyen
         self.assertEqual(res["totals"]["units"], 2)
         self.assertNotIn("dest", res)
