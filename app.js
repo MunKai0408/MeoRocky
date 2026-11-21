@@ -1787,8 +1787,10 @@ $("btn-unity-rawscan").addEventListener("click", async () => {
 // ---- Bảng dịch literals IL2CPP (2026-11-17) ----
 // Text chính kiểu Tom nằm trong global-metadata.dat: xuất thành bảng
 // dict LIT_%06d -> chuỗi để tab Dịch ăn được (không stringify list),
-// rồi vá tại chỗ từng literal (fail-closed: đối chiếu chuỗi gốc qua
-// manifest trước khi vá; dài hơn gốc thì bỏ qua kèm lý do) + đóng gói
+// rồi vá từng literal (fail-closed: đối chiếu chuỗi gốc qua
+// manifest trước khi vá; mặc định re-layout blob để ghi được cả bản
+// dịch dài hơn gốc, bỏ tick "Cho phép ghi dài hơn" để vá tại chỗ:
+// dài hơn gốc thì bỏ qua kèm lý do) + đóng gói
 // lại IPA bằng đường M2. state.il2cpp = {entry, tableKeys, fileKey,
 // patched} — đổi file thì hết hạn (kiểm bằng fileKey như rebuild).
 // Manifest + bảng đã vá nằm trong /tmp/pb3out (worker) — patch đọc
@@ -1851,22 +1853,26 @@ $("btn-il2cpp-patch").addEventListener("click", async () => {
     const msg = await callWorker("run", { fn: "read_extracted", args: ["il2cpp-literals.manifest.json"], files: [] });
     const man = JSON.parse(msg.result);
     if (!man || man.ok !== true) { showError("Không đọc được manifest literals — xuất lại bảng dịch trước khi ép."); return; }
+    const relayout = !($("il2cpp-relayout") && !$("il2cpp-relayout").checked);
     const { parsed } = await runOp("Ép bản dịch literals", "patch_il2cpp_literals",
-      [inputPath(), st.entry, tableText, man.text], inputFileArgs());
+      [inputPath(), st.entry, tableText, man.text, relayout], inputFileArgs());
     st.patched = (parsed.patched_count || 0) > 0;
-    const skipped = parsed.skipped || [];
+    const keyResults = parsed.key_results || [];
+    const skippedKeys = keyResults.filter((r) => r.outcome === "skipped");
     const box = $("il2cpp-result");
     if (box) {
       let html = "<p>✅ Đã ép <b>" + (parsed.patched_count || 0) + "</b> literal" +
-        (skipped.length ? " · <b>" + skipped.length + " key chưa ghi được</b> (bản dịch dài hơn gốc theo byte UTF-8 — không có đường ghi dài hơn, tool không giả vờ ghi được)" : " · không còn key nào chưa ghi được") + ".</p>";
-      if (skipped.length) {
+        (parsed.mode === "relayout" ? " (re-layout: file " + fmtBytes(parsed.old_size || 0) + " → " + fmtBytes(parsed.new_size || 0) + ")" : " (vá tại chỗ)") +
+        (skippedKeys.length ? " · <b>" + skippedKeys.length + " key chưa ghi được</b> (xem lý do từng key bên dưới — tool không giả vờ ghi được)" : " · không còn key nào chưa ghi được") + ".</p>";
+      if (skippedKeys.length) {
         html += "<table><tr><th>Key</th><th>Lý do</th></tr>";
-        skipped.slice(0, 20).forEach((s) => {
-          html += "<tr><td>" + esc(s.key || "") + "</td><td>" + esc(s.reason || "") + "</td></tr>";
+        skippedKeys.slice(0, 20).forEach((s) => {
+          html += "<tr><td>" + esc(s.key || ("LIT_" + s.index)) + "</td><td>" + esc(s.reason || "") + "</td></tr>";
         });
         html += "</table>";
-        if (skipped.length > 20) html += "<p class=\"note\">… còn " + (skipped.length - 20) + " key nữa.</p>";
+        if (skippedKeys.length > 20) html += "<p class=\"note\">… còn " + (skippedKeys.length - 20) + " key nữa.</p>";
       }
+      if (parsed.mode === "relayout") html += "<p class=\"note\">Re-layout dời nguyên vẹn các section sau blob literal (verify đọc lại đạt) nhưng game có chạy được với metadata đã dời không thì CHƯA kiểm chứng trên máy thật — test kỹ trên máy trước khi dùng lâu dài.</p>";
       html += "<p class=\"note\">File metadata đã vá lưu trong phiên làm việc — bấm “Đóng gói lại IPA (literals)” để nhận file IPA đã mod.</p>";
       box.innerHTML = html;
     }
