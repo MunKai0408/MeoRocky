@@ -53,13 +53,14 @@
 |---|---|---|---|---|
 | UnityFS v6/v7/v8 (bundle) | có | có (dựng lại bundle, giữ compression gốc) | Python thuần + lz4/lzma | M2 |
 | UnityFS v9 (bundle) | có (chỉ đọc; BlockInfo có offset u64, block căn 16) | không (v9 chỉ đọc — dựng lại bundle v9 chưa hỗ trợ) | Python thuần | M2 |
-| Zstd (block bundle, mã nén 5) | có — CHỈ trên web BearTea (qua fzstd, cầu nối JS) | không (ghi lại bằng block không nén, cờ 0) | fzstd 0.1.1 (MIT, vendored site/fzstd/) | M2 |
+| UnityFS v8 cờ 0x200 + revision 0.0.0 (EK2) | có — bit 0x200 là cờ padding (cờ mới), KHÔNG phải mã hoá (100/100 bundle EK2 v0.0.18 parse được [ĐÃ ĐO THẬT 22/11]) | có (giữ nén LZ4HC gốc; cờ padding đặt lại theo layout ghi) | Python thuần | M2 |
+| Zstd (block bundle, mã nén 5) | có — CHỈ trên web BearTea (qua fzstd, cầu nối JS) | không (ghi lại bằng block không nén, cờ 0) — đánh giá F3 22/11: 0/1904 bundle thật dùng mã 5; fzstd vendored CHỈ giải nén, không có encoder nên chưa cài ghi Zstd | fzstd 0.1.1 (MIT, vendored site/fzstd/) | M2 |
 | SerializedFile v15-26 (.assets) | có (metadata, object table, TextAsset; v23+ type tree có ref hashes, v26 shared subtrees) | có (patch TextAsset: PATCH_INPLACE / REBUILD_SECTION) | Python thuần | M2 |
 | LZ4 block / LZ4HC | có | có | binding lz4 (ưu tiên) / Python thuần (literal-only khi ghi) | M2 |
 | LZ4 frame | có | chỉ qua binding lz4 | binding lz4.frame (ưu tiên) / Python thuần (chỉ đọc) | M2 |
 | LZMA (Unity raw) | có | có | lzma (thư viện chuẩn) | M2 |
 | UnityPy (object phức tạp) | khi cài được | khi cài được | UnityPy 1.25.4 (iSH đã chứng minh) | M2 |
-| SerializedFile v<15 / v>26, UnityWeb/UnityRaw, LZHAM, bundle mã hóa | không | không | chưa có (E_UNSUPPORTED_FORMAT / E_ENCRYPTED) | M0 |
+| SerializedFile v<15 / v>26, UnityWeb/UnityRaw, LZHAM, bundle mã hóa thật | không | không | chưa có (E_UNSUPPORTED_FORMAT / E_ENCRYPTED — xem classify_bundle_encryption để phân loại) | M0 |
 
 ## Đã xác minh trên game thật
 

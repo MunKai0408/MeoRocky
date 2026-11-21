@@ -52,6 +52,31 @@ v24+ ở SerializedFile (SUPPORTED_SF_VERSIONS):
   worker.js công bố (tiền lệ: `js.pb3_google_translate`); ngoài trình
   duyệt thì báo lỗi rõ ràng thay vì crash. Ghi Zstd KHÔNG hỗ trợ:
   dựng lại bundle dùng block không nén (cờ nén 0).
+  Đánh giá F3 (22/11) [ĐÃ ĐO THẬT]: khảo sát 1.904 bundle UnityFS thật
+  (EK2 100 + 9K 7 + Tom 1 + PB3 297 + Knightica 15 + Kusa 1.484) — TẤT CẢ
+  dùng nén LZ4HC (mã 3), 0 bundle dùng mã 5; fzstd vendored CHỈ export
+  `decompress`/`Decompress` (không có encoder — kiểm chứng bằng import
+  trong Node: `compress` không tồn tại) nên cài ghi Zstd cần vendor thêm
+  encoder + đường cầu nối JS riêng, trong khi chưa có bundle Zstd thật
+  nào để kiểm chứng — KHÔNG cài; giữ ghi lại bằng block không nén.
+  Build_bundle đã giữ nén gốc LZMA/LZ4/LZ4HC (mọi mã nén gặp trong dữ
+  liệu thật); chỉ Zstd rơi về không nén.
+- Mã hóa bundle (F3): bit 0x200 là HAI nghĩa — cờ mã hóa (cờ CŨ, Unity
+  < 2020.3.34/2021.3.2/2022.1.1) hoặc cờ padding đầu vùng block data
+  (cờ MỚI); chọn theo unityRevision. Revision "0.0.0" (toàn 0) coi như
+  không xác định -> cờ mới (không có bản Unity thật nào mang 0.0.0).
+  EK2 v0.0.18 [ĐÃ ĐO THẬT 22/11]: 100/100 bundle flag 0x243, revision
+  "0.0.0" — blocks-info giải LZ4HC bình thường (block_count 452/368...),
+  parse toàn bộ được 197 entry, payload 1.125.039.389 B, 105 file SF
+  trong payload TẤT CẢ v22 — KHÔNG hề mã hóa, chỉ bị nhận nhầm trước
+  đây vì (0, 0, 0) < 2020. `classify_bundle_encryption(data)` phân loại
+  theo dữ liệu thật: none / padding_flag / xor_single_byte (magic hoặc
+  blocks-info XOR 1 byte — chỉ chẩn đoán, chưa cài giải mã vì chưa có
+  mẫu thật) / header_obscured / encrypted (blocks-info không giải được
+  plain + XOR 1 byte — mã hóa thật, giữ E_ENCRYPTED) / unparseable /
+  not_a_bundle. Lỗi E_ENCRYPTED nay ghi rõ flag + revision + bộ cờ áp
+  dụng; magic bị XOR 1 byte thì báo E_ENCRYPTED kèm key thay vì
+  E_UNSUPPORTED_FORMAT chung chung.
 - LZ4 block: token nibble; LZ4HC cùng format block; LZMA Unity: LZMA1
   thô (props 0x5D, dict 0x800000), đầu 5 byte.
 - TextAsset = aligned_string(m_Name) + aligned_string(m_Script).
@@ -137,8 +162,15 @@ def support_matrix():
         {"format": "UnityFS v9 (bundle)", "read": "có (BlockInfo có offset u64, block căn 16)",
          "write": "có (dựng lại bundle, giữ compression gốc; offset u64 + căn 16)",
          "backend": "Python thuần", "maturity": "M2"},
+        {"format": "UnityFS v8 cờ 0x200 + revision 0.0.0 (EK2)",
+         "read": "có — bit 0x200 là cờ padding (cờ mới), KHÔNG phải mã hoá "
+                 "(100/100 bundle EK2 v0.0.18 parse được [ĐÃ ĐO THẬT 22/11])",
+         "write": "có (giữ nén LZ4HC gốc; cờ padding đặt lại theo layout ghi)",
+         "backend": "Python thuần", "maturity": "M2"},
         {"format": "Zstd (block bundle, mã nén 5)", "read": "có — CHỈ trên web BearTea (qua fzstd, cầu nối JS)",
-         "write": "không (ghi lại bằng block không nén, cờ 0)",
+         "write": "không (ghi lại bằng block không nén, cờ 0) — đánh giá F3 "
+                  "22/11: 0/1904 bundle thật dùng mã 5; fzstd vendored CHỈ "
+                  "giải nén, không có encoder nên chưa cài ghi Zstd",
          "backend": "fzstd 0.1.1 (MIT, vendored site/fzstd/)", "maturity": "M2"},
         {"format": "SerializedFile v15-26 (.assets)", "read": "có (metadata, object table, TextAsset; v23+ type tree có ref hashes, v26 shared subtrees)",
          "write": "có (patch TextAsset: PATCH_INPLACE / REBUILD_SECTION)",
@@ -154,9 +186,12 @@ def support_matrix():
         {"format": "UnityPy (object phức tạp)", "read": "khi cài được",
          "write": "khi cài được", "backend": "UnityPy 1.25.4 (iSH đã chứng minh)",
          "maturity": "M2"},
-        {"format": "SerializedFile v<15 / v>26, UnityWeb/UnityRaw, LZHAM, bundle mã hóa",
-         "read": "không", "write": "không",
-         "backend": "chưa có (E_UNSUPPORTED_FORMAT / E_ENCRYPTED)", "maturity": "M0"},
+        {"format": "SerializedFile v<15 / v>26, UnityWeb/UnityRaw, LZHAM, bundle mã hóa thật",
+         "read": "không",
+         "write": "không",
+         "backend": "chưa có (E_UNSUPPORTED_FORMAT / E_ENCRYPTED — xem "
+                    "classify_bundle_encryption để phân loại: padding_flag / "
+                    "xor_single_byte / header_obscured / encrypted)", "maturity": "M0"},
     ]
 
 
@@ -333,9 +368,17 @@ def _uses_new_flags(engine_version):
     (BundleFile.parse_version) cũng lấy version_engine. Dùng nhầm player
     version thì bundle Unity 2019 thật sẽ bị nhận cờ mới: cờ mã hóa 0x200
     bị bỏ qua, cờ padding 0x200 bị hiểu sai (bug tiềm ẩn, decisions #78).
-    Không parse được -> True (mặc định cờ mới, đúng với bundle hiện đại)."""
+    Không parse được -> True (mặc định cờ mới, đúng với bundle hiện đại).
+    Revision "0.0.0" (toàn 0) cũng coi như không xác định -> True: không
+    có bản Unity thật nào mang số 0.0.0 — đó là trường bị xóa/scrubbed
+    (EK2 v0.0.18: cả 100 bundle ghi revision "0.0.0" nhưng blocks-info
+    giải LZ4HC bình thường, bit 0x200 là cờ padding — xem F3
+    classify_bundle_encryption; trước fix này EK2 bị nhận nhầm là mã hóa
+    vì (0, 0, 0) < 2020)."""
     v = parse_unity_version(engine_version)
     if not v:
+        return True
+    if v == (0, 0, 0):
         return True
     if v[0] < 2020:
         return False
@@ -866,6 +909,183 @@ def detect_bundle(data):
             "unity_version": player, "unity_revision": engine}
 
 
+def _xor_magic_key(data):
+    """Key XOR 1 byte khoi phuc duoc magic "UnityFS", hoac None.
+
+    Chi thu 7 byte dau (magic), re va khong giai ma gi them."""
+    if len(data) < 7:
+        return None
+    for key in range(1, 256):
+        if bytes(b ^ key for b in bytes(data[:7])) == UNITYFS_MAGIC:
+            return key
+    return None
+
+
+def _blocks_info_bytes(data, version, unity_revision, data_flags,
+                       comp_info_size, uncomp_info_size, header_end):
+    """Lay khoi blocks-info (dang nen) tu bundle, hoac None neu vi tri
+    khong hop le. Chi cat bytes, khong giai nen (dung chung cho
+    classify_bundle_encryption)."""
+    if version >= 7 or parse_unity_version(unity_revision) >= (2019, 4, 15):
+        start = _align_up(header_end, 16)
+    else:
+        start = header_end
+    if comp_info_size > len(data) or uncomp_info_size < 0:
+        return None
+    if data_flags & FLAG_BLOCKS_INFO_AT_END:
+        info_start = len(data) - comp_info_size
+        if info_start < start:
+            return None
+        return data[info_start:]
+    info = data[start:start + comp_info_size]
+    if len(info) != comp_info_size:
+        return None
+    return info
+
+
+def _try_decompress_blocks_info(info_comp, uncomp_size, compression, where):
+    """Thu giai nen blocks-info; tra bytes neu giai duoc VA co dang
+    blocks-info hop le (hash 16 byte + block_count 0..100000), khong thi
+    None. Chi la probe chan doan (backend NATIVE: khong import UnityPy)."""
+    if info_comp is None or uncomp_size < 20:
+        return None
+    try:
+        backend = UnityBackend("NATIVE")
+        raw = backend.decompress(info_comp, uncomp_size, compression,
+                                 where=where)
+    except Exception:  # noqa: BLE001 - probe that bai la ket qua, khong phai loi
+        return None
+    if len(raw) < 20:
+        return None
+    block_count = struct.unpack(">i", raw[16:20])[0]
+    if block_count < 0 or block_count > 100000:
+        return None
+    return raw
+
+
+def classify_bundle_encryption(data):
+    """Phan loai bundle ma hoa theo DU LIEU THAT, khong theo suy doan (F3).
+
+    Tra dict {"kind", "detail", "flags", "unity_revision", "xor_key"}.
+    kind:
+      "none" — khong co bit ma hoa nao bat theo cach doc co ap dung duoc.
+      "padding_flag" — bit 0x200 chi la co padding (co moi), KHONG phai ma
+        hoa: revision 0.0.0/khong xac dinh + parse_bundle doc duoc toan bo.
+        (EK2 v0.0.18: 100/100 bundle kieu nay [DA DO THAT].)
+      "xor_single_byte" — magic "UnityFS" bi XOR 1 byte (khoi phuc duoc
+        bang xor_key), hoac blocks-info XOR 1 byte thi giai duoc. Chi la
+        chan doan: CHUA cai giai ma vi chua co mau that de kiem chung
+        toan bo block data — giu E_ENCRYPTED kem key de buoc sau cai dat.
+      "header_obscured" — magic sai va khong co key XOR 1 byte nao khoi
+        phuc duoc "UnityFS": header bi che dang khac hoac khong phai
+        bundle Unity.
+      "encrypted" — bit ma hoa bat va blocks-info khong giai duoc (thu
+        plain + XOR 1 byte deu that bai): ma hoa that, chua co bo giai
+        ma; giu E_ENCRYPTED kem giai thich cu the.
+      "unparseable" — header doc duoc nhung phan loai khong ket luan duoc
+        (version chua ho tro / parse that bai vi ly do khac ma hoa).
+      "not_a_bundle" — qua ngan hoac header cat cut.
+    Ham nay CHI chan doan: khong giai ma, khong ghi gi, khong doi du lieu.
+    """
+    data = bytes(data)
+    result = {"kind": "not_a_bundle", "detail": "", "flags": None,
+              "unity_revision": None, "xor_key": None}
+    if len(data) < 7:
+        result.update({
+            "kind": "not_a_bundle",
+            "detail": "file qua ngan (< 7 byte), khong phai bundle Unity."})
+        return result
+    if bytes(data[:7]) != UNITYFS_MAGIC:
+        key = _xor_magic_key(data)
+        if key is not None:
+            result.update({
+                "kind": "xor_single_byte", "xor_key": key,
+                "detail": ("magic 'UnityFS' bi XOR 1 byte (key 0x%02x) — "
+                           "co the la bundle XOR don gian; chua cai giai ma "
+                           "vi chua co mau that de kiem chung toan bo block "
+                           "data." % key)})
+            return result
+        result.update({
+            "kind": "header_obscured",
+            "detail": ("khong phai UnityFS (magic sai) va khong co key XOR "
+                       "1 byte nao khoi phuc duoc magic — header bi che "
+                       "dang khac hoac khong phai bundle Unity.")})
+        return result
+    try:
+        r = _Reader(data, ">", where="bundle")
+        r.read(8)
+        version = r.u32()
+        player = r.string_to_null()
+        engine = r.string_to_null()
+        total_size, comp_info_size, uncomp_info_size, data_flags = r.unpack("QIII")
+        header_end = r.pos
+    except PB3Error:
+        result.update({
+            "kind": "not_a_bundle",
+            "detail": "magic UnityFS dung nhung header doc khong duoc (cat cut)."})
+        return result
+    result["flags"] = data_flags
+    result["unity_revision"] = engine
+    if version not in SUPPORTED_BUNDLE_VERSIONS:
+        result.update({
+            "kind": "unparseable",
+            "detail": ("UnityFS version %d chua ho tro (chi %s) — khong phan "
+                       "loai ma hoa duoc." %
+                       (version, "/".join(map(str, SUPPORTED_BUNDLE_VERSIONS))))})
+        return result
+    new_flags = _uses_new_flags(engine)
+    encryption_flag = FLAG_ENCRYPTION_NEW if new_flags else FLAG_ENCRYPTION_OLD
+    compression = data_flags & 0x3F
+    if not (data_flags & encryption_flag) and not (data_flags & 0x200):
+        result.update({"kind": "none",
+                       "detail": "khong co bit ma hoa nao bat."})
+        return result
+    if not (data_flags & encryption_flag):
+        # Chi bit 0x200 bat ma theo co moi do la padding -> thu parse that.
+        try:
+            bundle = parse_bundle(data, where="bundle")
+        except PB3Error as exc:
+            result.update({
+                "kind": "unparseable",
+                "detail": ("bit 0x200 chi la co padding (co moi) nhung parse "
+                           "that bai (%s) — khong ket luan duoc, giu "
+                           "fail-closed." % exc.code)})
+            return result
+        result.update({
+            "kind": "padding_flag",
+            "detail": ("bit 0x200 la co padding (co moi), KHONG phai ma hoa: "
+                       "revision %r, parse duoc %d entry, %d block." %
+                       (engine, len(bundle.entries), len(bundle.blocks)))})
+        return result
+    # Bit ma hoa bat theo cach doc co ap dung duoc: co la tham quyen
+    # (khop parse_bundle + loader Unity + test hien co) — chi thu xem
+    # blocks-info co phai dang XOR 1 byte khong; khong thu "giai plain"
+    # o day vi voi nen 0 thi plain luon "giai duoc" nen khong chung minh
+    # duoc gi.
+    info_comp = _blocks_info_bytes(data, version, engine, data_flags,
+                                   comp_info_size, uncomp_info_size, header_end)
+    if info_comp is not None and len(info_comp) <= 1024 * 1024:
+        for key in range(1, 256):
+            dec = bytes(b ^ key for b in info_comp)
+            if _try_decompress_blocks_info(dec, uncomp_info_size, compression,
+                                           "bundle::blocks-info") is not None:
+                result.update({
+                    "kind": "xor_single_byte", "xor_key": key,
+                    "detail": ("blocks-info bi XOR 1 byte (key 0x%02x): giai "
+                               "duoc sau khi XOR — dang XOR don gian; chua cai "
+                               "giai ma vi chua co mau that de kiem chung "
+                               "toan bo block data." % key)})
+                return result
+    result.update({
+        "kind": "encrypted",
+        "detail": ("ma hoa that: bit ma hoa 0x%x bat (revision %r, co %s), "
+                   "blocks-info khong giai duoc (thu plain + XOR 1 byte deu "
+                   "that bai) — can khoa/giai ma cua nha phat hanh; MeoRocky "
+                   "khong giai ma, khong ghi de file goc." %
+                   (encryption_flag, engine, "moi" if new_flags else "cu"))})
+    return result
+
+
 def parse_bundle(data, backend=None, limits=None, where="bundle"):
     """Đọc UnityFS v6/v7/v8/v9: header, blocks info, giải nén từng block, kiểm size.
 
@@ -882,6 +1102,16 @@ def parse_bundle(data, backend=None, limits=None, where="bundle"):
     backend = backend or UnityBackend("AUTO", limits)
     lim = limits or backend.limits
     if len(data) < 8 or data[:7] != UNITYFS_MAGIC:
+        key = _xor_magic_key(data)
+        if key is not None:
+            raise PB3Error(
+                "E_ENCRYPTED",
+                "bundle co the bi XOR 1 byte (magic 'UnityFS' khoi phuc duoc "
+                "bang key 0x%02x) — chua cai giai ma, xem "
+                "classify_bundle_encryption" % key,
+                message_vi=("Bundle có thể bị XOR 1 byte (key 0x%02x) — chưa "
+                            "cài giải mã, cần mẫu thật để kiểm chứng." % key),
+                where=where)
         raise PB3Error("E_UNSUPPORTED_FORMAT", "không phải UnityFS (magic sai)",
                        where=where)
     r = _Reader(data, ">", where=where)
@@ -898,8 +1128,14 @@ def parse_bundle(data, backend=None, limits=None, where="bundle"):
     new_flags = _uses_new_flags(unity_revision)
     encryption_flag = FLAG_ENCRYPTION_NEW if new_flags else FLAG_ENCRYPTION_OLD
     if data_flags & encryption_flag:
-        raise PB3Error("E_ENCRYPTED", "bundle mã hóa (flag 0x%x)" % data_flags,
-                       where=where)
+        raise PB3Error(
+            "E_ENCRYPTED",
+            "bundle mã hóa (flag 0x%x, revision %r, cờ %s)"
+            % (data_flags, unity_revision, "mới" if new_flags else "cũ"),
+            message_vi=("Bundle mã hoá (cờ 0x%x, Unity %s) — cần khoá giải mã "
+                        "của nhà phát hành; MeoRocky không giải mã và không "
+                        "ghi đè file gốc." % (data_flags, unity_revision)),
+            where=where)
     compression = data_flags & 0x3F
     if compression == 4 or compression > COMPRESSION_ZSTD:
         raise PB3Error("E_UNSUPPORTED_FORMAT",
@@ -1031,6 +1267,16 @@ def _read_bundle_layout(fh, backend, lim, where="bundle"):
     fh.seek(0)
     head = fh.read(4096)
     if len(head) < 8 or head[:7] != UNITYFS_MAGIC:
+        key = _xor_magic_key(head)
+        if key is not None:
+            raise PB3Error(
+                "E_ENCRYPTED",
+                "bundle co the bi XOR 1 byte (magic 'UnityFS' khoi phuc duoc "
+                "bang key 0x%02x) — chua cai giai ma, xem "
+                "classify_bundle_encryption" % key,
+                message_vi=("Bundle có thể bị XOR 1 byte (key 0x%02x) — chưa "
+                            "cài giải mã, cần mẫu thật để kiểm chứng." % key),
+                where=where)
         raise PB3Error("E_UNSUPPORTED_FORMAT", "không phải UnityFS (magic sai)",
                        where=where)
     r = _Reader(head, ">", where=where)
@@ -1047,8 +1293,14 @@ def _read_bundle_layout(fh, backend, lim, where="bundle"):
     new_flags = _uses_new_flags(unity_revision)
     encryption_flag = FLAG_ENCRYPTION_NEW if new_flags else FLAG_ENCRYPTION_OLD
     if data_flags & encryption_flag:
-        raise PB3Error("E_ENCRYPTED", "bundle mã hóa (flag 0x%x)" % data_flags,
-                       where=where)
+        raise PB3Error(
+            "E_ENCRYPTED",
+            "bundle mã hóa (flag 0x%x, revision %r, cờ %s)"
+            % (data_flags, unity_revision, "mới" if new_flags else "cũ"),
+            message_vi=("Bundle mã hoá (cờ 0x%x, Unity %s) — cần khoá giải mã "
+                        "của nhà phát hành; MeoRocky không giải mã và không "
+                        "ghi đè file gốc." % (data_flags, unity_revision)),
+            where=where)
     compression = data_flags & 0x3F
     if compression == 4 or compression > COMPRESSION_ZSTD:
         raise PB3Error("E_UNSUPPORTED_FORMAT",

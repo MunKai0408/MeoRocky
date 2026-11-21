@@ -91,8 +91,12 @@ ENGINE_SUPPORT = {
              "plugin": None},
         ],
         "unsupported": [
-            {"op": "Bundle Unity mã hoá",
-             "reason": "báo lỗi E_ENCRYPTED, không giải mã"},
+            {"op": "Bundle Unity mã hoá thật",
+             "reason": ("báo lỗi E_ENCRYPTED, không giải mã — phân loại bằng "
+                        "classify_bundle_encryption: mã hoá thật (blocks-info "
+                        "không giải được plain + XOR 1 byte) mới bị từ chối; "
+                        "bundle cờ 0x200 + revision 0.0.0 (EK2) không phải mã "
+                        "hoá, đọc được bình thường")},
         ],
         "next_steps": [
             "Dùng tab Inspect để xem bundle, tab Trích xuất để lấy text.",
