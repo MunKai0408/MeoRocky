@@ -46,8 +46,10 @@ UNSUPPORTED = [
     {"muc": "Unreal PAK entry nén/mã hóa/Oodle",
      "ly_do": "chỉ đọc entry không nén, không mã hóa"},
     {"muc": "SerializedFile v<15 / v>26", "ly_do": "chỉ v15–26 có fixture"},
-    {"muc": "Bundle Unity mã hóa",
-     "ly_do": "báo E_ENCRYPTED, không giải mã"},
+    {"muc": "Bundle Unity mã hóa thật",
+     "ly_do": ("báo E_ENCRYPTED, không giải mã (chỉ mã hoá thật mới bị từ "
+               "chối — xem classify_bundle_encryption; bundle cờ 0x200 + "
+               "revision 0.0.0 như EK2 không phải mã hoá, đọc được)")},
     {"muc": "Cocos/Defold/GameMaker",
      "ly_do": "chỉ nhận diện, chưa trích xuất"},
 ]
