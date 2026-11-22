@@ -139,6 +139,19 @@ def main():
     if summary.get("pressed_gate_verdict"):
         print("  Kiem lai pressed: %s" % summary["pressed_gate_verdict"],
               flush=True)
+    for st in summary.get("steps") or []:
+        written = ", ".join("%s (%.1f MB)" % (w["name"], w["bytes"] / 1048576.0)
+                            for w in st.get("written") or [])
+        line = "  Buoc %s: %s" % (st["step"], st["status"])
+        if written:
+            line += " — da ghi: %s" % written
+        if st.get("rejected_total"):
+            line += " — tu choi %d muc" % st["rejected_total"]
+            for r in (st.get("rejected") or [])[:3]:
+                line += " | %s: %s" % (r["item"], r["reason"])
+        if st.get("skipped_reason"):
+            line += " — %s" % st["skipped_reason"]
+        print(line, flush=True)
     plan = summary.get("artifact_plan") or {}
     for e in plan.get("excluded") or []:
         print("  CANH BAO artifact: %s (%.1f MB) khong len artifact — %s"

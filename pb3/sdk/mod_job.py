@@ -19,6 +19,10 @@ Luong (dung dung SDK, khong viet lai logic):
    qua buoc nay (ghi ro ly do trong summary);
 6. ghi summary.json + manifest Mod (`sdk.colab_job.build_mod_manifest` /
    `write_mod_manifest`) de web poll theo job_id roi nhap ket qua ve.
+   summary["steps"] (F5) bao cao tung buoc: file nao DA GHI (ten +
+   byte) va muc nao BI TU CHOI + vi sao (don vi bi tu choi, key chua
+   ep, key bi tu choi do do dai, atlas thieu glyph, file vuot ngan
+   sach artifact).
 
 Gioi han that — artifact GitHub mien phi chi 500 MB:
 `ARTIFACT_BUDGET_BYTES` = 400 MB (chua bien cho zip + cac artifact
@@ -77,6 +81,209 @@ GATE_REPORT_NAME = "gate-report.json"
 PRESSED_GATE_REPORT_NAME = "pressed-gate-report.json"
 SUMMARY_NAME = "summary.json"
 APPLIED_ZIP_NAME = "applied.zip"
+
+# Ly do key chua ep (giong sdk.gate._REASON_VI — ghi ngan cho step report).
+_UNMATCHED_REASONS = {
+    "monobehaviour": "key MonoBehaviour co trong game nhung chua ep duoc",
+    "string_table_other_unit": "StringTable o don vi khac trong IPA",
+    "not_found": "khong tim thay trong don vi nao",
+    "not_json_dict": "TextAsset khong phai JSON dang dict",
+    "non_string_value": "gia tri goc khong phai chuoi",
+}
+
+# Moi buoc chi liet ke toi da 50 muc bi tu choi (con lai dem vao
+# rejected_total) — step report phai doc duoc, khong tran JSON.
+_STEP_REJECTED_CAP = 50
+
+
+def _step_file(path):
+    if path and os.path.isfile(path):
+        return {"name": os.path.basename(path),
+                "bytes": os.path.getsize(path)}
+    return None
+
+
+def build_step_report(*, gate, out_dir, summary):
+    """Bao cao tung buoc cua 1 Mod job (F5 — 1 luong duy nhat): moi buoc
+    ghi ro file nao DA GHI (ten + byte) va muc nao BI TU CHOI (ten +
+    ly do tieng Viet). Buoc nao chua chay thi status "skipped" kem ly
+    do (vd cong FAIL nen khong ep). Doc gate-report.json /
+    pressed-gate-report.json tu dia (da ghi truoc do), khong doi hoi
+    caller truyen dict pressed.
+    Tra list 5 buoc: gate, apply, repack, pressed, artifact.
+    """
+    gate = gate or {}
+    steps = []
+    # 1. Cong kiem tra.
+    rejected = []
+    for r in (gate.get("refused") or []):
+        rejected.append({
+            "item": "don vi %s" % (r.get("unit") or "?"),
+            "reason": "[%s] %s" % (r.get("code"), r.get("message"))})
+    for item in (gate.get("unmatched") or []):
+        reason = item.get("reason") or "not_found"
+        rejected.append({
+            "item": "key %r" % (item.get("key") or "?"),
+            "reason": _UNMATCHED_REASONS.get(reason, reason)})
+    for chk in (gate.get("checks") or []):
+        chk_id = chk.get("id")
+        # (a)/(b)/(d)/(f)/(g): lay het failure (vd key thieu/trong,
+        # placeholder lech, font thieu chu, qua dai, atlas thieu glyph).
+        # (c)/(e): chi lay failure KHONG trung voi refused/unmatched da
+        # liet ke o tren (vd preview_error, value_mismatch, loi cau
+        # truc); kind unpressed/refused thi bo (da co o tren).
+        if chk_id in ("translation_complete", "placeholders", "fonts",
+                      "translation_length", "vietnamese_atlas_glyphs"):
+            wanted = chk.get("failures") or []
+        elif chk_id == "diffverify":
+            wanted = [f for f in (chk.get("failures") or [])
+                      if f.get("kind") not in ("unpressed", "refused")]
+        elif chk_id == "integrity":
+            wanted = [f for f in (chk.get("failures") or [])
+                      if f.get("kind") != "refused"]
+        else:
+            wanted = []
+        for f in wanted:
+            if f.get("key"):
+                item = "key %r" % f["key"]
+            elif f.get("font"):
+                item = "atlas %s" % f["font"]
+            else:
+                item = "%s: %s" % (chk_id or "?",
+                                   f.get("kind") or "?")
+            rejected.append({
+                "item": item,
+                "reason": f.get("message_vi") or f.get("kind") or "?"})
+    gate_verdict = gate.get("verdict")
+    gate_files = []
+    entry = _step_file(os.path.join(out_dir, GATE_REPORT_NAME))
+    if entry is not None:
+        gate_files.append(entry)
+    gate_step = {
+        "step": "gate", "name_vi": "Cong kiem tra truoc khi giao",
+        "status": "pass" if gate_verdict == "PASS" else "failed",
+        "written": gate_files,
+        "rejected": rejected[:_STEP_REJECTED_CAP],
+        "rejected_total": len(rejected),
+    }
+    # Cong cat danh sach unmatched o 200 muc — neu tong that lon hon
+    # so liet ke thi ghi ro de khong ai tuong chi co bay nhieu muc bi
+    # tu choi (vd EK2: 1344 key chua ep, chi liet ke 200).
+    if (len(rejected) > _STEP_REJECTED_CAP
+            or (gate.get("unmatched_total") or 0)
+            > len(gate.get("unmatched") or [])):
+        gate_step["note"] = (
+            "Chi liet ke %d muc bi tu choi dau tien — cong ghi tong "
+            "%d key chua ep / %d don vi bi tu choi trong "
+            "gate-report.json."
+            % (min(_STEP_REJECTED_CAP, len(rejected)),
+               gate.get("unmatched_total") or 0,
+               len(gate.get("refused") or [])))
+    steps.append(gate_step)
+    # 2. Ep that.
+    if summary.get("applied"):
+        applied_files = []
+        entry = _step_file(os.path.join(out_dir, APPLIED_ZIP_NAME))
+        if entry is not None:
+            applied_files.append(entry)
+        applied_dir = os.path.join(out_dir, "applied")
+        for u in (summary.get("applied_units") or []):
+            out = u.get("output")
+            if out:
+                entry = _step_file(os.path.join(applied_dir, out))
+                if entry is not None:
+                    applied_files.append(entry)
+        steps.append({
+            "step": "apply", "name_vi": "Ep ban dich",
+            "status": "done", "written": applied_files, "rejected": [],
+            "rejected_total": 0,
+        })
+    else:
+        reason = ("Cong kiem tra CHUA DAT nen khong ep."
+                  if summary.get("status") == "gate_failed" else
+                  "Chi chay cong (gate_only) nen khong ep."
+                  if summary.get("status") == "gate_only_pass" else
+                  "Chua ep.")
+        steps.append({
+            "step": "apply", "name_vi": "Ep ban dich",
+            "status": "skipped", "written": [], "rejected": [],
+            "rejected_total": 0, "skipped_reason": reason,
+        })
+    # 3. Repack.
+    if summary.get("repacked"):
+        repacked_files = []
+        entry = _step_file(os.path.join(
+            out_dir, "repack", summary.get("repacked_name") or ""))
+        if entry is not None:
+            repacked_files.append(entry)
+        steps.append({
+            "step": "repack", "name_vi": "Dong goi lai IPA",
+            "status": "done", "written": repacked_files, "rejected": [],
+            "rejected_total": 0,
+        })
+    else:
+        reason = (summary.get("pressed_gate_skipped_reason")
+                  or "Khong bat repack hoac cong chua dat.")
+        if not summary.get("repack"):
+            reason = "Khong bat repack (repack=false)."
+        elif summary.get("status") == "gate_only_pass":
+            reason = "Chi chay cong (gate_only) nen khong repack."
+        elif summary.get("status") == "gate_failed":
+            reason = "Cong kiem tra CHUA DAT nen khong repack."
+        steps.append({
+            "step": "repack", "name_vi": "Dong goi lai IPA",
+            "status": "skipped", "written": [], "rejected": [],
+            "rejected_total": 0, "skipped_reason": reason,
+        })
+    # 4. Kiem lai che do pressed.
+    pressed_verdict = summary.get("pressed_gate_verdict")
+    if pressed_verdict is not None:
+        pressed_rejected = []
+        pressed_path = os.path.join(out_dir, PRESSED_GATE_REPORT_NAME)
+        try:
+            with open(pressed_path, encoding="utf-8") as fh:
+                pressed_gate = json.load(fh)
+            for chk in (pressed_gate.get("checks") or []):
+                for f in (chk.get("failures") or []):
+                    pressed_rejected.append({
+                        "item": ("key %r" % f.get("key")
+                                 if f.get("key") else
+                                 "%s: %s" % (chk.get("id") or "?",
+                                             f.get("kind") or "?")),
+                        "reason": f.get("message_vi") or "?"})
+        except (OSError, ValueError):
+            pressed_gate = None
+        pressed_files = []
+        entry = _step_file(pressed_path)
+        if entry is not None:
+            pressed_files.append(entry)
+        steps.append({
+            "step": "pressed", "name_vi": "Kiem lai file da ep",
+            "status": ("pass" if pressed_verdict == "PASS" else "failed"),
+            "written": pressed_files,
+            "rejected": pressed_rejected[:_STEP_REJECTED_CAP],
+            "rejected_total": len(pressed_rejected),
+        })
+    else:
+        steps.append({
+            "step": "pressed", "name_vi": "Kiem lai file da ep",
+            "status": "skipped", "written": [], "rejected": [],
+            "rejected_total": 0,
+            "skipped_reason": (summary.get("pressed_gate_skipped_reason")
+                               or "Khong co file dich duy nhat de kiem lai."),
+        })
+    # 5. Artifact (theo ngan sach Actions 400 MB).
+    plan = summary.get("artifact_plan") or {}
+    steps.append({
+        "step": "artifact", "name_vi": "Chia file theo ngan sach artifact",
+        "status": "done",
+        "written": [{"name": e["name"], "bytes": e["bytes"]}
+                    for e in (plan.get("included") or [])],
+        "rejected": [{"item": e["name"], "reason": e.get("reason") or ""}
+                     for e in (plan.get("excluded") or [])],
+        "rejected_total": len(plan.get("excluded") or []),
+    })
+    return steps
 
 
 def _err(code, message, hint=""):
@@ -443,6 +650,10 @@ def run_mod_job(*, ipa_path, original_path, translation_path, out_dir,
             for e in entries
         ] + [{"name": SUMMARY_NAME, "bytes": summary_size,
               "kind": "summary", "required": True}])
+        # Bao cao tung buoc (F5): file nao da ghi + muc nao bi tu choi
+        # + vi sao — ghi vao summary de web/Actions hien thang.
+        summary["steps"] = build_step_report(
+            gate=gate, out_dir=out_dir, summary=summary)
         _write_json(summary_path, summary)
         # Manifest "done" khi da co bao cao cong (ket qua da ghi ro,
         # ke ca cong FAIL hay kiem lai pressed FAIL); "failed" chi khi
