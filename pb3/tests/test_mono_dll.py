@@ -4,12 +4,17 @@ Fixture: DLL .NET toi gian dung tay theo ECMA-335 (PE32, 1 section
 .text, CLI header, metadata BSJB, 2 method — 1 Tiny + 1 Fat — moi
 method 1 ldstr). Khong co game Mono that trong test-ipas (tat ca deu
 IL2CPP) nen day la [FIXTURE]; game Mono that = "Cho nguoi dung".
+
+Viet theo kieu unittest.TestCase cua repo (khong dung pytest function /
+fixture — loader unittest cua run_tests chi nap TestCase; test_runner R8
+doi plan_counts khop so nap that, xem CI do 01:00 UTC 22/11).
 """
 from __future__ import annotations
 
+import os
 import struct
-
-import pytest
+import tempfile
+import unittest
 
 from core.errors import PB3Error
 from sdk import mono_dll
@@ -132,188 +137,177 @@ def build_fixture_dll(strong_name=False):
     return headers + text + b"\x00" * (raw_size - len(text))
 
 
-@pytest.fixture(scope="module")
-def dll():
-    return build_fixture_dll()
+class TestMonoDll(unittest.TestCase):
+    def setUp(self):
+        self.dll = build_fixture_dll()
 
+    def test_extract_two_strings(self):
+        res = mono_dll.extract_mono_strings(self.dll)
+        self.assertIs(res["info"]["is_dotnet"], True)
+        self.assertEqual(res["info"]["methods"], 2)
+        self.assertEqual(res["info"]["ldstr_sites"], 2)
+        self.assertEqual(res["info"]["unique_strings"], 2)
+        self.assertIs(res["info"]["strong_name_signed"], False)
+        by_off = {s["us_offset"]: s for s in res["strings"]}
+        self.assertEqual(by_off[1]["text"], "Hello world")
+        self.assertEqual(by_off[1]["method_name"], "Main")
+        self.assertEqual(by_off[25]["text"], "Second string is quite long indeed")
+        self.assertEqual(by_off[25]["method_name"], "Greet")
 
-def test_extract_two_strings(dll):
-    res = mono_dll.extract_mono_strings(dll)
-    assert res["info"]["is_dotnet"] is True
-    assert res["info"]["methods"] == 2
-    assert res["info"]["ldstr_sites"] == 2
-    assert res["info"]["unique_strings"] == 2
-    assert res["info"]["strong_name_signed"] is False
-    by_off = {s["us_offset"]: s for s in res["strings"]}
-    assert by_off[1]["text"] == "Hello world"
-    assert by_off[1]["method_name"] == "Main"
-    assert by_off[25]["text"] == "Second string is quite long indeed"
-    assert by_off[25]["method_name"] == "Greet"
+    def test_strings_to_table(self):
+        res = mono_dll.extract_mono_strings(self.dll)
+        table, manifest = mono_dll.strings_to_table(res)
+        self.assertEqual(table, {"MONO_000001": "Hello world",
+                                 "MONO_000025": "Second string is quite long indeed"})
+        self.assertEqual(manifest["MONO_000001"]["source"], "Hello world")
+        self.assertEqual(len(manifest["MONO_000001"]["sites"]), 1)
+        self.assertEqual(manifest["MONO_000025"]["byte_length"], 68)
 
+    def test_info_summary(self):
+        info = mono_dll.mono_dll_info(self.dll)
+        self.assertIs(info["is_dotnet"], True)
+        self.assertEqual(info["ldstr_sites"], 2)
+        self.assertEqual(info["metadata_version"], "v4.0.30319")
 
-def test_strings_to_table(dll):
-    res = mono_dll.extract_mono_strings(dll)
-    table, manifest = mono_dll.strings_to_table(res)
-    assert table == {"MONO_000001": "Hello world",
-                     "MONO_000025": "Second string is quite long indeed"}
-    assert manifest["MONO_000001"]["source"] == "Hello world"
-    assert len(manifest["MONO_000001"]["sites"]) == 1
-    assert manifest["MONO_000025"]["byte_length"] == 68
-
-
-def test_info_summary(dll):
-    info = mono_dll.mono_dll_info(dll)
-    assert info["is_dotnet"] is True
-    assert info["ldstr_sites"] == 2
-    assert info["metadata_version"] == "v4.0.30319"
-
-
-def test_patch_shorter_inplace(dll):
-    out, rep = mono_dll.patch_mono_strings(dll, [
-        {"us_offset": 1, "before": "Hello world", "after": "Chao"}])
-    assert len(out) == len(dll)
-    assert rep["patched_count"] == 1
-    assert rep["patched"][0]["mode"] == "inplace"
-    assert rep["skipped_count"] == 0
-    res = mono_dll.extract_mono_strings(out)
-    by_off = {s["us_offset"]: s for s in res["strings"]}
-    assert by_off[1]["text"] == "Chao"
-    assert by_off[25]["text"] == "Second string is quite long indeed"
-    assert len(res["strings"]) == 2
-
-
-def test_patch_longer_relocated_via_freed_slot(dll):
-    # Rut ngan chuoi dai truoc (giai phong slot 64 byte), roi doi chuoi
-    # ngan sang ban dich dai hon (can 36 byte blob) -> relocated.
-    out, rep = mono_dll.patch_mono_strings(dll, [
-        {"us_offset": 25, "before": "Second string is quite long indeed",
-         "after": "Hi"},
-        {"us_offset": 1, "before": "Hello world",
-         "after": "Xin chao cac ban!"}])
-    assert len(out) == len(dll)
-    modes = {r["us_offset"]: r["mode"] for r in rep["patched"]}
-    assert modes[25] == "inplace"
-    assert modes[1] == "relocated"
-    assert rep["relocated_count"] == 1
-    res = mono_dll.extract_mono_strings(out)
-    texts = sorted(s["text"] for s in res["strings"])
-    assert texts == ["Hi", "Xin chao cac ban!"]
-    assert len(res["strings"]) == 2
-    # Token ldstr cua Main da tro sang offset moi, khong con tro offset 1.
-    assert all(s["us_offset"] != 1 for s in res["strings"])
-
-
-def test_patch_too_long_fail_closed(dll):
-    long_vi = "Xin chao " * 12  # 96 ky tu, khong slot trong nao du
-    out, rep = mono_dll.patch_mono_strings(dll, [
-        {"us_offset": 1, "before": "Hello world", "after": long_vi}])
-    assert out == dll  # khong doi 1 byte nao
-    assert rep["patched_count"] == 0
-    assert rep["skipped_count"] == 1
-    assert rep["skipped"][0]["code"] == "E_TOO_LONG"
-
-
-def test_patch_before_mismatch_skipped(dll):
-    out, rep = mono_dll.patch_mono_strings(dll, [
-        {"us_offset": 1, "before": "Hello WORLD", "after": "Chao"}])
-    assert out == dll
-    assert rep["skipped"][0]["code"] == "E_CONFIG_INVALID"
-
-
-def test_patch_reserved_offset_zero_rejected(dll):
-    out, rep = mono_dll.patch_mono_strings(dll, [
-        {"us_offset": 0, "before": "", "after": "X"}])
-    assert out == dll
-    assert rep["skipped"][0]["code"] == "E_CONFIG_INVALID"
-
-
-def test_strong_name_refused():
-    dll = build_fixture_dll(strong_name=True)
-    info = mono_dll.mono_dll_info(dll)
-    assert info["strong_name_signed"] is True
-    with pytest.raises(PB3Error) as ei:
-        mono_dll.patch_mono_strings(dll, [
+    def test_patch_shorter_inplace(self):
+        out, rep = mono_dll.patch_mono_strings(self.dll, [
             {"us_offset": 1, "before": "Hello world", "after": "Chao"}])
-    assert ei.value.code == "E_STRONG_NAME"
+        self.assertEqual(len(out), len(self.dll))
+        self.assertEqual(rep["patched_count"], 1)
+        self.assertEqual(rep["patched"][0]["mode"], "inplace")
+        self.assertEqual(rep["skipped_count"], 0)
+        res = mono_dll.extract_mono_strings(out)
+        by_off = {s["us_offset"]: s for s in res["strings"]}
+        self.assertEqual(by_off[1]["text"], "Chao")
+        self.assertEqual(by_off[25]["text"], "Second string is quite long indeed")
+        self.assertEqual(len(res["strings"]), 2)
 
+    def test_patch_longer_relocated_via_freed_slot(self):
+        # Rut ngan chuoi dai truoc (giai phong slot 64 byte), roi doi chuoi
+        # ngan sang ban dich dai hon (can 36 byte blob) -> relocated.
+        out, rep = mono_dll.patch_mono_strings(self.dll, [
+            {"us_offset": 25, "before": "Second string is quite long indeed",
+             "after": "Hi"},
+            {"us_offset": 1, "before": "Hello world",
+             "after": "Xin chao cac ban!"}])
+        self.assertEqual(len(out), len(self.dll))
+        modes = {r["us_offset"]: r["mode"] for r in rep["patched"]}
+        self.assertEqual(modes[25], "inplace")
+        self.assertEqual(modes[1], "relocated")
+        self.assertEqual(rep["relocated_count"], 1)
+        res = mono_dll.extract_mono_strings(out)
+        texts = sorted(s["text"] for s in res["strings"])
+        self.assertEqual(texts, ["Hi", "Xin chao cac ban!"])
+        self.assertEqual(len(res["strings"]), 2)
+        # Token ldstr cua Main da tro sang offset moi, khong con tro offset 1.
+        self.assertTrue(all(s["us_offset"] != 1 for s in res["strings"]))
 
-def test_not_dotnet():
-    with pytest.raises(PB3Error) as ei:
-        mono_dll.extract_mono_strings(b"PK\x03\x04" + b"\x00" * 200)
-    assert ei.value.code == "E_UNSUPPORTED_FORMAT"
+    def test_patch_too_long_fail_closed(self):
+        long_vi = "Xin chao " * 12  # 96 ky tu, khong slot trong nao du
+        out, rep = mono_dll.patch_mono_strings(self.dll, [
+            {"us_offset": 1, "before": "Hello world", "after": long_vi}])
+        self.assertEqual(out, self.dll)  # khong doi 1 byte nao
+        self.assertEqual(rep["patched_count"], 0)
+        self.assertEqual(rep["skipped_count"], 1)
+        self.assertEqual(rep["skipped"][0]["code"], "E_TOO_LONG")
 
+    def test_patch_before_mismatch_skipped(self):
+        out, rep = mono_dll.patch_mono_strings(self.dll, [
+            {"us_offset": 1, "before": "Hello WORLD", "after": "Chao"}])
+        self.assertEqual(out, self.dll)
+        self.assertEqual(rep["skipped"][0]["code"], "E_CONFIG_INVALID")
 
-def test_truncated_dll():
-    dll = build_fixture_dll()
-    with pytest.raises(PB3Error):
-        mono_dll.extract_mono_strings(dll[:100])
+    def test_patch_reserved_offset_zero_rejected(self):
+        out, rep = mono_dll.patch_mono_strings(self.dll, [
+            {"us_offset": 0, "before": "", "after": "X"}])
+        self.assertEqual(out, self.dll)
+        self.assertEqual(rep["skipped"][0]["code"], "E_CONFIG_INVALID")
 
+    def test_strong_name_refused(self):
+        dll = build_fixture_dll(strong_name=True)
+        info = mono_dll.mono_dll_info(dll)
+        self.assertIs(info["strong_name_signed"], True)
+        with self.assertRaises(PB3Error) as cm:
+            mono_dll.patch_mono_strings(dll, [
+                {"us_offset": 1, "before": "Hello world", "after": "Chao"}])
+        self.assertEqual(cm.exception.code, "E_STRONG_NAME")
 
-def test_corrupt_us_terminal_byte_skips_site(dll):
-    bad = bytearray(dll)
-    # Blob "Hello world" o heap #US: tim offset file cua heap qua parser.
-    from sdk.mono_dll import _DotNet
-    dn = _DotNet(bytes(dll))
-    # byte cuoi cua blob 1 = us_off + 1 + 23 (prefix 1 + body 23) - 1
-    bad[dn.us_off + 1 + 23] = 0x07
-    res = mono_dll.extract_mono_strings(bytes(bad))
-    assert res["info"]["ldstr_sites"] == 1
-    assert res["strings"][0]["text"] == "Second string is quite long indeed"
+    def test_not_dotnet(self):
+        with self.assertRaises(PB3Error) as cm:
+            mono_dll.extract_mono_strings(b"PK\x03\x04" + b"\x00" * 200)
+        self.assertEqual(cm.exception.code, "E_UNSUPPORTED_FORMAT")
 
+    def test_truncated_dll(self):
+        dll = build_fixture_dll()
+        with self.assertRaises(PB3Error):
+            mono_dll.extract_mono_strings(dll[:100])
 
-def test_info_not_dotnet():
-    info = mono_dll.mono_dll_info(b"not a dll at all")
-    assert info["is_dotnet"] is False
-    assert info["error"] == "E_UNSUPPORTED_FORMAT"
+    def test_corrupt_us_terminal_byte_skips_site(self):
+        bad = bytearray(self.dll)
+        # Blob "Hello world" o heap #US: tim offset file cua heap qua parser.
+        from sdk.mono_dll import _DotNet
+        dn = _DotNet(bytes(self.dll))
+        # byte cuoi cua blob 1 = us_off + 1 + 23 (prefix 1 + body 23) - 1
+        bad[dn.us_off + 1 + 23] = 0x07
+        res = mono_dll.extract_mono_strings(bytes(bad))
+        self.assertEqual(res["info"]["ldstr_sites"], 1)
+        self.assertEqual(res["strings"][0]["text"], "Second string is quite long indeed")
+
+    def test_info_not_dotnet(self):
+        info = mono_dll.mono_dll_info(b"not a dll at all")
+        self.assertIs(info["is_dotnet"], False)
+        self.assertEqual(info["error"], "E_UNSUPPORTED_FORMAT")
 
 
 # ------------------------------------------------------- bridge ops
-def test_bridge_table_and_patch(tmp_path):
-    import json as _json
-    import bridge as _bridge
-    fp = str(tmp_path / "Assembly-CSharp.dll")
-    with open(fp, "wb") as fh:
-        fh.write(build_fixture_dll())
-    out = _json.loads(_bridge.mono_dll_table(fp))
-    assert out["ok"] is True
-    assert out["table_keys"] == 2
-    assert out["ldstr_sites"] == 2
-    assert out["strong_name_signed"] is False
-    table = _json.load(open("/tmp/pb3out/mono-strings.json",
-                            encoding="utf-8"))
-    assert table["MONO_000001"] == "Hello world"
-    manifest = _json.load(open("/tmp/pb3out/mono-strings.manifest.json",
-                               encoding="utf-8"))
-    assert manifest["keys"]["MONO_000001"]["source"] == "Hello world"
-    table2 = dict(table)
-    table2["MONO_000001"] = "Chao"
-    out2 = _json.loads(_bridge.patch_mono_dll(
-        fp, None, _json.dumps(table2, ensure_ascii=False),
-        _json.dumps(manifest, ensure_ascii=False)))
-    assert out2["ok"] is True
-    assert out2["patched_count"] == 1
-    assert out2["skipped_count"] == 0
-    patched = open("/tmp/pb3out/Assembly-CSharp.patched.dll", "rb").read()
-    assert len(patched) == len(build_fixture_dll())
-    res = mono_dll.extract_mono_strings(patched)
-    by_off = {s["us_offset"]: s["text"] for s in res["strings"]}
-    assert by_off[1] == "Chao"
-    # File goc khong doi.
-    assert open(fp, "rb").read() == build_fixture_dll()
+class TestMonoDllBridge(unittest.TestCase):
+    def test_bridge_table_and_patch(self):
+        import json as _json
+        import bridge as _bridge
+        with tempfile.TemporaryDirectory() as td:
+            fp = os.path.join(td, "Assembly-CSharp.dll")
+            with open(fp, "wb") as fh:
+                fh.write(build_fixture_dll())
+            out = _json.loads(_bridge.mono_dll_table(fp))
+            self.assertIs(out["ok"], True)
+            self.assertEqual(out["table_keys"], 2)
+            self.assertEqual(out["ldstr_sites"], 2)
+            self.assertIs(out["strong_name_signed"], False)
+            table = _json.load(open("/tmp/pb3out/mono-strings.json",
+                                    encoding="utf-8"))
+            self.assertEqual(table["MONO_000001"], "Hello world")
+            manifest = _json.load(open("/tmp/pb3out/mono-strings.manifest.json",
+                                       encoding="utf-8"))
+            self.assertEqual(manifest["keys"]["MONO_000001"]["source"], "Hello world")
+            table2 = dict(table)
+            table2["MONO_000001"] = "Chao"
+            out2 = _json.loads(_bridge.patch_mono_dll(
+                fp, None, _json.dumps(table2, ensure_ascii=False),
+                _json.dumps(manifest, ensure_ascii=False)))
+            self.assertIs(out2["ok"], True)
+            self.assertEqual(out2["patched_count"], 1)
+            self.assertEqual(out2["skipped_count"], 0)
+            patched = open("/tmp/pb3out/Assembly-CSharp.patched.dll", "rb").read()
+            self.assertEqual(len(patched), len(build_fixture_dll()))
+            res = mono_dll.extract_mono_strings(patched)
+            by_off = {s["us_offset"]: s["text"] for s in res["strings"]}
+            self.assertEqual(by_off[1], "Chao")
+            # File goc khong doi.
+            self.assertEqual(open(fp, "rb").read(), build_fixture_dll())
 
-
-def test_bridge_table_strong_name_note(tmp_path):
-    import json as _json
-    import bridge as _bridge
-    fp = str(tmp_path / "Assembly-CSharp.dll")
-    with open(fp, "wb") as fh:
-        fh.write(build_fixture_dll(strong_name=True))
-    out = _json.loads(_bridge.mono_dll_table(fp))
-    assert out["ok"] is True
-    assert out["strong_name_signed"] is True
-    assert "CHỈ trích được" in out["note"]
-    table = _json.load(open("/tmp/pb3out/mono-strings.json",
-                            encoding="utf-8"))
-    out2 = _json.loads(_bridge.patch_mono_dll(
-        fp, None, _json.dumps(table, ensure_ascii=False)))
-    assert out2["ok"] is False
+    def test_bridge_table_strong_name_note(self):
+        import json as _json
+        import bridge as _bridge
+        with tempfile.TemporaryDirectory() as td:
+            fp = os.path.join(td, "Assembly-CSharp.dll")
+            with open(fp, "wb") as fh:
+                fh.write(build_fixture_dll(strong_name=True))
+            out = _json.loads(_bridge.mono_dll_table(fp))
+            self.assertIs(out["ok"], True)
+            self.assertIs(out["strong_name_signed"], True)
+            self.assertIn("CHỈ trích được", out["note"])
+            table = _json.load(open("/tmp/pb3out/mono-strings.json",
+                                    encoding="utf-8"))
+            out2 = _json.loads(_bridge.patch_mono_dll(
+                fp, None, _json.dumps(table, ensure_ascii=False)))
+            self.assertIs(out2["ok"], False)
