@@ -60,6 +60,7 @@
   "pb3/tests/fixtures/properties/unicode.properties",
   "pb3/tests/fixtures/resx/sample.resx",
   "pb3/tests/fixtures/sqlite_loc/a.sqlite",
+  "pb3/tests/fixtures/sqlite_loc/build_fixture.py",
   "pb3/tests/fixtures/unity/build_fixtures.py",
   "pb3/tests/fixtures/unity/nested.ipa",
   "pb3/tests/fixtures/unity/nested_v8.ipa",
