@@ -495,6 +495,176 @@ def il2cpp_repack(path, entry=None, out_dir=None):
         return _err(e)
 
 
+def mono_dll_table(path, entry=None):
+    """Xuất bảng dịch chuỗi literal Mono (F4, đường Mono DLL -> tab Dịch).
+
+    Đọc chuỗi ldstr CHÍNH XÁC từ Assembly-CSharp.dll (entry trong
+    IPA/ZIP hoặc file thường), xuất thành dict key->value thuần
+    {MONO_NNNNNN: text} + manifest {key: {us_offset, source, sites}}
+    rồi ghi 2 file vào /tmp/pb3out để tab Dịch nạp qua read_extracted
+    như mọi file trích xuất (mono-strings.json +
+    mono-strings.manifest.json). Bảng là dict thuần nên translate_json
+    ăn được. Chuỗi rỗng (blob dự trữ offset 0) không đưa vào bảng.
+    DLL ký strong-name vẫn TRÍCH được (chỉ CẤM vá — xem patch_mono_dll).
+    """
+    try:
+        from sdk import mono_dll as mono_sdk
+
+        _check_size(path)
+        data, source_label = mono_sdk.read_dll_bytes(
+            path, entry=(str(entry) if entry else None))
+        result = mono_sdk.extract_mono_strings(data)
+        table, manifest = mono_sdk.strings_to_table(result)
+        out_dir = "/tmp/pb3out"
+        os.makedirs(out_dir, exist_ok=True)
+        table_text = json.dumps(table, ensure_ascii=False, indent=1,
+                                sort_keys=True)
+        manifest_text = json.dumps(
+            {"format": "beartea-mono-strings-manifest/1",
+             "source": source_label,
+             "metadata_version": result["info"]["metadata_version"],
+             "ldstr_sites": result["info"]["ldstr_sites"],
+             "unique_strings": result["info"]["unique_strings"],
+             "strong_name_signed": result["info"]["strong_name_signed"],
+             "keys": manifest},
+            ensure_ascii=False, indent=1, sort_keys=True)
+        with open(os.path.join(out_dir, mono_sdk.TABLE_FILE),
+                  "w", encoding="utf-8") as fh:
+            fh.write(table_text)
+        with open(os.path.join(out_dir, mono_sdk.MANIFEST_FILE),
+                  "w", encoding="utf-8") as fh:
+            fh.write(manifest_text)
+        return json.dumps({
+            "ok": True, "source": source_label,
+            "metadata_version": result["info"]["metadata_version"],
+            "ldstr_sites": result["info"]["ldstr_sites"],
+            "unique_strings": result["info"]["unique_strings"],
+            "strong_name_signed": result["info"]["strong_name_signed"],
+            "table_keys": len(table),
+            "manifest_keys": len(manifest),
+            "table_file": mono_sdk.TABLE_FILE,
+            "manifest_file": mono_sdk.MANIFEST_FILE,
+            "table_bytes": len(table_text.encode("utf-8")),
+            "note": ("Bảng dịch Mono: %d chuỗi duy nhất (%d site ldstr). "
+                     "DLL ký strong-name thì CHỈ trích được, KHÔNG vá "
+                     "được (vá sẽ phá chữ ký)." % (len(table),
+                     result["info"]["ldstr_sites"])),
+        }, ensure_ascii=False)
+    except Exception as e:  # noqa: BLE001
+        return _err(e)
+
+
+def patch_mono_dll(path, entry, table_json, manifest_json=None):
+    """Ép bản dịch chuỗi Mono VÀO Assembly-CSharp.dll (F4).
+
+    table_json: dict {MONO_NNNNNN: text_đã_dịch} (lấy từ output tab
+    Dịch sau khi dịch mono-strings.json). manifest_json: manifest kèm
+    theo bảng (để verify text gốc từng key trước khi vá — sai file DLL
+    thì bỏ qua key đó, không vá mù).
+    Vá trong heap #US, fail-closed từng chuỗi: bản dịch ngắn hơn/bằng
+    thì vá tại chỗ; dài hơn thì dời blob tới slot trống trong heap
+    (giải phóng từ chuỗi đã rút ngắn); dài hơn mà không còn slot thì
+    bỏ qua kèm mã E_TOO_LONG. DLL ký strong-name thì TỪ CHỐI toàn bộ.
+    Kích thước file không đổi; verify bằng cách đọc lại toàn bộ
+    literal. File gốc KHÔNG bị ghi đè; DLL đã vá ghi ra
+    /tmp/pb3out/Assembly-CSharp.patched.dll + sidecar JSON.
+    """
+    try:
+        from sdk import mono_dll as mono_sdk
+
+        _check_size(path)
+        try:
+            table = json.loads(table_json)
+        except ValueError:
+            raise ValueError("bảng dịch không phải JSON hợp lệ "
+                             "(cần dict {MONO_NNNNNN: text}).")
+        if not isinstance(table, dict) or not table:
+            raise ValueError("bảng dịch phải là object key-value không "
+                             "rỗng (MONO_NNNNNN -> text đã dịch).")
+        table = {str(k): (v if isinstance(v, str)
+                          else json.dumps(v, ensure_ascii=False))
+                 for k, v in table.items()}
+        manifest = None
+        if manifest_json:
+            try:
+                m = json.loads(manifest_json)
+            except ValueError:
+                raise ValueError("manifest không phải JSON hợp lệ.")
+            if isinstance(m, dict) and isinstance(m.get("keys"), dict):
+                manifest = m["keys"]
+            elif isinstance(m, dict):
+                manifest = m
+            else:
+                raise ValueError("manifest phải là object JSON.")
+        data, source_label = mono_sdk.read_dll_bytes(
+            path, entry=(str(entry) if entry else None))
+        file_sha = hashlib.sha256(open(path, "rb").read()).hexdigest()
+        dll_sha = hashlib.sha256(data).hexdigest()
+        patches = []
+        by_off = None
+        for key, after in table.items():
+            if manifest is not None and key in manifest:
+                before = manifest[key].get("source")
+                us_off = manifest[key].get("us_offset")
+            else:
+                try:
+                    us_off = int(str(key).split("_", 1)[1])
+                except (ValueError, IndexError):
+                    continue
+                # Không có manifest: lấy before từ DLL hiện tại (1 lần).
+                if by_off is None:
+                    cur = mono_sdk.extract_mono_strings(data)
+                    by_off = {s["us_offset"]: s["text"]
+                              for s in cur["strings"]}
+                before = by_off.get(us_off)
+                if before is None:
+                    continue
+            patches.append({"us_offset": us_off, "before": before,
+                            "after": after})
+        patched, report = mono_sdk.patch_mono_strings(data, patches)
+        out_dir = "/tmp/pb3out"
+        os.makedirs(out_dir, exist_ok=True)
+        dest = os.path.join(out_dir, mono_sdk.PATCHED_FILE)
+        with open(dest, "wb") as fh:
+            fh.write(patched)
+        patched_sha = hashlib.sha256(patched).hexdigest()
+        sidecar = {
+            "format": "beartea-mono-patched/1",
+            "entry": (str(entry) if entry else None),
+            "source": source_label,
+            "source_file": os.path.basename(path),
+            "source_sha256": file_sha,
+            "dll_sha256": dll_sha,
+            "patched_sha256": patched_sha,
+            "patched_count": report["patched_count"],
+            "relocated_count": report["relocated_count"],
+            "skipped_count": report["skipped_count"],
+        }
+        with open(os.path.join(out_dir, mono_sdk.PATCHED_SIDECAR),
+                  "w", encoding="utf-8") as fh:
+            fh.write(json.dumps(sidecar, ensure_ascii=False, indent=1))
+        if hashlib.sha256(open(path, "rb").read()).hexdigest() != file_sha:
+            raise ValueError("file gốc đã đổi trong lúc vá — từ chối "
+                             "kết quả.")
+        report.update({
+            "ok": True, "source": source_label,
+            "source_sha256": file_sha, "dll_sha256": dll_sha,
+            "patched_sha256": patched_sha,
+            "dest": dest, "filename": mono_sdk.PATCHED_FILE,
+            "patched_bytes": len(patched),
+            "note": ("Đã vá %d/%d chuỗi (trong đó dời heap %d, verify "
+                     "đọc lại đạt). %d chuỗi chưa vá được — xem skipped: "
+                     "bản dịch dài hơn gốc mà heap #US không còn slot "
+                     "trống thì không vá được tại chỗ."
+                     % (report["patched_count"], len(table),
+                        report["relocated_count"],
+                        report["skipped_count"])),
+        })
+        return json.dumps(report, ensure_ascii=False)
+    except Exception as e:  # noqa: BLE001
+        return _err(e)
+
+
 def _sf_summary(name, sf):
     tas = []
     for pid, nm, script in sf.text_assets():

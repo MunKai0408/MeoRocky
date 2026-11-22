@@ -84,6 +84,7 @@
   "pb3/sdk/lz4pure.py",
   "pb3/sdk/manifest.py",
   "pb3/sdk/mod_job.py",
+  "pb3/sdk/mono_dll.py",
   "pb3/sdk/patch_pack.py",
   "pb3/sdk/plan.py",
   "pb3/sdk/po_write.py",

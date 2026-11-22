@@ -23,7 +23,7 @@ class TestErrorCodes(unittest.TestCase):
         ext = {c for c, s in errors.ERROR_SPECS.items() if s.extension}
         self.assertEqual(ext, {"E_UNSUPPORTED_ON_ISH", "E_CONFIG_INVALID", "E_TOO_LARGE", "E_IO",
                                "E_CORRUPT", "E_NOT_IMPLEMENTED", "E_NETWORK", "E_TIMEOUT",
-                               "E_WRITE_WAVE",
+                               "E_WRITE_WAVE", "E_TOO_LONG", "E_STRONG_NAME",
                                "E_CHAR_TABLE", "E_TMP_LAYOUT", "E_NO_ATLAS",
                                "E_NO_SOURCE_FONT", "E_NO_MATERIAL",
                                "E_NO_TMP_SETTINGS", "E_NO_FALLBACK_VECTOR",
