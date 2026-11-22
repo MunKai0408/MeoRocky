@@ -140,7 +140,7 @@ class TestBearIcon(unittest.TestCase):
     def test_sw_keeps_precache_icons_and_version(self):
         sw = _read(SWJS)
         # Chưa bump version ở PR này (v65 lấy ở lượt gộp).
-        self.assertIn('CACHE_VERSION = "v73-20261122"', sw)
+        self.assertIn('CACHE_VERSION = "v74-20261122"', sw)
         for rel in ICONS:
             self.assertIn(rel, sw, "sw.js precache thiếu %s" % rel)
 
