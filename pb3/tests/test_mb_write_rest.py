@@ -323,6 +323,47 @@ class TestTypetreeLanguageSource(unittest.TestCase):
             ("greet", "mSource.mTerms[0].Languages[0]", "Hello"),
             ("bye", "mSource.mTerms[1].Languages[0]", "Goodbye")])
 
+    def test_targets_fallback_to_language_variant(self):
+        # [FIXTURE] P0 (EK2): bang chi co cot en-GB/en-US, khong co cot
+        # "en" — writer phai ghi vao cot bien the dau tien (en-GB),
+        # khong tra None (khong thi phu ghi EK2 = 0).
+        val = {"m_Name": "LangVar",
+               "mSource": {
+                   "mLanguages": [{"Name": "English (UK)", "Code": "en-GB"},
+                                  {"Name": "English (US)", "Code": "en-US"}],
+                   "mTerms": [{"Term": "greet",
+                               "Languages": ["Hello UK", "Hello US"]},
+                              {"Term": "bye",
+                               "Languages": ["Bye UK", "Bye US"]}]}}
+        tgts = u.language_source_tt_targets(val, "en")
+        self.assertEqual(tgts, [
+            ("greet", "mSource.mTerms[0].Languages[0]", "Hello UK"),
+            ("bye", "mSource.mTerms[1].Languages[0]", "Bye UK")])
+
+    def test_targets_exact_locale_wins_over_variant(self):
+        # [FIXTURE] co ca cot "en" lan "en-GB" -> lay cot "en" (uu tien
+        # khop chinh xac, giu hanh vi cu).
+        val = {"m_Name": "LangVar",
+               "mSource": {
+                   "mLanguages": [{"Name": "English", "Code": "en"},
+                                  {"Name": "English (UK)", "Code": "en-GB"}],
+                   "mTerms": [{"Term": "greet",
+                               "Languages": ["Hello", "Hello UK"]}]}}
+        tgts = u.language_source_tt_targets(val, "en")
+        self.assertEqual(tgts, [
+            ("greet", "mSource.mTerms[0].Languages[0]", "Hello")])
+
+    def test_targets_none_when_no_language_family_match(self):
+        # [FIXTURE] khong co cot "en" cung khong co bien the tieng Anh
+        # -> None (fail-closed, nhu cu).
+        val = {"m_Name": "LangVar",
+               "mSource": {
+                   "mLanguages": [{"Name": "German", "Code": "de"},
+                                  {"Name": "French", "Code": "fr"}],
+                   "mTerms": [{"Term": "greet",
+                               "Languages": ["Hallo", "Bonjour"]}]}}
+        self.assertIsNone(u.language_source_tt_targets(val, "en"))
+
     def test_targets_none_for_non_language_table(self):
         # [FIXTURE] khong phai bang I2 -> None (fail-closed).
         self.assertIsNone(u.language_source_tt_targets({"m_Name": "x"}, "en"))

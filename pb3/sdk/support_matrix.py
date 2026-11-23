@@ -8,9 +8,10 @@ của file), sdk.containers.support_matrix(), sdk.unity.support_matrix() và
 số game đã test từ KB (kb.plugin_stats() nếu KB tồn tại, không có KB thì 0).
 
 KHÔNG tuyên bố M4 cho bất cứ thứ gì: M4 cần bằng chứng game thật + byte-diff
-sạch, hiện chưa có. Danh sách "đã xác minh trên game thật" CHỈ có Unity
-inspect trên IPA thật 9 Kings v1.0.5 (nguồn: handoff/account_05.md §5);
-patch Unity mới test fixture nên vẫn ở danh sách fixture.
+sạch, hiện chưa có. Danh sách "đã xác minh trên game thật" có Unity
+inspect trên IPA thật 9 Kings v1.0.5 (nguồn: handoff/account_05.md §5)
+và patch Unity (ghi ngược MonoBehaviour) trên 3 IPA thật — P0 23/11/2026
+(nguồn: exp/p0_writeback_results.md).
 
 Chỉ dùng thư viện chuẩn, Python 3.8+. Không gọi mạng.
 """
@@ -28,13 +29,21 @@ from sdk import unity as _unity
 
 WARNING = "Mức hỗ trợ chỉ đúng với những gì đã kiểm thử"
 
-# Bằng chứng game thật duy nhất (handoff/account_05.md §5).
+# Bằng chứng game thật (handoff/account_05.md §5 + P0 23/11/2026).
 REAL_GAME = [
     {"muc": "Unity inspect (đọc + bản đồ dữ liệu) trên IPA thật 9 Kings v1.0.5",
      "chi_tiet": "Unity inspect đã chạy trên IPA game thật; hỗ trợ UnityFS v8 "
-                 "bổ sung ở Claude 05b. Patch Unity chỉ mới test fixture "
-                 "(xem danh sách fixture).",
+                 "bổ sung ở Claude 05b.",
      "nguon": "handoff/account_05.md §5"},
+    {"muc": "Patch Unity (ghi ngược MonoBehaviour) trên 3 IPA thật — P0 23/11/2026",
+     "chi_tiet": "9 Kings v1.0.6 (2252 key → 2250 đổi: I2 2150 + StringTable "
+                 "100, 0 unmatched, 0 refused), PB3 v1.1.7 (2348 key → 4696 "
+                 "đổi: CSV 2348 + I2 2348, 0 unmatched, 0 refused), EK2 "
+                 "v0.0.18 (1344 key → 1325 đổi I2 + 19 giữ nguyên (key "
+                 "rỗng), 0 unmatched, 0 refused — nhờ fix fallback locale "
+                 "en → en-GB). Verify xanh (diffverify 4 lớp), sha256 IPA "
+                 "gốc không đổi. Chưa kiểm chứng trên máy thật.",
+     "nguon": "exp/p0_writeback_results.md"},
 ]
 
 # Chưa hỗ trợ, kèm lý do (§10.3).
@@ -180,8 +189,9 @@ def generate(root, rows=None, manifests=None, kb_stats=None) -> Tuple[str, dict]
     container_rows = _containers.support_matrix()
     unity_rows = _unity.support_matrix()
     fixture_only = [p["id"] for p in plugins]
-    # Unity/Godot/Unreal đọc-ghi cũng mới test fixture (patch Unity chưa có game thật).
-    fixture_only += ["UnityFS v6/v7/v8/v9 + SerializedFile v15–26 (Zstd chỉ đọc trên web, fixture)",
+    # Unity/Godot/Unreal đọc-ghi: patch TextAsset + MonoBehaviour đã đo
+    # trên 3 game thật (P0 23/11); v9/Zstd vẫn chỉ đọc/fixture.
+    fixture_only += ["UnityFS v6/v7/v8/v9 + SerializedFile v15–26 (Zstd chỉ đọc trên web; patch TextAsset + MonoBehaviour đã đo trên 3 game thật — xem § Đã xác minh trên game thật)",
                      "Godot PCK v1/v2 (đọc, fixture)",
                      "Unreal PAK UE4/UE5 (đọc, fixture)"]
 

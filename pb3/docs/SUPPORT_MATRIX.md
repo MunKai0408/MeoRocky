@@ -56,6 +56,11 @@
 | UnityFS v8 cờ 0x200 + revision 0.0.0 (EK2) | có — bit 0x200 là cờ padding (cờ mới), KHÔNG phải mã hoá (100/100 bundle EK2 v0.0.18 parse được [ĐÃ ĐO THẬT 22/11]) | có (giữ nén LZ4HC gốc; cờ padding đặt lại theo layout ghi) | Python thuần | M2 |
 | Zstd (block bundle, mã nén 5) | có — CHỈ trên web BearTea (qua fzstd, cầu nối JS) | không (ghi lại bằng block không nén, cờ 0) — đánh giá F3 22/11: 0/1904 bundle thật dùng mã 5; fzstd vendored CHỈ giải nén, không có encoder nên chưa cài ghi Zstd | fzstd 0.1.1 (MIT, vendored site/fzstd/) | M2 |
 | SerializedFile v15-26 (.assets) | có (metadata, object table, TextAsset; v23+ type tree có ref hashes, v26 shared subtrees) | có (patch TextAsset: PATCH_INPLACE / REBUILD_SECTION) | Python thuần | M2 |
+| MonoBehaviour — bảng I2 (language_source, không type tree; byte-walk) | có | có (ghi term theo cột nguồn; fallback locale `en` → biến thể đầu tiên cùng họ, vd `en-GB` — P0 23/11) | Python thuần | M2 |
+| MonoBehaviour — bảng I2 có type tree (language_source_tt) | có | có (ghi theo tên field thật `mSource.mTerms[i].Languages[j]`; không dò được tên field thì bỏ qua fail-closed) | Python thuần | M2 |
+| MonoBehaviour — Unity StringTable (string_table + SharedTableData join) | có | có (ghi `m_Localized` theo `Collection/Key`; entry thiếu thì chèn mới từ mẫu entry đầu; không có `mb_index` thì 0 key ST, fail-closed) | Python thuần | M2 |
+| MonoBehaviour — generic (scan path) | có | có (chỉ key ánh xạ đúng 1 locator; key mơ hồ > 1 locator thì bỏ qua, không đoán) | Python thuần | M2 |
+| CSV (TextAsset CSV / file CSV độc lập, M3) | có | có (ghi ô theo key + cột locale; đo toàn bảng PB3 2348 key — P0 23/11) | Python thuần | M2 |
 | LZ4 block / LZ4HC | có | có | binding lz4 (ưu tiên) / Python thuần (literal-only khi ghi) | M2 |
 | LZ4 frame | có | chỉ qua binding lz4 | binding lz4.frame (ưu tiên) / Python thuần (chỉ đọc) | M2 |
 | LZMA (Unity raw) | có | có | lzma (thư viện chuẩn) | M2 |
@@ -64,7 +69,8 @@
 
 ## Đã xác minh trên game thật
 
-- **Unity inspect (đọc + bản đồ dữ liệu) trên IPA thật 9 Kings v1.0.5** — Unity inspect đã chạy trên IPA game thật; hỗ trợ UnityFS v8 bổ sung ở Claude 05b. Patch Unity chỉ mới test fixture (xem danh sách fixture). (nguồn: handoff/account_05.md §5).
+- **Unity inspect (đọc + bản đồ dữ liệu) trên IPA thật 9 Kings v1.0.5** — Unity inspect đã chạy trên IPA game thật; hỗ trợ UnityFS v8 bổ sung ở Claude 05b. (nguồn: handoff/account_05.md §5).
+- **Patch Unity (ghi ngược MonoBehaviour) trên 3 IPA thật — P0 23/11/2026** (`exp/p0_writeback_results.md`): 9 Kings v1.0.6 (2252 key → 2250 đổi: I2 2150 + StringTable 100, 0 unmatched, 0 refused), PB3 v1.1.7 (2348 key → 4696 đổi: CSV 2348 + I2 2348, 0 unmatched, 0 refused), EK2 v0.0.18 (1344 key → 1325 đổi I2 + 19 giữ nguyên (key rỗng), 0 unmatched, 0 refused — nhờ fix fallback locale `en` → `en-GB`). Verify xanh (diffverify 4 lớp: cấu trúc / giá trị / đơn vị / byte ngoài vùng patch), sha256 IPA gốc không đổi, bản dịch giả `"[VI] "`. Chưa kiểm chứng trên máy thật (game có chạy với bundle đã patch không thuộc P4).
 
 ## Mới test fixture
 
@@ -90,7 +96,7 @@ Mọi plugin/engine còn lại có fixture (chưa test game thật):
 - xml_strings
 - yaml_ini
 - zip
-- UnityFS v6/v7/v8/v9 + SerializedFile v15–26 (v9 chỉ đọc, Zstd chỉ đọc trên web, fixture)
+- UnityFS v6/v7/v8/v9 + SerializedFile v15–26 (v9 chỉ đọc, Zstd chỉ đọc trên web; patch TextAsset + MonoBehaviour đã đo trên 3 game thật — xem § Đã xác minh trên game thật)
 - Godot PCK v1/v2 (đọc, fixture)
 - Unreal PAK UE4/UE5 (đọc, fixture)
 

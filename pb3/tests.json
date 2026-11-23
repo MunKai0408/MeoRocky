@@ -166,6 +166,7 @@
   "pb3/tests/test_multifile.py",
   "pb3/tests/test_optimize.py",
   "pb3/tests/test_overall_keepalive.py",
+  "pb3/tests/test_p0_writeback_coverage.py",
   "pb3/tests/test_pages_deploy.py",
   "pb3/tests/test_patch01.py",
   "pb3/tests/test_patch_pack.py",

@@ -165,13 +165,7 @@ Hai điều chỉnh ở tầng khởi động (không sửa mã PB3): dựng reg
   Output là đơn vị nhỏ nhất đã patch (bundle/.assets) — **không đóng gói
   lại IPA** (giới hạn 6.6 của PB3). REBUILD_ALL không hỗ trợ trên web
   (cần maturity M4, chưa có).
-- **Ép lại (E) — giới hạn v1 (P0-1):** chỉ ghi TextAsset JSON dạng
-  dict; key MonoBehaviour/StringTable vào danh sách “không ép được” kèm
-  lý do, không im lặng bỏ (chưa có đường ghi MonoBehaviour an toàn).
-  Bundle độc lập ≥64MB dùng đường rebuild streaming (entry đơn >128MB
-  thì từ chối, hướng iSH); bundle mã hóa bị từ chối (không giải mã). File >400MB có confirm riêng về RAM/streaming;
-  flow trình duyệt (E) chưa kiểm chứng trên Safari thật (xem
-  `exp/analysis_rebuild_results.md`).
+- **Ép lại (E) — ghi được TextAsset JSON dict + CSV + MonoBehaviour/StringTable (P0 23/11):** ghi term I2 (cả bảng có/không type tree), entry StringTable (join qua SharedTableData; không có `mb_index` thì 0 key ST, fail-closed), key MonoBehaviour generic không mơ hồ, ô CSV theo key + cột locale. Đã đo trên 3 IPA thật: 9K v1.0.6 (2250/2252 key đổi), PB3 v1.1.7 (2348 key, ghi 2 nơi CSV + I2), EK2 v0.0.18 (1325/1344 key đổi) — xem `exp/p0_writeback_results.md`. Key không ép được vẫn liệt kê kèm lý do, không im lặng bỏ: key generic mơ hồ (>1 locator), bảng list kiểu Kusa (`text_data_list`, chưa có writer). Bundle độc lập ≥64MB dùng đường rebuild streaming (entry đơn >128MB thì từ chối, hướng iSH); bundle mã hóa bị từ chối (không giải mã). File >400MB có confirm riêng về RAM/streaming; flow trình duyệt (E) chưa kiểm chứng trên Safari thật (xem `exp/analysis_rebuild_results.md`).
 - **Cổng kiểm tra (bước 6, P0-2):** chỉ áp cho flow (E); đường plan/mod
   trực tiếp giữ dry-run/confirm riêng, chưa qua cổng. Cổng kiểm bằng mô
   phỏng trong RAM (đường RAM của (E)); bundle độc lập ≥64MB thì kiểm file
