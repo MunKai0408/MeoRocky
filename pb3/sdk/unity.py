@@ -2958,7 +2958,7 @@ def _ls_field_name(d, *names):
     return None, None
 
 
-def ls_source_column(languages, source_locale):
+def ls_source_column(languages, source_locale="en"):
     """Chi so cot nguon cho bang I2 (ghi nguoc).
 
     Uu tien khop CHINH XAC ma locale (vd "en" -> cot "en", giu nguyen
@@ -2967,6 +2967,8 @@ def ls_source_column(languages, source_locale):
     khong co cot "en", trong khi trich xuat van lay cot dia phuong
     lam nguon "en" -> writer cu tra 0 target). Khong co cot nao khop
     -> None (fail-closed, nhu cu).
+    [FIXTURE] BUG P0-1: EK2 chi co cot en-GB/en-US, khong co cot "en" —
+    lookup chinh xac lam phu ghi = 0; fallback cung ho khoi phuc phu.
     Giong quy tac ho locale cua discovery.locale_in_wanted (khop theo
     ma goc), nhung viet tai day 1 dong de unity khong import discovery
     (tranh import vong)."""

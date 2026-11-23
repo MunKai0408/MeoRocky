@@ -497,10 +497,11 @@ def _collect_mb_info(sfs, source_locale="en", mb_index=None):
                             terms.add("%s/%s" % (coll, term))
             elif kind == "language_source":
                 langs = item.get("languages") or []
-                # P0 (EK2): cot nguon co the chi la bien the (en-GB) —
-                # dung chung quy tac fallback voi writer (unity.py) de
-                # phan loai unchanged/unmatched dung (key rong EK2 bi
-                # bao unmatched sai khi col = None).
+                # BUG P0-1 (EK2): cot nguon co the chi la bien the (en-GB/
+                # en-US) — dung chung ls_source_column (khop chinh xac
+                # truoc, cung ho sau) voi writer (unity.py) de phan loai
+                # unchanged/unmatched dung (key rong EK2 bi bao unmatched
+                # sai khi col = None).
                 col = _u.ls_source_column(langs, source_locale)
                 for term in (item.get("terms") or []):
                     t = term.get("term")

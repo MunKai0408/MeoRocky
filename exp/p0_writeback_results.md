@@ -233,9 +233,26 @@ nhánh StringTable (`unity.py:3448` `m_LocaleId.m_Code`,
 - **Bảng list kiểu Kusa (`text_data_list`):** extraction nhận diện,
   writer chưa có kind này → nhóm key này hiện không có đường ghi (loại
   trừ §1, để P5 hoặc task riêng).
-- **T7 full suite:** chưa chạy ở đây — main agent chạy verify sau
-  (baseline main v76: 2958 test, 0 fail, 1 lỗi đã biết
-  `test_round_trip_pb3` timeout).
+- **T7 full suite (đã đo trên nhánh này, máy Dũng, xong 19:24 +07
+  23/11):** 2.968 test, 2.950 đạt, **0 fail**, 3 lỗi, 15 skip,
+  3.469,3 s (~58 phút). 3 lỗi: (1) `test_round_trip_pb3` timeout —
+  lỗi đã biết ở baseline; (2) `test_t2_polybridge3` (test P0 MỚI)
+  timeout 180 s; (3) `test_t3_explodingkittens2` (test P0 MỚI)
+  timeout 180 s. So fail-set với baseline main v76 (2.958 test,
+  0 fail, 1 lỗi đã biết, 17 skip): **0 fail, 0 red mới ở test cũ**;
+  2 lỗi thêm chỉ là 2 test P0 mới vượt mốc 180 s/test của full
+  suite — chạy lẻ ở module P0 thì T2/T3 đều đạt (T2 áp thật 198,4 s,
+  T3 áp thật 393,0 s). Skip 17 → 15 vì carrion + fortune-mill đã
+  link (chỉ còn DST non-Unity thiếu IPA).
+- **Timeout T2/T3 tăng lên 900 s/test (23/11, theo quyết của Chí —
+  Room 17 message 12662):** harness bản này đặt `timeout_s = 1800`
+  cho cả lớp game thật (bao phủ quyết 900 s; theo tiền lệ F6
+  `test_po_write_dst_real.timeout_s = 1800`, commit 40a8e85). Chỉ
+  đổi mốc riêng test P0, không đổi mốc chung 180 s của suite. Lý do:
+  cả 2 chạy lẻ đều đạt — chậm chứ không sai; tối ưu tốc độ áp thật
+  tách riêng thành task sau, không chặn P0. T7 chạy lại sau khi tăng
+  timeout đang chạy trên máy Dũng (lần 5 attempt 2, ETA ~09:30 +07
+  24/11) — cập nhật số sau khi xong.
 
 ## 7. Đính chính doc lỗi thời (Bước 0 §3) — P0 sửa / còn lại
 
