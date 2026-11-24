@@ -30,7 +30,7 @@ Bố cục bảng literal theo version metadata [ĐÃ ĐO THẬT]:
 Version khác: TỪ CHỐI rõ ràng (không đoán bố cục) — quét thô vẫn chạy
 được trên file đó (không phụ thuộc version).
 
-Chỉ đọc, không sửa. File thường đọc bằng seek (không nạp cả file);
+Đọc + ghi (patch/relayout từ F1). File thường đọc bằng seek (không nạp cả file);
 entry trong ZIP đọc cả member vào BytesIO (metadata ~7-21 MB ở các
 game đã biết; từ chối member > 256 MB).
 """

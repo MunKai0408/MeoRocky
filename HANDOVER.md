@@ -11,7 +11,7 @@ PB3 v3.1 (tên hiển thị: **BearTea**) là công cụ xử lý/mod game Unity
 
 - **Bản iSH**: chạy trên iPhone của Joseph qua iSH, thư mục `/root/pb3`. Game thật: **9 Kings v1.0.5** (file IPA 141.865.757 byte). (Bản khác với file 9 Kings v1.0.6, 173.472.485 byte, dùng trong các báo cáo thử game thật trên web — hai bản build khác nhau, không dùng chung số đo khi chưa đối chiếu danh tính build.)
 - **Bản web**: Python chạy trong trình duyệt bằng Pyodide (100% client-side), host trên GitHub Pages. Repo: **MunKai0408/MeoRocky** (public), trang live: https://munkai0408.github.io/MeoRocky/
-- Chức năng: Danh sách entry (ZIP/IPA), Inspect Unity, Trích xuất, Dịch (Google Translate + offline), Mod (sửa text TextAsset), Ép lại bản dịch vào file gốc (E, bước 5 — chỉ ghi TextAsset JSON dict, xem `exp/analysis_rebuild_results.md`), Cổng kiểm tra trước khi giao (bước 6 — 1 verdict PASS/FAIL gộp 5 kiểm tra, FAIL chặn giao, xem `exp/delivery_gate_results.md`), Batch, Kho KB, Hỗ trợ, Nén IPA (tar.xz), Font tiếng Việt, Chẩn đoán. Menu iSH có [1]–[7]; web có 11 tab tương ứng.
+- Chức năng: Danh sách entry (ZIP/IPA), Inspect Unity, Trích xuất, Dịch (Google Translate + offline), Mod (sửa text TextAsset), Ép lại bản dịch vào file gốc (E, bước 5 — ghi TextAsset JSON dict + CSV + MonoBehaviour/StringTable, đo trên 3 game thật — xem `exp/p0_writeback_results.md`), Cổng kiểm tra trước khi giao (bước 6 — 1 verdict PASS/FAIL gộp 5 kiểm tra, FAIL chặn giao, xem `exp/delivery_gate_results.md`), Batch, Kho KB, Hỗ trợ, Nén IPA (tar.xz), Font tiếng Việt, Chẩn đoán. Menu iSH có [1]–[7]; web có 11 tab tương ứng.
 
 ## 2. Tài liệu và code — đọc trước theo thứ tự
 

@@ -175,6 +175,24 @@ def support_matrix():
         {"format": "SerializedFile v15-26 (.assets)", "read": "có (metadata, object table, TextAsset; v23+ type tree có ref hashes, v26 shared subtrees)",
          "write": "có (patch TextAsset: PATCH_INPLACE / REBUILD_SECTION)",
          "backend": "Python thuần", "maturity": "M2"},
+        {"format": "MonoBehaviour — bảng I2 (language_source, không type tree; byte-walk)",
+         "read": "có",
+         "write": "có (ghi term theo cột nguồn; fallback locale en → biến thể đầu tiên cùng họ, vd en-GB — P0 23/11)",
+         "backend": "Python thuần", "maturity": "M2"},
+        {"format": "MonoBehaviour — bảng I2 có type tree (language_source_tt)",
+         "read": "có",
+         "write": "có (ghi theo tên field thật mSource.mTerms[i].Languages[j]; không dò được tên field thì bỏ qua fail-closed)",
+         "backend": "Python thuần", "maturity": "M2"},
+        {"format": "MonoBehaviour — Unity StringTable (string_table + SharedTableData join)",
+         "read": "có",
+         "write": "có (ghi m_Localized theo Collection/Key; entry thiếu thì chèn mới từ mẫu entry đầu; không có mb_index thì 0 key ST, fail-closed)",
+         "backend": "Python thuần", "maturity": "M2"},
+        {"format": "MonoBehaviour — generic (scan path)", "read": "có",
+         "write": "có (chỉ key ánh xạ đúng 1 locator; key mơ hồ > 1 locator thì bỏ qua, không đoán)",
+         "backend": "Python thuần", "maturity": "M2"},
+        {"format": "CSV (TextAsset CSV / file CSV độc lập, M3)", "read": "có",
+         "write": "có (ghi ô theo key + cột locale; đo toàn bảng PB3 2348 key — P0 23/11)",
+         "backend": "Python thuần", "maturity": "M2"},
         {"format": "LZ4 block / LZ4HC", "read": "có", "write": "có",
          "backend": "binding lz4 (ưu tiên) / Python thuần (literal-only khi ghi)",
          "maturity": "M2"},
@@ -2940,6 +2958,36 @@ def _ls_field_name(d, *names):
     return None, None
 
 
+def ls_source_column(languages, source_locale="en"):
+    """Chi so cot nguon cho bang I2 (ghi nguoc).
+
+    Uu tien khop CHINH XAC ma locale (vd "en" -> cot "en", giu nguyen
+    hanh vi cu). Neu khong co, lay cot DAU TIEN cung ho ngon ngu (vd
+    "en" -> "en-GB" / "en-US" — khi bang chi co cot dia phuong ma
+    khong co cot "en", trong khi trich xuat van lay cot dia phuong
+    lam nguon "en" -> writer cu tra 0 target). Khong co cot nao khop
+    -> None (fail-closed, nhu cu).
+    [FIXTURE] BUG P0-1: EK2 chi co cot en-GB/en-US, khong co cot "en" —
+    lookup chinh xac lam phu ghi = 0; fallback cung ho khoi phuc phu.
+    Giong quy tac ho locale cua discovery.locale_in_wanted (khop theo
+    ma goc), nhung viet tai day 1 dong de unity khong import discovery
+    (tranh import vong)."""
+    langs = languages or []
+    for idx, lang in enumerate(langs):
+        if isinstance(lang, dict) and lang.get("code") == source_locale:
+            return idx
+    base = (source_locale or "").replace("_", "-").split("-")[0].lower()
+    if not base:
+        return None
+    for idx, lang in enumerate(langs):
+        if not isinstance(lang, dict):
+            continue
+        code = lang.get("code") or ""
+        if code and code.replace("_", "-").split("-")[0].lower() == base:
+            return idx
+    return None
+
+
 def language_source_tt_targets(val, source_locale="en"):
     """Target ghi cho bảng ngôn ngữ I2 CÓ type tree.
 
@@ -2959,11 +3007,7 @@ def language_source_tt_targets(val, source_locale="en"):
     terms_key, terms_raw = _ls_field_name(src, "mTerms", "Terms")
     if langs_key is None or terms_key is None or not isinstance(terms_raw, list):
         return None
-    col = None
-    for idx, lang in enumerate(ls["languages"]):
-        if lang.get("code") == source_locale:
-            col = idx
-            break
+    col = ls_source_column(ls["languages"], source_locale)
     if col is None:
         return None
     out = []
@@ -3491,11 +3535,7 @@ def monobehaviour_write_targets(sf, source_locale="en", shared_index=None,
                 continue
             name = ls.get("name") or ""
             langs = ls.get("languages") or []
-            col = None
-            for idx, lang in enumerate(langs):
-                if lang.get("code") == source_locale:
-                    col = idx
-                    break
+            col = ls_source_column(langs, source_locale)
             if col is None:
                 notes.append("MonoBehaviour path_id=%d (%s): bảng I2 không có "
                              "cột %r — không ghi được" % (o.path_id, name, source_locale))

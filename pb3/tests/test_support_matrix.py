@@ -92,13 +92,17 @@ class TestGenerate(MatrixCase):
 
     def test_three_honest_lists(self):
         markdown, data = sm.generate(self.proj, *self.matrix_inputs())
-        # Đã xác minh trên game thật: CHỈ Unity inspect trên IPA thật 9 Kings v1.0.5.
-        self.assertEqual(len(data["real_game"]), 1)
+        # Đã xác minh trên game thật: Unity inspect 9 Kings + patch Unity
+        # P0 (ghi ngược MonoBehaviour trên 3 IPA thật, 23/11/2026).
+        self.assertEqual(len(data["real_game"]), 2)
         self.assertIn("9 Kings", data["real_game"][0]["muc"])
         self.assertIn("inspect", data["real_game"][0]["muc"])
         self.assertIn("handoff/account_05.md", data["real_game"][0]["nguon"])
-        # Patch Unity chỉ mới test fixture -> không nằm trong danh sách game thật.
         self.assertNotIn("patch", data["real_game"][0]["muc"].lower())
+        self.assertIn("Patch Unity", data["real_game"][1]["muc"])
+        self.assertIn("p0_writeback_results.md", data["real_game"][1]["nguon"])
+        self.assertIn("9 Kings", data["real_game"][1]["chi_tiet"])
+        self.assertIn("EK2", data["real_game"][1]["chi_tiet"])
         # Mới test fixture: mọi plugin còn lại.
         self.assertIn("json_text", data["fixture_only"])
         self.assertIn("godot_pck", data["fixture_only"])
